@@ -1,5 +1,5 @@
 // AudioPlayer.tsx
-import React, { useRef, useState } from "react";
+import React, { useRef, useState, useEffect } from "react";
 // import { useWaveSurferContext } from "../store/wavesurferprovider";
 import {
   ScrubBarContainer,
@@ -21,7 +21,7 @@ import { BaseUIEvent } from "@base-ui/react";
 import { Button } from "@/components/ui/button";
 import { PauseCircleIcon, PlayCircleIcon, StopCircleIcon } from "lucide-react";
 import WaveSurfer from "wavesurfer.js";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { IconAlertOctagon } from "@tabler/icons-react";
 import { useStateMachine } from "@/store/stateMachine";
 
@@ -79,24 +79,42 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
     });
   };
 
-  const { data, isLoading, error } = useQuery<WaveSurferCache, Error>({
-    queryKey: [`persist_${id}`],
+  const queryClient = useQueryClient();
+
+  const queryKey = [`persist_${id}`];
+
+  const queryOptions = {
+    queryKey,
     queryFn: loadAudio,
-
-    // Crucial settings for preserving data across navigation:
-
     // Consider data fresh for 24 hours so it won't re-fetch on remount
     staleTime: 1000 * 60 * 60 * 24,
-
     // Keep unused data in the cache memory for 24 hours before garbage collection
     gcTime: 1000 * 60 * 60 * 24,
-
     // Optional: Prevent background refetching when user refocuses the app window
     refetchOnWindowFocus: false,
-
     // Optional: Prevent refetching when network reconnects
     refetchOnReconnect: false,
-  });
+    enabled: false,
+  } as const;
+
+  const { data, isLoading, error } = useQuery<WaveSurferCache, Error>(queryOptions as any);
+
+  useEffect(() => {
+    let mounted = true;
+
+    // Trigger the query fetch after mount to avoid creating promises during render
+    queryClient
+      .fetchQuery(queryOptions as any)
+      .catch((e) => {
+        if (mounted) {
+          console.error("Audio fetch error:", e);
+        }
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, [queryClient, id]);
 
   const ws = data?.payload;
 
