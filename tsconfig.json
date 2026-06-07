@@ -2,20 +2,21 @@
   "compilerOptions": {
     "jsx": "react-jsx",
     "target": "ESNext",
-    "module": "ESNext",
+    "module": "nodenext",
     "lib": ["dom", "ESNext"],
     "allowJs": true,
     "skipLibCheck": true,
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
-    "noImplicitAny": true,
+    "noImplicitAny": false,
     "sourceMap": true,
     "outDir": "dist",
-    "moduleResolution": "bundler",
+    "moduleResolution": "nodenext",
     "resolveJsonModule": true,
-    "jsx": "react-jsx",
     "paths": {
-      "@/*": ["./src/*"]
+      "@*": [
+        "./*"
+      ]
     }
   }
 }
