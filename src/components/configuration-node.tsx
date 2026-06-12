@@ -6,6 +6,7 @@ import {
   RefreshCw as RefreshCwIcon,
   Play as PlayIcon,
   Square as SquareIcon,
+  Maximize2 as MaximizeIcon,
 } from "lucide-react";
 import { FlowNodeType } from "@/types/flow-node";
 import { useSetAtom } from "jotai";
@@ -19,13 +20,17 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { useScreenCapture } from "@/hooks/useScreenCapture";
+
 
 export function ConfigurationNode(NodeRef: NodeProps<FlowNodeType>) {
   const node = NodeRef;
   const updateNodeData = useSetAtom(updateNodeDataAtom);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const popOutVideoRef = useRef<HTMLVideoElement>(null);
   const [isPreviewActive, setIsPreviewActive] = useState(false);
+  const [isPopOutOpen, setIsPopOutOpen] = useState(false);
 
   const {
     sources,
@@ -57,6 +62,17 @@ export function ConfigurationNode(NodeRef: NodeProps<FlowNodeType>) {
       });
     }
   }, [stream]);
+
+  // Handle stream assignment to popout HTMLVideoElement
+  useEffect(() => {
+    if (popOutVideoRef.current && stream && isPopOutOpen) {
+      popOutVideoRef.current.srcObject = stream;
+      popOutVideoRef.current.play().catch((err) => {
+        console.error("[ConfigurationNode] Popout video playback failed:", err);
+      });
+    }
+  }, [stream, isPopOutOpen]);
+
 
   // Clean up if preview gets turned off or selected source is deleted/changed
   const handleTogglePreview = useCallback(async () => {
@@ -191,25 +207,37 @@ export function ConfigurationNode(NodeRef: NodeProps<FlowNodeType>) {
               Live Preview
             </label>
             {node.data.captureSourceId && (
-              <button
-                onClick={handleTogglePreview}
-                className={cn(
-                  "flex items-center gap-1 text-[10px] px-2 py-0.5 rounded transition-all font-semibold uppercase tracking-wider",
-                  isPreviewActive
-                    ? "bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20"
-                    : "bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 hover:bg-indigo-500/20"
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={handleTogglePreview}
+                  className={cn(
+                    "flex items-center gap-1 text-[10px] px-2 py-0.5 rounded transition-all font-semibold uppercase tracking-wider cursor-pointer",
+                    isPreviewActive
+                      ? "bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20"
+                      : "bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 hover:bg-indigo-500/20"
+                  )}
+                >
+                  {isPreviewActive ? (
+                    <>
+                      <SquareIcon className="w-2.5 h-2.5 fill-current" /> Stop
+                    </>
+                  ) : (
+                    <>
+                      <PlayIcon className="w-2.5 h-2.5 fill-current" /> Preview
+                    </>
+                  )}
+                </button>
+
+                {isPreviewActive && (
+                  <button
+                    onClick={() => setIsPopOutOpen(true)}
+                    className="p-1 rounded bg-zinc-800 border border-zinc-700 hover:bg-zinc-700 text-zinc-300 hover:text-white transition-colors cursor-pointer"
+                    title="Pop out preview"
+                  >
+                    <MaximizeIcon className="w-3.5 h-3.5" />
+                  </button>
                 )}
-              >
-                {isPreviewActive ? (
-                  <>
-                    <SquareIcon className="w-2.5 h-2.5 fill-current" /> Stop
-                  </>
-                ) : (
-                  <>
-                    <PlayIcon className="w-2.5 h-2.5 fill-current" /> Preview
-                  </>
-                )}
-              </button>
+              </div>
             )}
           </div>
 
@@ -247,6 +275,19 @@ export function ConfigurationNode(NodeRef: NodeProps<FlowNodeType>) {
           />
         </div>
       </Card>
+
+      {/* Pop Out Large Preview Modal */}
+      <Dialog open={isPopOutOpen} onOpenChange={setIsPopOutOpen}>
+        <DialogContent className="max-w-5xl w-[90vw] aspect-video p-0 bg-black overflow-hidden border border-zinc-800 rounded-2xl shadow-2xl">
+          <video
+            ref={popOutVideoRef}
+            autoPlay
+            playsInline
+            muted
+            className="w-full h-full object-contain"
+          />
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
