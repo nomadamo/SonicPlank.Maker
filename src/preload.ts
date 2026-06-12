@@ -53,6 +53,10 @@ contextBridge.exposeInMainWorld("electron", {
     return filePath;
   },
   getFilePath: (file: any) => webUtils.getPathForFile(file),
+  getScreenSources: async (options?: any): Promise<any[]> => {
+    const sources = await ipcRenderer.invoke("getScreenSources", options);
+    return sources;
+  },
   onLog: (callback: (event: any, data: any) => void) => {
     ipcRenderer.on("log", callback);
   },

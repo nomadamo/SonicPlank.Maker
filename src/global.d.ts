@@ -1,5 +1,12 @@
 import type { AudioMetadata } from "./utils/get-audio-data";
 
+export interface ScreenCaptureSource {
+  id: string;
+  name: string;
+  thumbnailUrl: string;
+  appIconUrl: string | null;
+}
+
 declare global {
   interface Window {
     electron: {
@@ -14,6 +21,7 @@ declare global {
       openFileDialog: () => Promise<string[]>;
       saveRecording: (fileName: string, arrayBuffer: ArrayBuffer) => Promise<string>;
       getFilePath: (file: File) => string;
+      getScreenSources: (options?: any) => Promise<ScreenCaptureSource[]>;
       onLog: (callback: (event: any, data: string) => void) => void;
       removeOnLog: (callback: (event: any, data: string) => void) => void;
     };

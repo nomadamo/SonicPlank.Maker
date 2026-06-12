@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, session } from "electron";
+import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, session } from "electron";
 import {
   readData,
   writeData,
@@ -203,6 +203,27 @@ const createWindow = async () => {
         throw error;
       }
     },
+  );
+
+  ipcMain.handle(
+    "getScreenSources",
+    async (_event, options) => {
+      try {
+        const sources = await desktopCapturer.getSources(options || {
+          types: ["screen", "window"],
+          thumbnailSize: { width: 300, height: 200 }
+        });
+        return sources.map(source => ({
+          id: source.id,
+          name: source.name,
+          thumbnailUrl: source.thumbnail.toDataURL(),
+          appIconUrl: source.appIcon ? source.appIcon.toDataURL() : null,
+        }));
+      } catch (error) {
+        console.error("Failed to get screen sources:", error);
+        throw error;
+      }
+    }
   );
 
   app.setAboutPanelOptions({

@@ -10,6 +10,10 @@ export type FlowNodeType<
     mediaPath?: string;
     volume?: number;
     duration?: number;
+    captureSourceId?: string;
+    captureSourceName?: string;
+    captureType?: string;
+    captureAudio?: boolean;
   };
   type?: string;
 };

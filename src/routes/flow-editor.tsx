@@ -14,6 +14,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AudioNode } from "@/components/audio-node";
 import { MasterOutputNode } from "@/components/master-output-node";
+import { ConfigurationNode } from "@/components/configuration-node";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { AnimatedRoute } from "@/components/animated-route";
 import { LoadingAnimation } from "@/components/animations/loading-animation";
@@ -34,6 +35,7 @@ import {
   Trash2Icon,
   UploadIcon,
   WorkflowIcon,
+  Monitor as MonitorIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAtomValue, useSetAtom } from "jotai";
@@ -72,6 +74,7 @@ import { toast } from "sonner";
 const nodeTypes = {
   audioFlowNode: AudioNode,
   masterOutputNode: MasterOutputNode,
+  configurationNode: ConfigurationNode,
 };
 
 const edgeTypes: EdgeTypes = {
@@ -476,6 +479,29 @@ function FlowEditor() {
     setHasUnsavedChanges,
   ]);
 
+  const onAddConfigNode = useCallback(() => {
+    const newNode: FlowNodeType = {
+      id: crypto.randomUUID(),
+      type: "configurationNode",
+      position: { x: currentViewport.x + 150, y: currentViewport.y + 150 },
+      data: {
+        title: "Screen Capture",
+        captureSourceId: "",
+        captureSourceName: "",
+        captureType: "screen",
+        captureAudio: false,
+      },
+    };
+    setCurrentNodes((nodes) => [...nodes, newNode]);
+    setPersistRequested(true);
+    setHasUnsavedChanges(true);
+  }, [
+    currentViewport,
+    setCurrentNodes,
+    setPersistRequested,
+    setHasUnsavedChanges,
+  ]);
+
   const isEmpty =
     !currentNodes || currentNodes == null || currentNodes.length === 0;
 
@@ -583,6 +609,18 @@ function FlowEditor() {
                           }
                         />
                         <TooltipContent>Add Output Node</TooltipContent>
+                      </Tooltip>
+
+                      {/* Add Configuration Node */}
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <Button variant="ghost" onClick={onAddConfigNode}>
+                              <MonitorIcon />
+                            </Button>
+                          }
+                        />
+                        <TooltipContent>Add Configuration Node</TooltipContent>
                       </Tooltip>
 
                       {/* Save */}
