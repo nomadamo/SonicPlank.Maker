@@ -36,6 +36,7 @@ import {
   UploadIcon,
   WorkflowIcon,
   Monitor as MonitorIcon,
+  Music as MusicIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAtomValue, useSetAtom } from "jotai";
@@ -55,6 +56,13 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+  PopoverHeader,
+  PopoverTitle,
+} from "@/components/ui/popover";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -114,6 +122,11 @@ function FlowEditor() {
   // Dialog states
   const [addLibraryOpen, setAddLibraryOpen] = useState(false);
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
+  const [isAddPopoverOpen, setIsAddPopoverOpen] = useState(false);
+
+  const hasConfigNode = currentNodes.some(
+    (node) => node.type === "configurationNode"
+  );
 
   // ─── Refs ───────────────────────────────────────────────────────────────────
   // Skips the debounced sync on the very first effect run. ReactFlow fires
@@ -584,44 +597,106 @@ function FlowEditor() {
                     }}
                   >
                     <ActionBarBody>
-                      {/* Add from Library */}
-                      <Tooltip>
-                        <TooltipTrigger
-                          render={
-                            <Button
-                              variant="ghost"
-                              onClick={() => setAddLibraryOpen(true)}
+                      {/* Add Nodes Popover */}
+                      <Popover open={isAddPopoverOpen} onOpenChange={setIsAddPopoverOpen}>
+                        <Tooltip>
+                          <TooltipTrigger
+                            render={
+                              <PopoverTrigger
+                                render={
+                                  <Button variant="ghost">
+                                    <PlusIcon />
+                                  </Button>
+                                }
+                              />
+                            }
+                          />
+                          <TooltipContent>Add Node</TooltipContent>
+                        </Tooltip>
+
+                        <PopoverContent className="bg-zinc-950 border border-zinc-800 text-zinc-100 rounded-2xl w-80 shadow-2xl p-4 flex flex-col gap-3">
+                          <PopoverHeader className="pb-2 border-b border-zinc-800/80">
+                            <PopoverTitle className="text-sm font-semibold text-zinc-200">Add Canvas Node</PopoverTitle>
+                            <p className="text-[11px] text-zinc-400">Select a node type to add to the editor</p>
+                          </PopoverHeader>
+
+                          <div className="flex flex-col gap-2">
+                            {/* Audio Node */}
+                            <button
+                              onClick={() => {
+                                setAddLibraryOpen(true);
+                                setIsAddPopoverOpen(false);
+                              }}
+                              className="flex items-start gap-3 p-2.5 rounded-xl text-left hover:bg-zinc-900 transition-colors group cursor-pointer"
                             >
-                              <PlusIcon />
-                            </Button>
-                          }
-                        />
-                        <TooltipContent>Add from Library</TooltipContent>
-                      </Tooltip>
+                              <div className="p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 group-hover:bg-emerald-500/20 transition-colors mt-0.5">
+                                <MusicIcon className="w-4 h-4 text-emerald-400" />
+                              </div>
+                              <div>
+                                <div className="text-xs font-semibold text-zinc-200">Audio Node</div>
+                                <div className="text-[10px] text-zinc-400 mt-0.5">Import audio assets from the library</div>
+                              </div>
+                            </button>
 
-                      {/* Add Output Node */}
-                      <Tooltip>
-                        <TooltipTrigger
-                          render={
-                            <Button variant="ghost" onClick={onAddOutputNode}>
-                              <WorkflowIcon />
-                            </Button>
-                          }
-                        />
-                        <TooltipContent>Add Output Node</TooltipContent>
-                      </Tooltip>
+                            {/* Master Output Node */}
+                            <button
+                              onClick={() => {
+                                onAddOutputNode();
+                                setIsAddPopoverOpen(false);
+                              }}
+                              className="flex items-start gap-3 p-2.5 rounded-xl text-left hover:bg-zinc-900 transition-colors group cursor-pointer"
+                            >
+                              <div className="p-2 rounded-lg bg-blue-500/10 border border-blue-500/20 group-hover:bg-blue-500/20 transition-colors mt-0.5">
+                                <WorkflowIcon className="w-4 h-4 text-blue-400" />
+                              </div>
+                              <div>
+                                <div className="text-xs font-semibold text-zinc-200">Master Output Node</div>
+                                <div className="text-[10px] text-zinc-400 mt-0.5">Route mixed channel flows to speaker output</div>
+                              </div>
+                            </button>
 
-                      {/* Add Configuration Node */}
-                      <Tooltip>
-                        <TooltipTrigger
-                          render={
-                            <Button variant="ghost" onClick={onAddConfigNode}>
-                              <MonitorIcon />
-                            </Button>
-                          }
-                        />
-                        <TooltipContent>Add Configuration Node</TooltipContent>
-                      </Tooltip>
+                            {/* Screen Capture Config Node */}
+                            <button
+                              onClick={() => {
+                                if (!hasConfigNode) {
+                                  onAddConfigNode();
+                                  setIsAddPopoverOpen(false);
+                                }
+                              }}
+                              disabled={hasConfigNode}
+                              className={`flex items-start gap-3 p-2.5 rounded-xl text-left transition-colors group ${
+                                hasConfigNode
+                                  ? "opacity-50 cursor-not-allowed"
+                                  : "hover:bg-zinc-900 cursor-pointer"
+                              }`}
+                            >
+                              <div className={`p-2 rounded-lg mt-0.5 border transition-colors ${
+                                hasConfigNode
+                                  ? "bg-zinc-800/20 border-zinc-800 text-zinc-500"
+                                  : "bg-indigo-500/10 border-indigo-500/20 text-indigo-400 group-hover:bg-indigo-500/20"
+                              }`}>
+                                <MonitorIcon className="w-4 h-4" />
+                              </div>
+                              <div>
+                                <div className="text-xs font-semibold text-zinc-200 flex items-center gap-1.5">
+                                  Screen Capture Node
+                                  {hasConfigNode && (
+                                    <span className="text-[8px] bg-zinc-800/80 text-zinc-400 px-1 py-0.5 rounded border border-zinc-700 font-normal">
+                                      Limit 1
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="text-[10px] text-zinc-400 mt-0.5">
+                                  {hasConfigNode
+                                    ? "Already exists on the flow canvas"
+                                    : "Configure stream mirroring input source"}
+                                </div>
+                              </div>
+                            </button>
+                          </div>
+                        </PopoverContent>
+                      </Popover>
+
 
                       {/* Save */}
                       <Tooltip>

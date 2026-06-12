@@ -247,12 +247,6 @@ export function ConfigurationNode(NodeRef: NodeProps<FlowNodeType>) {
           />
         </div>
       </Card>
-      <Handle
-        id={`handle_${node.id}_source`}
-        type="source"
-        position={Position.Right}
-        isConnectable={true}
-      />
     </>
   );
 }
