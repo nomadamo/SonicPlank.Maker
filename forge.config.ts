@@ -1,11 +1,11 @@
-import type { ForgeConfig } from '@electron-forge/shared-types';
-import { MakerSquirrel } from '@electron-forge/maker-squirrel';
-import { MakerZIP } from '@electron-forge/maker-zip';
-import { MakerDeb } from '@electron-forge/maker-deb';
-import { MakerRpm } from '@electron-forge/maker-rpm';
-import { VitePlugin } from '@electron-forge/plugin-vite';
-import { FusesPlugin } from '@electron-forge/plugin-fuses';
-import { FuseV1Options, FuseVersion } from '@electron/fuses';
+import type { ForgeConfig } from "@electron-forge/shared-types";
+import { MakerSquirrel } from "@electron-forge/maker-squirrel";
+import { MakerZIP } from "@electron-forge/maker-zip";
+import { MakerDeb } from "@electron-forge/maker-deb";
+import { MakerRpm } from "@electron-forge/maker-rpm";
+import { VitePlugin } from "@electron-forge/plugin-vite";
+import { FusesPlugin } from "@electron-forge/plugin-fuses";
+import { FuseV1Options, FuseVersion } from "@electron/fuses";
 
 const config: ForgeConfig = {
   packagerConfig: {
@@ -14,7 +14,7 @@ const config: ForgeConfig = {
   rebuildConfig: {},
   makers: [
     new MakerSquirrel({}),
-    new MakerZIP({}, ['darwin']),
+    new MakerZIP({}, ["darwin"]),
     new MakerRpm({}),
     new MakerDeb({}),
   ],
@@ -25,20 +25,20 @@ const config: ForgeConfig = {
       build: [
         {
           // `entry` is just an alias for `build.lib.entry` in the corresponding file of `config`.
-          entry: './main.ts',
-          config: 'vite.main.config.mts',
-          target: 'main',
+          entry: "./src/main.ts",
+          config: "vite.main.config.mts",
+          target: "main",
         },
         {
-          entry: './preload.ts',
-          config: 'vite.preload.config.mts',
-          target: 'preload',
+          entry: "./src/preload.ts",
+          config: "./vite.preload.config.mts",
+          target: "preload",
         },
       ],
       renderer: [
         {
-          name: 'main_window',
-          config: 'vite.renderer.config.mts',
+          name: "main_window",
+          config: "./vite.renderer.config.mts",
         },
       ],
     }),

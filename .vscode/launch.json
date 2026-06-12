@@ -1,3 +1,35 @@
+// {
+//   "version": "0.2.0",
+//   "configurations": [
+//     {
+//       "name": "Electron: Main",
+//       "type": "node",
+//       "request": "launch",
+//       "runtimeExecutable": "${workspaceFolder}/src/node_modules/.bin/electron-forge",
+//       "runtimeArgs": ["start", "--", "--remote-debugging-port=9223"],
+//       "windows": {
+//         "runtimeExecutable": "${workspaceFolder}/src/node_modules/.bin/electron-forge.cmd"
+//       },
+//       "cwd": "${workspaceFolder}/src",
+//       "protocol": "inspector",
+//       "console": "integratedTerminal"
+//     },
+//     {
+//       "name": "Electron: Renderer",
+//       "type": "chrome",
+//       "request": "attach",
+//       "port": 9223,
+//       "webRoot": "${workspaceFolder}/dist",
+//       "timeout": 60000
+//     }
+//   ],
+//   "compounds": [
+//     {
+//       "name": "Electron: All",
+//       "configurations": ["Electron: Main", "Electron: Renderer"]
+//     }
+//   ]
+// }
 {
   "version": "0.2.0",
   "configurations": [
@@ -6,11 +38,7 @@
       "type": "node",
       "request": "launch",
       "runtimeExecutable": "${workspaceFolder}/node_modules/.bin/electron-forge",
-      "runtimeArgs": [
-        "start",
-        "--",
-        "--remote-debugging-port=9223"
-      ],
+      "runtimeArgs": ["start", "--", "--remote-debugging-port=9223"],
       "windows": {
         "runtimeExecutable": "${workspaceFolder}/node_modules/.bin/electron-forge.cmd"
       },

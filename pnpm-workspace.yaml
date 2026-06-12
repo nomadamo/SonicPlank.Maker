@@ -1,0 +1,6 @@
+allowBuilds:
+  electron-winstaller: true
+nodeLinker: hoisted
+overrides:
+  "@electron/node-gyp": "*"
+pmOnFail: ignore

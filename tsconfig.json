@@ -2,21 +2,46 @@
   "compilerOptions": {
     "jsx": "react-jsx",
     "target": "ESNext",
-    "module": "nodenext",
+    "module": "NodeNext",
     "lib": ["dom", "ESNext"],
     "allowJs": true,
     "skipLibCheck": true,
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
     "noImplicitAny": false,
+    "strictNullChecks": true,
     "sourceMap": true,
-    "outDir": "dist",
+    "outDir": "./dist",
     "moduleResolution": "nodenext",
     "resolveJsonModule": true,
     "paths": {
-      "@*": [
-        "./*"
-      ]
+      "@/lib/*": ["./src/lib/*"],
+      "@/hooks/*": ["./src/hooks/*"],
+      "@/styles/*": ["./src/styles/*"],
+      "@/components/*": ["./src/components/*"],
+      "@/*": ["./src/*"]
     }
-  }
+  },
+  "include": ["src/**/*", "src/**/*.d.ts", "*.ts", "*.mts"],
+  "exclude": [
+    "src/preload.ts",
+    "src/renderer.tsx",
+    "node_modules",
+    "dist",
+    "out",
+    "**/*.spec.ts",
+    "**/*.test.ts",
+    "src/src",
+    "components/ui/carousel.tsx",
+    "components/ui/command.tsx",
+    "components/ui/drawer.tsx",
+    "components/ui/input-otp.tsx",
+    "components/ui/resizable.tsx",
+    "components/ui/menu.tsx",
+    "components/devtools.tsx",
+    "src/__canvas_preview__.tsx",
+    "components/ui/waveform.tsx",
+    "components/waves-cn/wave-player.tsx",
+    "lib/wave-cn.tsx"
+  ]
 }

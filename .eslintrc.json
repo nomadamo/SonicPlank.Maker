@@ -4,10 +4,7 @@
     "es6": true,
     "node": true
   },
-  "plugins": [
-    "@typescript-eslint",
-    "import"
-  ],
+  "plugins": ["@typescript-eslint", "import"],
   "extends": [
     "eslint:recommended",
     "plugin:@typescript-eslint/recommended",
@@ -19,14 +16,22 @@
   ],
   "parser": "@typescript-eslint/parser",
   "parserOptions": {
-    "project": "./tsconfig.json",
-    "tsconfigRootDir": "./"
+    "project": "./tsconfig.json"
   },
-  "import/resolver": {
-    "node": true,
-    "typescript": {
-      "alwaysTryTypes": true,
-      "project": "./"
+  "settings": {
+    "import/parsers": {
+      "@typescript-eslint/parser": [".ts", ".tsx"]
+    },
+    "import/resolver": {
+      "node": true,
+      "typescript": {
+        "alwaysTryTypes": true,
+        "project": "./"
+      }
     }
+  },
+  "rules": {
+    // Prevents ESLint from falsely reporting valid aliased imports as errors
+    "import/no-unresolved": "off"
   }
 }
