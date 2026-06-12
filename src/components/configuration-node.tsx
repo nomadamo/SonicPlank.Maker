@@ -1,11 +1,16 @@
 import { Card, CardHeader, CardMedia } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { Handle, NodeProps, Position } from "@xyflow/react";
-import { Monitor as MonitorIcon, RefreshCw as RefreshCwIcon } from "lucide-react";
+import {
+  Monitor as MonitorIcon,
+  RefreshCw as RefreshCwIcon,
+  Play as PlayIcon,
+  Square as SquareIcon,
+} from "lucide-react";
 import { FlowNodeType } from "@/types/flow-node";
 import { useSetAtom } from "jotai";
 import { updateNodeDataAtom } from "@/store/flowStore";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Select,
   SelectContent,
@@ -14,35 +19,71 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import type { ScreenCaptureSource } from "@/global";
+import { useScreenCapture } from "@/hooks/useScreenCapture";
 
 export function ConfigurationNode(NodeRef: NodeProps<FlowNodeType>) {
   const node = NodeRef;
   const updateNodeData = useSetAtom(updateNodeDataAtom);
-  const [sources, setSources] = useState<ScreenCaptureSource[]>([]);
-  const [loading, setLoading] = useState(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [isPreviewActive, setIsPreviewActive] = useState(false);
 
+  const {
+    sources,
+    stream,
+    loading: loadingSources,
+    refreshSources,
+    startCapture,
+    stopCapture,
+  } = useScreenCapture();
+
+  // Query available displays and windows without thumbnails to avoid WGC error spam
   const fetchSources = useCallback(async () => {
-    setLoading(true);
-    try {
-      const screenSources = await window.electron.getScreenSources({
-        types: ["screen", "window"],
-        thumbnailSize: { width: 300, height: 200 },
-      });
-      setSources(screenSources);
-    } catch (err) {
-      console.error("[ConfigurationNode] Failed to fetch screen sources:", err);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+    await refreshSources({
+      types: ["screen", "window"],
+      thumbnailSize: { width: 0, height: 0 },
+    });
+  }, [refreshSources]);
 
   useEffect(() => {
     fetchSources();
   }, [fetchSources]);
 
+  // Handle stream assignment to HTMLVideoElement
+  useEffect(() => {
+    if (videoRef.current && stream) {
+      videoRef.current.srcObject = stream;
+      videoRef.current.play().catch((err) => {
+        console.error("[ConfigurationNode] Video playback failed:", err);
+      });
+    }
+  }, [stream]);
+
+  // Clean up if preview gets turned off or selected source is deleted/changed
+  const handleTogglePreview = useCallback(async () => {
+    if (isPreviewActive) {
+      stopCapture();
+      setIsPreviewActive(false);
+    } else {
+      if (!node.data.captureSourceId) return;
+      setIsPreviewActive(true);
+      const activeStream = await startCapture(
+        node.data.captureSourceId,
+        !!node.data.captureAudio
+      );
+      if (!activeStream) {
+        setIsPreviewActive(false);
+      }
+    }
+  }, [isPreviewActive, node.data.captureSourceId, node.data.captureAudio, startCapture, stopCapture]);
+
   const handleSourceChange = useCallback(
     (val: string) => {
+      // If we are currently previewing, stop the active capture session first
+      if (isPreviewActive) {
+        stopCapture();
+        setIsPreviewActive(false);
+      }
+
       const selected = sources.find((s) => s.id === val);
       updateNodeData({
         id: node.id,
@@ -52,7 +93,7 @@ export function ConfigurationNode(NodeRef: NodeProps<FlowNodeType>) {
         },
       });
     },
-    [sources, node.id, updateNodeData]
+    [sources, node.id, updateNodeData, isPreviewActive, stopCapture]
   );
 
   const handleAudioToggle = useCallback(
@@ -61,8 +102,12 @@ export function ConfigurationNode(NodeRef: NodeProps<FlowNodeType>) {
         id: node.id,
         patch: { captureAudio: checked },
       });
+      // If we are currently previewing, restart capture to apply audio changes
+      if (isPreviewActive && node.data.captureSourceId) {
+        startCapture(node.data.captureSourceId, checked);
+      }
     },
-    [node.id, updateNodeData]
+    [node.id, updateNodeData, isPreviewActive, startCapture]
   );
 
   const selectedSource = sources.find((s) => s.id === node.data.captureSourceId);
@@ -71,10 +116,13 @@ export function ConfigurationNode(NodeRef: NodeProps<FlowNodeType>) {
   return (
     <>
       <Card
-        className={cn("w-80 panel p-4 flex flex-col gap-4 select-none bg-zinc-950/90 backdrop-blur-md border border-zinc-800 text-white rounded-xl shadow-2xl")}
+        className={cn(
+          "w-80 panel p-4 flex flex-col gap-4 select-none bg-zinc-950/95 backdrop-blur-md border border-zinc-800 text-white rounded-xl shadow-2xl"
+        )}
         id={`flow-node-${node.id}`}
         style={{ anchorName: `--configNode_${node.id}` }}
       >
+        {/* Header */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="p-2 rounded-lg bg-indigo-500/10 border border-indigo-500/20">
@@ -87,11 +135,11 @@ export function ConfigurationNode(NodeRef: NodeProps<FlowNodeType>) {
           </div>
           <button
             onClick={fetchSources}
-            disabled={loading}
+            disabled={loadingSources}
             className="p-1.5 rounded hover:bg-zinc-800 text-zinc-400 hover:text-zinc-100 transition-colors disabled:opacity-50"
             title="Refresh sources"
           >
-            <RefreshCwIcon className={cn("w-4 h-4", loading && "animate-spin")} />
+            <RefreshCwIcon className={cn("w-4 h-4", loadingSources && "animate-spin")} />
           </button>
         </div>
 
@@ -136,22 +184,56 @@ export function ConfigurationNode(NodeRef: NodeProps<FlowNodeType>) {
           </Select>
         </div>
 
-        {/* Live Thumbnail Preview */}
-        {selectedSource?.thumbnailUrl && (
-          <div className="flex flex-col gap-1.5">
+        {/* Live Video Preview Area */}
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center justify-between">
             <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">
-              Preview
+              Live Preview
             </label>
-            <div className="relative rounded-lg border border-zinc-800 overflow-hidden bg-black aspect-video flex items-center justify-center shadow-inner group">
-              <img
-                src={selectedSource.thumbnailUrl}
-                className="max-h-full max-w-full object-contain transition-transform group-hover:scale-105"
-                alt="Source preview"
-              />
-              <div className="absolute inset-0 bg-black/10 opacity-0 group-hover:opacity-100 transition-opacity" />
-            </div>
+            {node.data.captureSourceId && (
+              <button
+                onClick={handleTogglePreview}
+                className={cn(
+                  "flex items-center gap-1 text-[10px] px-2 py-0.5 rounded transition-all font-semibold uppercase tracking-wider",
+                  isPreviewActive
+                    ? "bg-red-500/10 text-red-400 border border-red-500/20 hover:bg-red-500/20"
+                    : "bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 hover:bg-indigo-500/20"
+                )}
+              >
+                {isPreviewActive ? (
+                  <>
+                    <SquareIcon className="w-2.5 h-2.5 fill-current" /> Stop
+                  </>
+                ) : (
+                  <>
+                    <PlayIcon className="w-2.5 h-2.5 fill-current" /> Preview
+                  </>
+                )}
+              </button>
+            )}
           </div>
-        )}
+
+          <div className="relative rounded-lg border border-zinc-800 overflow-hidden bg-black aspect-video flex items-center justify-center shadow-inner group">
+            {isPreviewActive && stream ? (
+              <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                muted
+                className="w-full h-full object-contain"
+              />
+            ) : (
+              <div className="flex flex-col items-center gap-2 text-zinc-500 text-center px-4 py-8">
+                <MonitorIcon className="w-8 h-8 text-zinc-700 stroke-[1.5]" />
+                <span className="text-[10px]">
+                  {node.data.captureSourceId
+                    ? "Click Preview to test stream"
+                    : "Select a capture target above"}
+                </span>
+              </div>
+            )}
+          </div>
+        </div>
 
         {/* Audio Toggle */}
         <div className="flex items-center justify-between border-t border-zinc-800/80 pt-3 mt-1">
