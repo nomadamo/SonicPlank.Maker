@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as TimelineRouteImport } from './routes/timeline'
+import { Route as PreviewRouteImport } from './routes/preview'
 import { Route as FlowEditorRouteImport } from './routes/flow-editor'
 import { Route as AppRouteImport } from './routes/App'
 import { Route as IndexRouteImport } from './routes/index'
@@ -17,6 +18,11 @@ import { Route as IndexRouteImport } from './routes/index'
 const TimelineRoute = TimelineRouteImport.update({
   id: '/timeline',
   path: '/timeline',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PreviewRoute = PreviewRouteImport.update({
+  id: '/preview',
+  path: '/preview',
   getParentRoute: () => rootRouteImport,
 } as any)
 const FlowEditorRoute = FlowEditorRouteImport.update({
@@ -39,12 +45,14 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/App': typeof AppRoute
   '/flow-editor': typeof FlowEditorRoute
+  '/preview': typeof PreviewRoute
   '/timeline': typeof TimelineRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/App': typeof AppRoute
   '/flow-editor': typeof FlowEditorRoute
+  '/preview': typeof PreviewRoute
   '/timeline': typeof TimelineRoute
 }
 export interface FileRoutesById {
@@ -52,20 +60,22 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/App': typeof AppRoute
   '/flow-editor': typeof FlowEditorRoute
+  '/preview': typeof PreviewRoute
   '/timeline': typeof TimelineRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/App' | '/flow-editor' | '/timeline'
+  fullPaths: '/' | '/App' | '/flow-editor' | '/preview' | '/timeline'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/App' | '/flow-editor' | '/timeline'
-  id: '__root__' | '/' | '/App' | '/flow-editor' | '/timeline'
+  to: '/' | '/App' | '/flow-editor' | '/preview' | '/timeline'
+  id: '__root__' | '/' | '/App' | '/flow-editor' | '/preview' | '/timeline'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AppRoute: typeof AppRoute
   FlowEditorRoute: typeof FlowEditorRoute
+  PreviewRoute: typeof PreviewRoute
   TimelineRoute: typeof TimelineRoute
 }
 
@@ -76,6 +86,13 @@ declare module '@tanstack/react-router' {
       path: '/timeline'
       fullPath: '/timeline'
       preLoaderRoute: typeof TimelineRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/preview': {
+      id: '/preview'
+      path: '/preview'
+      fullPath: '/preview'
+      preLoaderRoute: typeof PreviewRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/flow-editor': {
@@ -106,6 +123,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AppRoute: AppRoute,
   FlowEditorRoute: FlowEditorRoute,
+  PreviewRoute: PreviewRoute,
   TimelineRoute: TimelineRoute,
 }
 export const routeTree = rootRouteImport

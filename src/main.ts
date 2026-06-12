@@ -39,6 +39,24 @@ const createWindow = async () => {
   });
 
   mainWindow.removeMenu();
+
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    return {
+      action: "allow",
+      overrideBrowserWindowOptions: {
+        autoHideMenuBar: true,
+        minWidth: 800,
+        minHeight: 450,
+        width: 1280,
+        height: 720,
+        webPreferences: {
+          preload: path.join(__dirname, "preload.js"),
+          webSecurity: false,
+        },
+      },
+    };
+  });
+
   // and load the index.html of the app.
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
     await mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);

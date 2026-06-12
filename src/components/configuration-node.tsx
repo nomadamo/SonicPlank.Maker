@@ -20,7 +20,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { useScreenCapture } from "@/hooks/useScreenCapture";
 
 
@@ -28,9 +27,7 @@ export function ConfigurationNode(NodeRef: NodeProps<FlowNodeType>) {
   const node = NodeRef;
   const updateNodeData = useSetAtom(updateNodeDataAtom);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const popOutVideoRef = useRef<HTMLVideoElement>(null);
   const [isPreviewActive, setIsPreviewActive] = useState(false);
-  const [isPopOutOpen, setIsPopOutOpen] = useState(false);
 
   const {
     sources,
@@ -63,15 +60,12 @@ export function ConfigurationNode(NodeRef: NodeProps<FlowNodeType>) {
     }
   }, [stream]);
 
-  // Handle stream assignment to popout HTMLVideoElement
-  useEffect(() => {
-    if (popOutVideoRef.current && stream && isPopOutOpen) {
-      popOutVideoRef.current.srcObject = stream;
-      popOutVideoRef.current.play().catch((err) => {
-        console.error("[ConfigurationNode] Popout video playback failed:", err);
-      });
-    }
-  }, [stream, isPopOutOpen]);
+  const handlePopOut = useCallback(() => {
+    if (!node.data.captureSourceId) return;
+    const url = `index.html#/preview?sourceId=${node.data.captureSourceId}&audio=${!!node.data.captureAudio}`;
+    window.open(url, "_blank", "width=1280,height=720,frame=true");
+  }, [node.data.captureSourceId, node.data.captureAudio]);
+
 
 
   // Clean up if preview gets turned off or selected source is deleted/changed
@@ -230,7 +224,7 @@ export function ConfigurationNode(NodeRef: NodeProps<FlowNodeType>) {
 
                 {isPreviewActive && (
                   <button
-                    onClick={() => setIsPopOutOpen(true)}
+                    onClick={handlePopOut}
                     className="p-1 rounded bg-zinc-800 border border-zinc-700 hover:bg-zinc-700 text-zinc-300 hover:text-white transition-colors cursor-pointer"
                     title="Pop out preview"
                   >
@@ -275,19 +269,6 @@ export function ConfigurationNode(NodeRef: NodeProps<FlowNodeType>) {
           />
         </div>
       </Card>
-
-      {/* Pop Out Large Preview Modal */}
-      <Dialog open={isPopOutOpen} onOpenChange={setIsPopOutOpen}>
-        <DialogContent className="max-w-5xl w-[90vw] aspect-video p-0 bg-black overflow-hidden border border-zinc-800 rounded-2xl shadow-2xl">
-          <video
-            ref={popOutVideoRef}
-            autoPlay
-            playsInline
-            muted
-            className="w-full h-full object-contain"
-          />
-        </DialogContent>
-      </Dialog>
     </>
   );
 }
