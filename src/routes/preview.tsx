@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useRef } from "react";
 import { useScreenCapture } from "@/hooks/useScreenCapture";
+import { Loader2 } from "lucide-react";
 
 export const Route = createFileRoute("/preview")({
   validateSearch: (search: Record<string, unknown>) => {
@@ -50,9 +51,10 @@ function PreviewComponent() {
           className="w-full h-full object-contain"
         />
       ) : (
-        <div className="flex flex-col items-center gap-3 text-zinc-500 text-center animate-pulse">
-          <span className="text-sm font-medium">Connecting to Screen Capture Stream...</span>
-          <span className="text-xs text-zinc-600">Please wait while the media source connects.</span>
+        <div className="flex flex-col items-center gap-3 text-zinc-400 text-center">
+          <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+          <span className="text-sm font-medium tracking-wide">Connecting to Screen Capture...</span>
+          <span className="text-xs text-zinc-600">Initialising desktop audio and video pipeline</span>
         </div>
       )}
     </div>

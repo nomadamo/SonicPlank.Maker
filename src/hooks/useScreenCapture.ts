@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import type { ScreenCaptureSource } from "../global";
 
 export interface UseScreenCaptureResult {
@@ -18,6 +18,8 @@ export function useScreenCapture(): UseScreenCaptureResult {
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  
+  const streamRef = useRef<MediaStream | null>(null);
 
   // Refresh available displays and windows
   const refreshSources = useCallback(async (options?: any) => {
@@ -38,15 +40,16 @@ export function useScreenCapture(): UseScreenCaptureResult {
 
   // Stop current active capturing session
   const stopCapture = useCallback(() => {
-    if (stream) {
-      stream.getTracks().forEach((track) => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => {
         track.stop();
         console.log(`[useScreenCapture] Stopped track: ${track.kind} (${track.label})`);
       });
+      streamRef.current = null;
       setStream(null);
     }
     setActiveSource(null);
-  }, [stream]);
+  }, []);
 
   // Start capture for a specific source ID
   const startCapture = useCallback(
@@ -55,8 +58,9 @@ export function useScreenCapture(): UseScreenCaptureResult {
       setError(null);
 
       // Stop any existing stream first
-      if (stream) {
-        stream.getTracks().forEach((t) => t.stop());
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
       }
 
       try {
@@ -93,6 +97,7 @@ export function useScreenCapture(): UseScreenCaptureResult {
           constraints as unknown as MediaStreamConstraints
         );
 
+        streamRef.current = mediaStream;
         setStream(mediaStream);
 
         // Track when tracks end unexpectedly (e.g. source window closed, or screen disconnected)
@@ -127,17 +132,17 @@ export function useScreenCapture(): UseScreenCaptureResult {
         setLoading(false);
       }
     },
-    [sources, stream, stopCapture]
+    [sources, stopCapture]
   );
 
   // Auto clean-up when component unmounts
   useEffect(() => {
     return () => {
-      if (stream) {
-        stream.getTracks().forEach((t) => t.stop());
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop());
       }
     };
-  }, [stream]);
+  }, []);
 
   return {
     sources,

@@ -1,4 +1,4 @@
-import { createRootRoute } from "@tanstack/react-router";
+import { createRootRoute, Outlet, useLocation } from "@tanstack/react-router";
 import App from "./App"; // Adjust the path to your App.tsx
 import { LoadingAnimation } from "@/components/animations/loading-animation";
 import ErrorBoundary from "@/components/errorboundary";
@@ -7,6 +7,19 @@ import { StateMachineProvider } from "@/store/stateMachine";
 import { WaveSurferProvider } from "@/store/wavesurferprovider";
 
 function RootComponent() {
+  const location = useLocation();
+  const isPreview = location.pathname === "/preview";
+
+  if (isPreview) {
+    return (
+      <WaveSurferProvider>
+        <StateMachineProvider>
+          <Outlet />
+        </StateMachineProvider>
+      </WaveSurferProvider>
+    );
+  }
+
   return (
     <WaveSurferProvider>
       <StateMachineProvider>
