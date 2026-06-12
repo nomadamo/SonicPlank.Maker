@@ -14,6 +14,7 @@ export type FlowNodeType<
     captureSourceName?: string;
     captureType?: string;
     captureAudio?: boolean;
+    captureResolution?: string;
   };
   type?: string;
 };

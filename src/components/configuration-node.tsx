@@ -23,11 +23,20 @@ import { Switch } from "@/components/ui/switch";
 import { useScreenCapture } from "@/hooks/useScreenCapture";
 
 
+const RESOLUTION_PRESETS = {
+  original: { label: "Original / Match Screen", aspect: "auto", width: 3840, height: 2160 },
+  hd: { label: "16:9 HD (1280x720)", aspect: "16/9", width: 1280, height: 720 },
+  fhd: { label: "16:9 Full HD (1920x1080)", aspect: "16/9", width: 1920, height: 1080 },
+  uwhd: { label: "21:9 UWHD (2560x1080)", aspect: "21/9", width: 2560, height: 1080 },
+  uwqhd: { label: "21:9 UWQHD (3440x1440)", aspect: "21/9", width: 3440, height: 1440 },
+};
+
 export function ConfigurationNode(NodeRef: NodeProps<FlowNodeType>) {
   const node = NodeRef;
   const updateNodeData = useSetAtom(updateNodeDataAtom);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isPreviewActive, setIsPreviewActive] = useState(false);
+  const [dynamicAspectRatio, setDynamicAspectRatio] = useState<string>("16/9");
 
   const {
     sources,
@@ -37,6 +46,9 @@ export function ConfigurationNode(NodeRef: NodeProps<FlowNodeType>) {
     startCapture,
     stopCapture,
   } = useScreenCapture();
+
+  const resolutionKey = (node.data.captureResolution as keyof typeof RESOLUTION_PRESETS) || "original";
+  const activePreset = RESOLUTION_PRESETS[resolutionKey] || RESOLUTION_PRESETS.original;
 
   // Query available displays and windows without thumbnails to avoid WGC error spam
   const fetchSources = useCallback(async () => {
@@ -62,11 +74,9 @@ export function ConfigurationNode(NodeRef: NodeProps<FlowNodeType>) {
 
   const handlePopOut = useCallback(() => {
     if (!node.data.captureSourceId) return;
-    const url = `index.html#/preview?sourceId=${node.data.captureSourceId}&audio=${!!node.data.captureAudio}`;
+    const url = `index.html#/preview?sourceId=${node.data.captureSourceId}&audio=${!!node.data.captureAudio}&resolution=${resolutionKey}`;
     window.open(url, "_blank", "width=1280,height=720,frame=true");
-  }, [node.data.captureSourceId, node.data.captureAudio]);
-
-
+  }, [node.data.captureSourceId, node.data.captureAudio, resolutionKey]);
 
   // Clean up if preview gets turned off or selected source is deleted/changed
   const handleTogglePreview = useCallback(async () => {
@@ -78,13 +88,14 @@ export function ConfigurationNode(NodeRef: NodeProps<FlowNodeType>) {
       setIsPreviewActive(true);
       const activeStream = await startCapture(
         node.data.captureSourceId,
-        !!node.data.captureAudio
+        !!node.data.captureAudio,
+        { maxWidth: activePreset.width, maxHeight: activePreset.height }
       );
       if (!activeStream) {
         setIsPreviewActive(false);
       }
     }
-  }, [isPreviewActive, node.data.captureSourceId, node.data.captureAudio, startCapture, stopCapture]);
+  }, [isPreviewActive, node.data.captureSourceId, node.data.captureAudio, startCapture, stopCapture, activePreset]);
 
   const handleSourceChange = useCallback(
     (val: string) => {
@@ -106,6 +117,26 @@ export function ConfigurationNode(NodeRef: NodeProps<FlowNodeType>) {
     [sources, node.id, updateNodeData, isPreviewActive, stopCapture]
   );
 
+  const handleResolutionChange = useCallback(
+    (val: string) => {
+      updateNodeData({
+        id: node.id,
+        patch: { captureResolution: val },
+      });
+
+      // Restart capture if preview is active to apply new resolution constraints
+      if (isPreviewActive && node.data.captureSourceId) {
+        const preset = RESOLUTION_PRESETS[val as keyof typeof RESOLUTION_PRESETS] || RESOLUTION_PRESETS.original;
+        startCapture(
+          node.data.captureSourceId,
+          !!node.data.captureAudio,
+          { maxWidth: preset.width, maxHeight: preset.height }
+        );
+      }
+    },
+    [node.id, updateNodeData, isPreviewActive, node.data.captureSourceId, node.data.captureAudio, startCapture]
+  );
+
   const handleAudioToggle = useCallback(
     (checked: boolean) => {
       updateNodeData({
@@ -114,11 +145,22 @@ export function ConfigurationNode(NodeRef: NodeProps<FlowNodeType>) {
       });
       // If we are currently previewing, restart capture to apply audio changes
       if (isPreviewActive && node.data.captureSourceId) {
-        startCapture(node.data.captureSourceId, checked);
+        startCapture(
+          node.data.captureSourceId,
+          checked,
+          { maxWidth: activePreset.width, maxHeight: activePreset.height }
+        );
       }
     },
-    [node.id, updateNodeData, isPreviewActive, startCapture]
+    [node.id, updateNodeData, isPreviewActive, node.data.captureSourceId, activePreset, startCapture]
   );
+
+  const handleVideoLoadedMetadata = useCallback((e: React.SyntheticEvent<HTMLVideoElement>) => {
+    const video = e.currentTarget;
+    if (video.videoWidth && video.videoHeight) {
+      setDynamicAspectRatio(`${video.videoWidth}/${video.videoHeight}`);
+    }
+  }, []);
 
   const selectedSource = sources.find((s) => s.id === node.data.captureSourceId);
   const selectedLabel = selectedSource ? selectedSource.name : (node.data.captureSourceName || "Select capture source");
@@ -194,6 +236,38 @@ export function ConfigurationNode(NodeRef: NodeProps<FlowNodeType>) {
           </Select>
         </div>
 
+        {/* Aspect Ratio / Resolution Selector */}
+        <div className="flex flex-col gap-1.5 nodrag nopan nowheel">
+          <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">
+            Aspect Ratio / Resolution
+          </label>
+          <Select
+            value={resolutionKey}
+            onValueChange={(val) => {
+              if (val) {
+                handleResolutionChange(val);
+              }
+            }}
+          >
+            <SelectTrigger className="w-full h-9 bg-zinc-900 border border-zinc-800 rounded-lg flex items-center justify-between px-3 text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-zinc-200">
+              <SelectValue placeholder="Select aspect/resolution">
+                {activePreset.label}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent className="bg-zinc-950 border border-zinc-800 rounded-lg p-1 max-h-60 overflow-y-auto shadow-xl">
+              {Object.entries(RESOLUTION_PRESETS).map(([key, preset]) => (
+                <SelectItem
+                  key={key}
+                  value={key}
+                  className="flex items-center p-2 hover:bg-zinc-900 rounded cursor-pointer text-sm text-zinc-300"
+                >
+                  {preset.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
         {/* Live Video Preview Area */}
         <div className="flex flex-col gap-1.5 nodrag nopan nowheel">
           <div className="flex items-center justify-between">
@@ -235,13 +309,19 @@ export function ConfigurationNode(NodeRef: NodeProps<FlowNodeType>) {
             )}
           </div>
 
-          <div className="relative rounded-lg border border-zinc-800 overflow-hidden bg-black aspect-video flex items-center justify-center shadow-inner group">
+          <div
+            className="relative rounded-lg border border-zinc-800 overflow-hidden bg-black flex items-center justify-center shadow-inner group transition-all duration-300"
+            style={{
+              aspectRatio: activePreset.aspect === "auto" ? dynamicAspectRatio : activePreset.aspect,
+            }}
+          >
             {isPreviewActive && stream ? (
               <video
                 ref={videoRef}
                 autoPlay
                 playsInline
                 muted
+                onLoadedMetadata={handleVideoLoadedMetadata}
                 className="w-full h-full object-contain"
               />
             ) : (

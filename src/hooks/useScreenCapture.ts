@@ -8,7 +8,11 @@ export interface UseScreenCaptureResult {
   loading: boolean;
   error: string | null;
   refreshSources: (options?: any) => Promise<ScreenCaptureSource[]>;
-  startCapture: (sourceId: string, captureAudio?: boolean) => Promise<MediaStream | null>;
+  startCapture: (
+    sourceId: string,
+    captureAudio?: boolean,
+    resolutionOverride?: { maxWidth?: number; maxHeight?: number }
+  ) => Promise<MediaStream | null>;
   stopCapture: () => void;
 }
 
@@ -53,7 +57,11 @@ export function useScreenCapture(): UseScreenCaptureResult {
 
   // Start capture for a specific source ID
   const startCapture = useCallback(
-    async (sourceId: string, captureAudio = false): Promise<MediaStream | null> => {
+    async (
+      sourceId: string,
+      captureAudio = false,
+      resolutionOverride?: { maxWidth?: number; maxHeight?: number }
+    ): Promise<MediaStream | null> => {
       setLoading(true);
       setError(null);
 
@@ -65,14 +73,17 @@ export function useScreenCapture(): UseScreenCaptureResult {
 
       try {
         // Construct standard Electron desktop capture constraints
+        const maxWidth = resolutionOverride?.maxWidth ?? 3840;
+        const maxHeight = resolutionOverride?.maxHeight ?? 2160;
+
         const videoConstraints: any = {
           mandatory: {
             chromeMediaSource: "desktop",
             chromeMediaSourceId: sourceId,
-            minWidth: 1280,
-            maxWidth: 1920,
-            minHeight: 720,
-            maxHeight: 1080,
+            minWidth: 320,
+            maxWidth: maxWidth,
+            minHeight: 180,
+            maxHeight: maxHeight,
           },
         };
 
