@@ -136,7 +136,7 @@ export function ConfigurationNode(NodeRef: NodeProps<FlowNodeType>) {
           <button
             onClick={fetchSources}
             disabled={loadingSources}
-            className="p-1.5 rounded hover:bg-zinc-800 text-zinc-400 hover:text-zinc-100 transition-colors disabled:opacity-50"
+            className="p-1.5 rounded hover:bg-zinc-800 text-zinc-400 hover:text-zinc-100 transition-colors disabled:opacity-50 nodrag nopan nowheel"
             title="Refresh sources"
           >
             <RefreshCwIcon className={cn("w-4 h-4", loadingSources && "animate-spin")} />
@@ -144,7 +144,7 @@ export function ConfigurationNode(NodeRef: NodeProps<FlowNodeType>) {
         </div>
 
         {/* Display / Window Selector */}
-        <div className="flex flex-col gap-1.5">
+        <div className="flex flex-col gap-1.5 nodrag nopan nowheel">
           <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">
             Capture Target
           </label>
@@ -185,7 +185,7 @@ export function ConfigurationNode(NodeRef: NodeProps<FlowNodeType>) {
         </div>
 
         {/* Live Video Preview Area */}
-        <div className="flex flex-col gap-1.5">
+        <div className="flex flex-col gap-1.5 nodrag nopan nowheel">
           <div className="flex items-center justify-between">
             <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">
               Live Preview
@@ -236,7 +236,7 @@ export function ConfigurationNode(NodeRef: NodeProps<FlowNodeType>) {
         </div>
 
         {/* Audio Toggle */}
-        <div className="flex items-center justify-between border-t border-zinc-800/80 pt-3 mt-1">
+        <div className="flex items-center justify-between border-t border-zinc-800/80 pt-3 mt-1 nodrag nopan nowheel">
           <div className="flex flex-col">
             <span className="text-xs font-medium text-zinc-200">Capture System Audio</span>
             <span className="text-[10px] text-zinc-400">Capture window or desktop audio stream</span>
