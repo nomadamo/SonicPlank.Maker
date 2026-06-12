@@ -1,4 +1,4 @@
-import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, session } from "electron";
+import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, session, screen } from "electron";
 import {
   readData,
   writeData,
@@ -239,6 +239,30 @@ const createWindow = async () => {
         }));
       } catch (error) {
         console.error("Failed to get screen sources:", error);
+        throw error;
+      }
+    }
+  );
+
+  ipcMain.handle(
+    "getDisplays",
+    () => {
+      try {
+        const displays = screen.getAllDisplays();
+        const primaryId = screen.getPrimaryDisplay().id;
+        return displays.map(d => ({
+          id: d.id,
+          bounds: {
+            x: d.bounds.x,
+            y: d.bounds.y,
+            width: d.bounds.width,
+            height: d.bounds.height,
+          },
+          scaleFactor: d.scaleFactor,
+          isPrimary: d.id === primaryId,
+        }));
+      } catch (error) {
+        console.error("Failed to get displays:", error);
         throw error;
       }
     }

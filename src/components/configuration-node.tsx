@@ -11,7 +11,7 @@ import {
 import { FlowNodeType } from "@/types/flow-node";
 import { useSetAtom } from "jotai";
 import { updateNodeDataAtom } from "@/store/flowStore";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import {
   Select,
   SelectContent,
@@ -23,13 +23,23 @@ import { Switch } from "@/components/ui/switch";
 import { useScreenCapture } from "@/hooks/useScreenCapture";
 
 
-const RESOLUTION_PRESETS = {
-  original: { label: "Original / Match Screen", aspect: "auto", width: 3840, height: 2160 },
-  hd: { label: "16:9 HD (1280x720)", aspect: "16/9", width: 1280, height: 720 },
-  fhd: { label: "16:9 Full HD (1920x1080)", aspect: "16/9", width: 1920, height: 1080 },
-  uwhd: { label: "21:9 UWHD (2560x1080)", aspect: "21/9", width: 2560, height: 1080 },
-  uwqhd: { label: "21:9 UWQHD (3440x1440)", aspect: "21/9", width: 3440, height: 1440 },
-};
+function getDisplayForSourceId(sourceId: string, displaysList: any[]) {
+  if (!sourceId || !sourceId.startsWith("screen:")) return null;
+  const idStr = sourceId.replace("screen:", "");
+  
+  // Try direct match by display.id
+  const matchById = displaysList.find(d => String(d.id) === idStr);
+  if (matchById) return matchById;
+
+  // Fallback to match by index if it's "screen:0", "screen:1" etc.
+  const index = parseInt(idStr, 10);
+  if (!isNaN(index) && index >= 0 && index < displaysList.length) {
+    return displaysList[index];
+  }
+
+  // Fallback: if it's the primary screen or we have only 1 screen, return the primary display
+  return displaysList.find(d => d.isPrimary) || displaysList[0];
+}
 
 export function ConfigurationNode(NodeRef: NodeProps<FlowNodeType>) {
   const node = NodeRef;
@@ -37,6 +47,7 @@ export function ConfigurationNode(NodeRef: NodeProps<FlowNodeType>) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isPreviewActive, setIsPreviewActive] = useState(false);
   const [dynamicAspectRatio, setDynamicAspectRatio] = useState<string>("16/9");
+  const [displays, setDisplays] = useState<any[]>([]);
 
   const {
     sources,
@@ -47,8 +58,15 @@ export function ConfigurationNode(NodeRef: NodeProps<FlowNodeType>) {
     stopCapture,
   } = useScreenCapture();
 
-  const resolutionKey = (node.data.captureResolution as keyof typeof RESOLUTION_PRESETS) || "original";
-  const activePreset = RESOLUTION_PRESETS[resolutionKey] || RESOLUTION_PRESETS.original;
+  // Query physical displays
+  const fetchDisplays = useCallback(async () => {
+    try {
+      const physicalDisplays = await window.electron.getDisplays();
+      setDisplays(physicalDisplays);
+    } catch (err) {
+      console.error("[ConfigurationNode] Failed to fetch physical displays:", err);
+    }
+  }, []);
 
   // Query available displays and windows without thumbnails to avoid WGC error spam
   const fetchSources = useCallback(async () => {
@@ -60,7 +78,48 @@ export function ConfigurationNode(NodeRef: NodeProps<FlowNodeType>) {
 
   useEffect(() => {
     fetchSources();
-  }, [fetchSources]);
+    fetchDisplays();
+  }, [fetchSources, fetchDisplays]);
+
+  // Dynamically calculate resolution presets based on target type and monitor dimensions
+  const resolutionPresets = useMemo(() => {
+    if (node.data.captureSourceId?.startsWith("screen:") && displays.length > 0) {
+      const activeDisplay = getDisplayForSourceId(node.data.captureSourceId, displays);
+      if (activeDisplay) {
+        const w = activeDisplay.bounds.width;
+        const h = activeDisplay.bounds.height;
+        const ratio = w / h;
+        
+        let aspectString = "auto";
+        if (Math.abs(ratio - 16/9) < 0.01) aspectString = "16/9";
+        else if (Math.abs(ratio - 21/9) < 0.05) aspectString = "21/9";
+        else if (Math.abs(ratio - 16/10) < 0.01) aspectString = "16/10";
+        else if (Math.abs(ratio - 4/3) < 0.01) aspectString = "4/3";
+        else aspectString = `${w}/${h}`;
+
+        return {
+          original: { label: `Original (${w}x${h})`, aspect: aspectString, width: w, height: h },
+          scale_75: { label: `75% Scale (${Math.round(w*0.75)}x${Math.round(h*0.75)})`, aspect: aspectString, width: Math.round(w*0.75), height: Math.round(h*0.75) },
+          scale_50: { label: `50% Scale (${Math.round(w*0.5)}x${Math.round(h*0.5)})`, aspect: aspectString, width: Math.round(w*0.5), height: Math.round(h*0.5) },
+          hd: { label: "16:9 HD (1280x720)", aspect: "16/9", width: 1280, height: 720 },
+          fhd: { label: "16:9 Full HD (1920x1080)", aspect: "16/9", width: 1920, height: 1080 },
+        };
+      }
+    }
+
+    return {
+      original: { label: "Original / Fit Window", aspect: "auto", width: 3840, height: 2160 },
+      hd: { label: "16:9 HD (1280x720)", aspect: "16/9", width: 1280, height: 720 },
+      fhd: { label: "16:9 Full HD (1920x1080)", aspect: "16/9", width: 1920, height: 1080 },
+      uwhd: { label: "21:9 UWHD (2560x1080)", aspect: "21/9", width: 2560, height: 1080 },
+      uwqhd: { label: "21:9 UWQHD (3440x1440)", aspect: "21/9", width: 3440, height: 1440 },
+    };
+  }, [node.data.captureSourceId, displays]);
+
+  const resolutionKey = (node.data.captureResolution && node.data.captureResolution in resolutionPresets)
+    ? node.data.captureResolution
+    : "original";
+  const activePreset = resolutionPresets[resolutionKey as keyof typeof resolutionPresets] || resolutionPresets.original;
 
   // Handle stream assignment to HTMLVideoElement
   useEffect(() => {
@@ -74,9 +133,9 @@ export function ConfigurationNode(NodeRef: NodeProps<FlowNodeType>) {
 
   const handlePopOut = useCallback(() => {
     if (!node.data.captureSourceId) return;
-    const url = `index.html#/preview?sourceId=${node.data.captureSourceId}&audio=${!!node.data.captureAudio}&resolution=${resolutionKey}`;
+    const url = `index.html#/preview?sourceId=${node.data.captureSourceId}&audio=${!!node.data.captureAudio}&maxWidth=${activePreset.width}&maxHeight=${activePreset.height}&aspect=${activePreset.aspect}`;
     window.open(url, "_blank", "width=1280,height=720,frame=true");
-  }, [node.data.captureSourceId, node.data.captureAudio, resolutionKey]);
+  }, [node.data.captureSourceId, node.data.captureAudio, activePreset]);
 
   // Clean up if preview gets turned off or selected source is deleted/changed
   const handleTogglePreview = useCallback(async () => {
@@ -126,7 +185,7 @@ export function ConfigurationNode(NodeRef: NodeProps<FlowNodeType>) {
 
       // Restart capture if preview is active to apply new resolution constraints
       if (isPreviewActive && node.data.captureSourceId) {
-        const preset = RESOLUTION_PRESETS[val as keyof typeof RESOLUTION_PRESETS] || RESOLUTION_PRESETS.original;
+        const preset = resolutionPresets[val as keyof typeof resolutionPresets] || resolutionPresets.original;
         startCapture(
           node.data.captureSourceId,
           !!node.data.captureAudio,
@@ -134,7 +193,7 @@ export function ConfigurationNode(NodeRef: NodeProps<FlowNodeType>) {
         );
       }
     },
-    [node.id, updateNodeData, isPreviewActive, node.data.captureSourceId, node.data.captureAudio, startCapture]
+    [node.id, updateNodeData, isPreviewActive, node.data.captureSourceId, node.data.captureAudio, startCapture, resolutionPresets]
   );
 
   const handleAudioToggle = useCallback(
@@ -255,7 +314,7 @@ export function ConfigurationNode(NodeRef: NodeProps<FlowNodeType>) {
               </SelectValue>
             </SelectTrigger>
             <SelectContent className="bg-zinc-950 border border-zinc-800 rounded-lg p-1 max-h-60 overflow-y-auto shadow-xl">
-              {Object.entries(RESOLUTION_PRESETS).map(([key, preset]) => (
+              {Object.entries(resolutionPresets).map(([key, preset]) => (
                 <SelectItem
                   key={key}
                   value={key}

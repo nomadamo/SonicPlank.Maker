@@ -57,6 +57,10 @@ contextBridge.exposeInMainWorld("electron", {
     const sources = await ipcRenderer.invoke("getScreenSources", options);
     return sources;
   },
+  getDisplays: async (): Promise<any[]> => {
+    const displays = await ipcRenderer.invoke("getDisplays");
+    return displays;
+  },
   onLog: (callback: (event: any, data: any) => void) => {
     ipcRenderer.on("log", callback);
   },

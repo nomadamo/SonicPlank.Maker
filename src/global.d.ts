@@ -7,6 +7,13 @@ export interface ScreenCaptureSource {
   appIconUrl: string | null;
 }
 
+export interface DisplayInfo {
+  id: number;
+  bounds: { x: number; y: number; width: number; height: number };
+  scaleFactor: number;
+  isPrimary: boolean;
+}
+
 declare global {
   interface Window {
     electron: {
@@ -22,6 +29,7 @@ declare global {
       saveRecording: (fileName: string, arrayBuffer: ArrayBuffer) => Promise<string>;
       getFilePath: (file: File) => string;
       getScreenSources: (options?: any) => Promise<ScreenCaptureSource[]>;
+      getDisplays: () => Promise<DisplayInfo[]>;
       onLog: (callback: (event: any, data: string) => void) => void;
       removeOnLog: (callback: (event: any, data: string) => void) => void;
     };
