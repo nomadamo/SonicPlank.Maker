@@ -8,6 +8,9 @@ export default defineConfig({
   build: {
     sourcemap: true,
   },
+  server: {
+    cors: true, // Enables CORS headers on the Vite local dev server
+  },
   plugins: [
     tailwindcss(),
     tanstackRouter({

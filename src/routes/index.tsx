@@ -78,7 +78,11 @@ import { RecordingDialog } from "@/components/recording-dialog";
 import { AddStreamDialog } from "@/components/add-stream-dialog";
 import { AddAudioDialog } from "@/components/add-audio-dialog";
 import { useSettings } from "@/store/settingsStore";
-import { isSupportedAudioFile, formatTime as formatDuration, extractStreamInfo } from "@/utils/audio";
+import {
+  isSupportedAudioFile,
+  formatTime as formatDuration,
+  extractStreamInfo,
+} from "@/utils/audio";
 
 export const Route = createFileRoute("/")({
   beforeLoad: () => {
@@ -87,8 +91,6 @@ export const Route = createFileRoute("/")({
   component: Library,
   pendingComponent: LoadingAnimation,
 });
-
-
 
 function VisualizerBackdrop({ visible }: { visible: boolean }) {
   const { htmlAudio, webAudio } = useAudio();

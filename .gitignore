@@ -1,9 +1,14 @@
 node_modules
 dist
 .vite
+.tanstack
 out
-fmkadmapgofadopljbjfkapdkoienihi
+Extensions
 .eslintcache
 *.log
-llms-full.txt
-
+*llms*.txt
+.github
+.claude
+.agent
+.gemini
+./src/.tanstack

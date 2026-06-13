@@ -5,51 +5,55 @@ import {
   getBezierPath,
   getStraightPath,
   getSmoothStepPath,
+  useNodes,
 } from "@xyflow/react";
 
 export type AnimatedSvgEdge = Edge<{
   /**
-   * The amount of time it takes, in seconds, to move the shape one from end of
+   * The amount of time it takes, in seconds, to move the shape from one end of
    * the edge path to the other.
    */
   duration: number;
   /**
-   * The direction in which the shape moves along the edge path. Each value
-   * corresponds to the following behavior:
-   *
-   * - `forward`: The shape moves from the source node to the target node.
-   *
-   * - `reverse`: The shape moves from the target node to the source node.
-   *
-   * - `alternate`: The shape moves from the source node to the target node and
-   *   then back to the source node.
-   *
-   * - `alternate-reverse`: The shape moves from the target node to the source
-   *   node and then back to the target node.
-   *
-   * If not provided, this defaults to `"forward"`.
+   * The direction in which the shape moves along the edge path.
    */
   direction?: "forward" | "reverse" | "alternate" | "alternate-reverse";
   /**
-   * Which of React Flow's path algorithms to use. Each value corresponds to one
-   * of React Flow's built-in edge types.
-   *
-   * If not provided, this defaults to `"bezier"`.
+   * Which of React Flow's path algorithms to use.
    */
   path?: "bezier" | "smoothstep" | "step" | "straight";
   /**
-   * The number of times to repeat the animation before stopping. If set to
-   * `"indefinite"`, the animation will repeat indefinitely.
-   *
-   * If not provided, this defaults to `"indefinite"`.
+   * The number of times to repeat the animation before stopping.
    */
   repeat?: number | "indefinite";
-  shape: keyof typeof shapes;
+  shape?: string;
 }>;
 
+const getNodeColor = (type?: string): string => {
+  switch (type) {
+    case "audioFlowNode":
+      return "#10b981"; // Emerald
+    case "captureSourceNode":
+      return "#6366f1"; // Indigo
+    case "targetOutputNode":
+    case "masterOutputNode":
+      return "#ef4444"; // Red
+    case "textOverlayNode":
+    case "colorOverlayNode":
+    case "imageOverlayNode":
+      return "#6366f1"; // Indigo
+    case "overlayGroupNode":
+      return "#818cf8"; // Indigo
+    case "visualizerOverlayNode":
+      return "#06b6d4"; // Cyan
+    default:
+      return "#6366f1"; // Default Indigo
+  }
+};
+
 /**
- * The `AnimatedSvgEdge` component renders a typical React Flow edge and animates
- * an SVG shape along the edge's path.
+ * The `AnimatedSvgEdge` component renders a custom styled connection edge and animates
+ * a glowing color-transitioning particle along the path.
  */
 export function AnimatedSvgEdge({
   id,
@@ -60,15 +64,33 @@ export function AnimatedSvgEdge({
   sourcePosition,
   targetPosition,
   data = {
-    duration: 2,
+    duration: 1.5,
     direction: "forward",
     path: "bezier",
     repeat: "indefinite",
-    shape: "circle",
   },
   ...delegated
 }: EdgeProps<AnimatedSvgEdge>) {
-  const Shape = shapes[data.shape];
+  const {
+    source,
+    target,
+    sourceHandleId,
+    targetHandleId,
+    animated,
+    selected,
+    selectable,
+    deletable,
+    style,
+    ...restEdgeProps
+  } = delegated;
+
+  const nodes = useNodes();
+  const sourceNode = nodes.find((n) => n.id === source);
+  const targetNode = nodes.find((n) => n.id === target);
+
+  const sourceColor = getNodeColor(sourceNode?.type);
+  const targetColor = getNodeColor(targetNode?.type);
+  const duration = data.duration ?? 1.5;
 
   const [path] = getPath({
     type: data.path ?? "bezier",
@@ -81,7 +103,7 @@ export function AnimatedSvgEdge({
   });
 
   const animateMotionProps = getAnimateMotionProps({
-    duration: data.duration,
+    duration,
     direction: data.direction ?? "forward",
     repeat: data.repeat ?? "indefinite",
     path,
@@ -89,43 +111,47 @@ export function AnimatedSvgEdge({
 
   return (
     <>
-      <BaseEdge id={id} path={path} {...delegated} />
-      <Shape animateMotionProps={animateMotionProps} />
+      <BaseEdge
+        id={id}
+        path={path}
+        style={{
+          stroke: selected ? "#52525b" : "#27272a", // Selected: zinc-600, Default: zinc-800
+          strokeWidth: selected ? 2.5 : 1.5,
+          transition: "stroke 0.2s, stroke-width 0.2s",
+          opacity: 0.8,
+          ...style,
+        }}
+        {...restEdgeProps}
+      />
+      <g>
+        <animateMotion {...animateMotionProps} />
+        {/* Outer Glow Blur */}
+        <circle
+          r="3"
+          opacity="0.25"
+          fill={targetColor}
+          style={{ filter: "blur(2px)" }}
+        >
+          <animate
+            attributeName="fill"
+            values={`${targetColor};${sourceColor}`}
+            dur={`${duration}s`}
+            repeatCount="indefinite"
+          />
+        </circle>
+        {/* Core Particle */}
+        <circle r="1.5" opacity="0.7" fill={targetColor}>
+          <animate
+            attributeName="fill"
+            values={`${targetColor};${sourceColor}`}
+            dur={`${duration}s`}
+            repeatCount="indefinite"
+          />
+        </circle>
+      </g>
     </>
   );
 }
-
-type AnimateMotionProps = {
-  dur: string;
-  keyTimes: string;
-  keyPoints: string;
-  repeatCount: number | "indefinite";
-  path: string;
-};
-
-type AnimatedSvg = ({
-  animateMotionProps,
-}: {
-  animateMotionProps: AnimateMotionProps;
-}) => React.ReactElement;
-
-const shapes = {
-  circle: ({ animateMotionProps }) => (
-    <circle r="5" fill="#ff0073">
-      <animateMotion {...animateMotionProps} />
-    </circle>
-  ),
-
-  package: ({ animateMotionProps }) => (
-    <g fill="#dfc7b1" stroke="#2b2a2a" transform="translate(-10,-10)">
-      <path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z" />
-      <path d="M12 22V12" />
-      <path d="m3.3 7 7.703 4.734a2 2 0 0 0 1.994 0L20.7 7" />
-      <path d="m7.5 4.27 9 5.15" />
-      <animateMotion {...animateMotionProps} />
-    </g>
-  ),
-} satisfies Record<string, AnimatedSvg>;
 
 /**
  * Chooses which of React Flow's edge path algorithms to use based on the provided
@@ -208,9 +234,6 @@ function getAnimateMotionProps({
   const base = {
     path,
     repeatCount: repeat,
-    // The default calcMode for the `<animateMotion />` element is "paced", which
-    // is not compatible with the `keyPoints` attribute. Setting this to "linear"
-    // ensures that the shape correct follows the path.
     calcMode: "linear",
   };
 
@@ -219,8 +242,8 @@ function getAnimateMotionProps({
       return {
         ...base,
         dur: `${duration}s`,
-        keyTimes: "0;1",
-        keyPoints: "0;1",
+        keyTimes: "0.0; 1.0",
+        keyPoints: "0.0; 1.0",
       };
 
     case "reverse":
@@ -234,9 +257,7 @@ function getAnimateMotionProps({
     case "alternate":
       return {
         ...base,
-        // By doubling the animation duration, the time spent moving from one end
-        // to the other remains consistent when switching between directions.
-        dur: `${duration * 2}s`,
+        dur: `${duration}s`,
         keyTimes: "0;0.5;1",
         keyPoints: "0;1;0",
       };
@@ -244,7 +265,7 @@ function getAnimateMotionProps({
     case "alternate-reverse":
       return {
         ...base,
-        dur: `${duration * 2}s`,
+        dur: `${duration}s`,
         keyTimes: "0;0.5;1",
         keyPoints: "1;0;1",
       };

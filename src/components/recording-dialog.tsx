@@ -489,6 +489,7 @@ export function RecordingDialog({
       const filePath = await window.electron.saveRecording(
         finalFileName,
         wavBuffer,
+        settings.recordingPath,
       );
 
       const item: LibraryItem = {

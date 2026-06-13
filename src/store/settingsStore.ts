@@ -12,6 +12,9 @@ export type AppSettings = {
   playheadLatencyCompensationMs?: number;
   audioStreamIcon?: string;
   audioStreamColor?: string;
+  recordingPath?: string;
+  streamUrl?: string;
+  streamToken?: string;
 };
 
 export const defaultSettings: AppSettings = {
@@ -25,6 +28,9 @@ export const defaultSettings: AppSettings = {
   playheadLatencyCompensationMs: 0,
   audioStreamIcon: "radio",
   audioStreamColor: "#a78bfa",
+  recordingPath: "",
+  streamUrl: "",
+  streamToken: "",
 };
 
 export const settingsAtom = atomWithStorage<AppSettings>(

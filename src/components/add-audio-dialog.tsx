@@ -46,32 +46,47 @@ export function AddAudioDialog({
       setAlbumArt("");
       setDuration(undefined);
 
-      window.electron.getAudioMetadata(filePath)
+      window.electron
+        .getAudioMetadata(filePath)
         .then(async (metadata) => {
           if (metadata.title) setTitle(metadata.title);
           if (metadata.artist) setArtist(metadata.artist);
           if (metadata.albumArt) setAlbumArt(metadata.albumArt);
 
           let resolvedDuration = metadata.duration;
-          if (resolvedDuration !== undefined && resolvedDuration !== null && Number.isFinite(resolvedDuration) && resolvedDuration > 0) {
+          if (
+            resolvedDuration !== undefined &&
+            resolvedDuration !== null &&
+            Number.isFinite(resolvedDuration) &&
+            resolvedDuration > 0
+          ) {
             setDuration(resolvedDuration);
           } else {
             // Fallback: decode local audio file on the frontend using Web Audio API
             try {
               const normalizedPath = filePath.replace(/\\/g, "/");
-              const formattedUrl = normalizedPath.startsWith("http://") || normalizedPath.startsWith("https://")
-                ? normalizedPath
-                : normalizedPath.startsWith("file:///")
+              const formattedUrl =
+                normalizedPath.startsWith("http://") ||
+                normalizedPath.startsWith("https://")
                   ? normalizedPath
-                  : "file:///" + normalizedPath;
+                  : normalizedPath.startsWith("file:///")
+                    ? normalizedPath
+                    : "file:///" + normalizedPath;
 
               if (!formattedUrl.startsWith("http")) {
                 const response = await fetch(formattedUrl);
                 const arrayBuffer = await response.arrayBuffer();
-                const tempCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+                const tempCtx = new (
+                  window.AudioContext || (window as any).webkitAudioContext
+                )();
                 try {
-                  const audioBuffer = await tempCtx.decodeAudioData(arrayBuffer);
-                  if (audioBuffer && Number.isFinite(audioBuffer.duration) && audioBuffer.duration > 0) {
+                  const audioBuffer =
+                    await tempCtx.decodeAudioData(arrayBuffer);
+                  if (
+                    audioBuffer &&
+                    Number.isFinite(audioBuffer.duration) &&
+                    audioBuffer.duration > 0
+                  ) {
                     setDuration(audioBuffer.duration);
                   }
                 } finally {
@@ -79,7 +94,10 @@ export function AddAudioDialog({
                 }
               }
             } catch (fallbackErr) {
-              console.warn("[AddAudioDialog] Fallback decoding failed:", fallbackErr);
+              console.warn(
+                "[AddAudioDialog] Fallback decoding failed:",
+                fallbackErr,
+              );
             }
           }
         })
@@ -147,7 +165,10 @@ export function AddAudioDialog({
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="audio-file-path" className="text-xs text-muted-foreground">
+            <Label
+              htmlFor="audio-file-path"
+              className="text-xs text-muted-foreground"
+            >
               Source File
             </Label>
             <div className="text-xs font-mono bg-muted p-2 rounded-md border border-border overflow-x-auto select-all whitespace-pre-wrap break-all max-h-16">

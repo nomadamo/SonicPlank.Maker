@@ -1,27 +1,32 @@
 import { useEffect, useRef, useCallback } from "react";
 import { useAtomValue, useSetAtom, useAtom } from "jotai";
-import { 
-  timelineIsPlayingAtom, 
-  timelineCurrentTimeAtom, 
-  timelineTracksAtom 
+import {
+  timelineIsPlayingAtom,
+  timelineCurrentTimeAtom,
+  timelineTracksAtom,
 } from "@/store/timelineStore";
 import { $webAudio } from "@/lib/web-audio";
-import { getOrCreateTrackNodes, cleanupUnusedTrackNodes } from "@/lib/trackAudioRegistry";
+import {
+  getOrCreateTrackNodes,
+  cleanupUnusedTrackNodes,
+} from "@/lib/trackAudioRegistry";
 
 export function useTimelinePlayback() {
   const [isPlaying, setIsPlaying] = useAtom(timelineIsPlayingAtom);
   const setCurrentTime = useSetAtom(timelineCurrentTimeAtom);
   const tracks = useAtomValue(timelineTracksAtom);
-  
+
   const audioCache = useRef<Map<string, HTMLAudioElement>>(new Map());
-  const sourceCache = useRef<Map<string, MediaElementAudioSourceNode>>(new Map());
+  const sourceCache = useRef<Map<string, MediaElementAudioSourceNode>>(
+    new Map(),
+  );
 
   // Cleanup unused audio elements, source nodes, and track nodes when clips or tracks are removed
   useEffect(() => {
     const currentClipIds = new Set(
-      tracks.flatMap((t) => t.clips.map((c) => c.id))
+      tracks.flatMap((t) => t.clips.map((c) => c.id)),
     );
-    
+
     // Clean up audio elements
     for (const [key, audio] of audioCache.current.entries()) {
       const clipId = key.replace("audio-", "");
@@ -94,7 +99,11 @@ export function useTimelinePlayback() {
             source.connect(nodes.gainNode);
             sourceCache.current.set(clip.id, source);
           } catch (err) {
-            console.error("Error creating MediaElementSource for clip", clip.id, err);
+            console.error(
+              "Error creating MediaElementSource for clip",
+              clip.id,
+              err,
+            );
           }
         }
 
@@ -112,8 +121,10 @@ export function useTimelinePlayback() {
           }
         }
 
-        const isInsideClip = time >= clip.startTime && time < clip.startTime + clip.duration;
-        const expectedInternalTime = time - clip.startTime + (clip.startOffset || 0);
+        const isInsideClip =
+          time >= clip.startTime && time < clip.startTime + clip.duration;
+        const expectedInternalTime =
+          time - clip.startTime + (clip.startOffset || 0);
 
         if (isInsideClip && !forcePause) {
           if (audio.paused) {
@@ -130,7 +141,7 @@ export function useTimelinePlayback() {
           // If we are scrubbing while paused, ensure the playhead inside the clip is correct
           if (isInsideClip && forcePause) {
             if (Math.abs(audio.currentTime - expectedInternalTime) > 0.05) {
-               audio.currentTime = expectedInternalTime;
+              audio.currentTime = expectedInternalTime;
             }
           }
         }
@@ -138,36 +149,39 @@ export function useTimelinePlayback() {
     });
   }, []);
 
-  const loop = useCallback((timeNow: number) => {
-    if (!lastTimeRef.current) lastTimeRef.current = timeNow;
-    const deltaTime = (timeNow - lastTimeRef.current) / 1000;
-    lastTimeRef.current = timeNow;
+  const loop = useCallback(
+    (timeNow: number) => {
+      if (!lastTimeRef.current) lastTimeRef.current = timeNow;
+      const deltaTime = (timeNow - lastTimeRef.current) / 1000;
+      lastTimeRef.current = timeNow;
 
-    setCurrentTime((prev) => {
-      const nextTime = prev + deltaTime;
-      currentTimeRef.current = nextTime;
-      
-      // Stop playing if we reach the end of the project
-      const maxEndTime = tracksRef.current.reduce((max, track) => {
-        const trackMax = track.clips.reduce(
-          (tMax, clip) => Math.max(tMax, clip.startTime + clip.duration),
-          0,
-        );
-        return Math.max(max, trackMax);
-      }, 0);
+      setCurrentTime((prev) => {
+        const nextTime = prev + deltaTime;
+        currentTimeRef.current = nextTime;
 
-      if (nextTime > maxEndTime && maxEndTime > 0) {
-        setIsPlaying(false);
-        syncClips(maxEndTime, true);
-        return maxEndTime;
-      }
+        // Stop playing if we reach the end of the project
+        const maxEndTime = tracksRef.current.reduce((max, track) => {
+          const trackMax = track.clips.reduce(
+            (tMax, clip) => Math.max(tMax, clip.startTime + clip.duration),
+            0,
+          );
+          return Math.max(max, trackMax);
+        }, 0);
 
-      syncClips(nextTime, false);
-      return nextTime;
-    });
+        if (nextTime > maxEndTime && maxEndTime > 0) {
+          setIsPlaying(false);
+          syncClips(maxEndTime, true);
+          return maxEndTime;
+        }
 
-    requestRef.current = requestAnimationFrame(loop);
-  }, [setCurrentTime, syncClips, setIsPlaying]);
+        syncClips(nextTime, false);
+        return nextTime;
+      });
+
+      requestRef.current = requestAnimationFrame(loop);
+    },
+    [setCurrentTime, syncClips, setIsPlaying],
+  );
 
   // Start / Stop Loop
   useEffect(() => {
@@ -196,7 +210,7 @@ export function useTimelinePlayback() {
   }, [setIsPlaying]);
 
   const pause = useCallback(() => setIsPlaying(false), [setIsPlaying]);
-  
+
   const togglePlay = useCallback(() => {
     setIsPlaying((p) => {
       const nextPlay = !p;
@@ -210,11 +224,14 @@ export function useTimelinePlayback() {
     });
   }, [setIsPlaying]);
 
-  const seek = useCallback((time: number) => {
-    currentTimeRef.current = time;
-    setCurrentTime(time);
-    syncClips(time, !isPlaying);
-  }, [setCurrentTime, syncClips, isPlaying]);
+  const seek = useCallback(
+    (time: number) => {
+      currentTimeRef.current = time;
+      setCurrentTime(time);
+      syncClips(time, !isPlaying);
+    },
+    [setCurrentTime, syncClips, isPlaying],
+  );
 
   return {
     isPlaying,

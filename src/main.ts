@@ -1,4 +1,12 @@
-import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, session, screen } from "electron";
+import {
+  app,
+  BrowserWindow,
+  desktopCapturer,
+  dialog,
+  ipcMain,
+  session,
+  screen,
+} from "electron";
 import {
   readData,
   writeData,
@@ -12,13 +20,25 @@ import path from "node:path";
 import fs from "node:fs";
 import started from "electron-squirrel-startup";
 import { inDevelopment } from "./constants";
+import { spawn } from "node:child_process";
+import contextMenu from "electron-context-menu";
+import os from "node:os";
+
+// Force GPU rasterization and video decoding for the app
+app.commandLine.appendSwitch("enable-gpu-rasterization");
+app.commandLine.appendSwitch("enable-native-gpu-memory-buffers");
+app.commandLine.appendSwitch("enable-accelerated-video-decode"); // Hardware-accelerated decoding
+app.commandLine.appendSwitch("webrtc-max-cpu-consumption-percentage", "90");
+
+let ffmpegProcess: any = null;
+let activeOverlays: any[] = [];
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (started) {
   app.quit();
 }
 
-app.disableHardwareAcceleration();
+// app.disableHardwareAcceleration();
 
 const createWindow = async () => {
   // Create the browser window.
@@ -171,11 +191,11 @@ const createWindow = async () => {
     }
   });
 
-  ipcMain.handle("openfiledialog", async () => {
+  ipcMain.handle("openfiledialog", async (_event, options?: any) => {
     let result: Electron.OpenDialogReturnValue;
 
     try {
-      result = await dialog.showOpenDialog(mainWindow, {
+      const defaultOptions: Electron.OpenDialogOptions = {
         properties: ["openFile", "multiSelections"],
         filters: [
           {
@@ -192,7 +212,13 @@ const createWindow = async () => {
             ],
           },
         ],
-      });
+      };
+
+      const finalOptions = options
+        ? { ...defaultOptions, ...options }
+        : defaultOptions;
+
+      result = await dialog.showOpenDialog(mainWindow, finalOptions);
       return result?.canceled ? [] : result?.filePaths;
     } catch (error) {
       console.log(error);
@@ -201,14 +227,22 @@ const createWindow = async () => {
 
   ipcMain.handle(
     "saverecording",
-    async (_event, fileName: string, arrayBuffer: ArrayBuffer) => {
+    async (
+      _event,
+      fileName: string,
+      arrayBuffer: ArrayBuffer,
+      customPath?: string,
+    ) => {
       try {
-        const documentsPath = app.getPath("documents");
-        const dirPath = path.join(
-          documentsPath,
-          "SonicPlank.Maker",
-          "recordings",
-        );
+        let dirPath = customPath;
+        if (!dirPath) {
+          const documentsPath = app.getPath("documents");
+          dirPath = path.join(
+            documentsPath,
+            "SonicPlank.Maker",
+            "recordings",
+          );
+        }
         if (!fs.existsSync(dirPath)) {
           fs.mkdirSync(dirPath, { recursive: true });
         }
@@ -223,50 +257,141 @@ const createWindow = async () => {
     },
   );
 
-  ipcMain.handle(
-    "getScreenSources",
-    async (_event, options) => {
-      try {
-        const sources = await desktopCapturer.getSources(options || {
+  ipcMain.handle("getScreenSources", async (_event, options) => {
+    try {
+      const sources = await desktopCapturer.getSources(
+        options || {
           types: ["screen", "window"],
-          thumbnailSize: { width: 300, height: 200 }
-        });
-        return sources.map(source => ({
-          id: source.id,
-          name: source.name,
-          thumbnailUrl: source.thumbnail.toDataURL(),
-          appIconUrl: source.appIcon ? source.appIcon.toDataURL() : null,
-        }));
-      } catch (error) {
-        console.error("Failed to get screen sources:", error);
-        throw error;
-      }
+          thumbnailSize: { width: 300, height: 200 },
+        },
+      );
+      return sources.map((source) => ({
+        id: source.id,
+        name: source.name,
+        thumbnailUrl: source.thumbnail.toDataURL(),
+        appIconUrl: source.appIcon ? source.appIcon.toDataURL() : null,
+      }));
+    } catch (error) {
+      console.error("Failed to get screen sources:", error);
+      throw error;
     }
-  );
+  });
 
-  ipcMain.handle(
-    "getDisplays",
-    () => {
-      try {
-        const displays = screen.getAllDisplays();
-        const primaryId = screen.getPrimaryDisplay().id;
-        return displays.map(d => ({
-          id: d.id,
-          bounds: {
-            x: d.bounds.x,
-            y: d.bounds.y,
-            width: d.bounds.width,
-            height: d.bounds.height,
-          },
-          scaleFactor: d.scaleFactor,
-          isPrimary: d.id === primaryId,
-        }));
-      } catch (error) {
-        console.error("Failed to get displays:", error);
-        throw error;
-      }
+  ipcMain.handle("getDisplays", () => {
+    try {
+      const displays = screen.getAllDisplays();
+      const primaryId = screen.getPrimaryDisplay().id;
+      return displays.map((d) => ({
+        id: d.id,
+        bounds: {
+          x: d.bounds.x,
+          y: d.bounds.y,
+          width: d.bounds.width,
+          height: d.bounds.height,
+        },
+        scaleFactor: d.scaleFactor,
+        isPrimary: d.id === primaryId,
+      }));
+    } catch (error) {
+      console.error("Failed to get displays:", error);
+      throw error;
     }
-  );
+  });
+
+  ipcMain.handle("setOverlays", (_event, overlays) => {
+    try {
+      activeOverlays = overlays || [];
+      // Broadcast the updated overlays configuration to all renderer windows
+      BrowserWindow.getAllWindows().forEach((win) => {
+        win.webContents.send("onOverlaysUpdated", activeOverlays);
+      });
+    } catch (error) {
+      console.error("Failed to propagate overlays:", error);
+      throw error;
+    }
+  });
+
+  ipcMain.handle("getOverlays", () => {
+    return activeOverlays;
+  });
+
+  ipcMain.on("sendAudioData", (event, visualizerId, dataArray) => {
+    BrowserWindow.getAllWindows().forEach((win) => {
+      if (win.webContents !== event.sender) {
+        win.webContents.send("onAudioDataUpdated", visualizerId, dataArray);
+      }
+    });
+  });
+
+  ipcMain.handle("startStream", (_event, rtmpUrl) => {
+    try {
+      if (ffmpegProcess) {
+        ffmpegProcess.kill();
+        ffmpegProcess = null;
+      }
+
+      console.log("Starting FFmpeg RTMP stream to:", rtmpUrl);
+      ffmpegProcess = spawn("ffmpeg", [
+        "-y",
+        "-i",
+        "pipe:0",
+        "-c:v",
+        "copy",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "128k",
+        "-f",
+        "flv",
+        rtmpUrl,
+      ]);
+
+      ffmpegProcess.stdin.on("error", (err: any) => {
+        console.error("FFmpeg stdin error:", err);
+      });
+
+      ffmpegProcess.stderr.on("data", (data: any) => {
+        console.log(`FFmpeg status: ${data}`);
+      });
+
+      ffmpegProcess.on("close", (code: number) => {
+        console.log(`FFmpeg process exited with code ${code}`);
+        ffmpegProcess = null;
+      });
+
+      return { success: true };
+    } catch (error: any) {
+      console.error("Failed to start FFmpeg streaming process:", error);
+      throw error;
+    }
+  });
+
+  ipcMain.handle("stopStream", () => {
+    try {
+      if (ffmpegProcess) {
+        ffmpegProcess.stdin.end();
+        ffmpegProcess.kill();
+        ffmpegProcess = null;
+        console.log("FFmpeg RTMP stream stopped.");
+      }
+      return { success: true };
+    } catch (error: any) {
+      console.error("Failed to stop FFmpeg streaming process:", error);
+      throw error;
+    }
+  });
+
+  ipcMain.handle("pushStreamData", (_event, arrayBuffer) => {
+    try {
+      if (ffmpegProcess && ffmpegProcess.stdin.writable) {
+        ffmpegProcess.stdin.write(Buffer.from(arrayBuffer));
+      }
+      return { success: true };
+    } catch (error: any) {
+      console.error("Failed to push streaming buffer to FFmpeg:", error);
+      throw error;
+    }
+  });
 
   app.setAboutPanelOptions({
     applicationName: "SonicPlank.Maker",
@@ -292,6 +417,22 @@ const createWindow = async () => {
     );
   }
 };
+
+// contextMenu({
+//   prepend: (defaultActions, params, browserWindow) => [
+//     {
+//       label: "Shut the fuck up",
+//       visible: true,
+//       click: () => {
+//         browserWindow.webContents.executeJavaScript(
+//           `alert('Shut the fuck up')`,
+//         );
+//       },
+//     },
+//   ],
+//   showInspectElement: false,
+//   showSelectAll: false,
+// });
 
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.

@@ -31,6 +31,7 @@
     "@fab-ui": "https://fab-ui.com/r/{name}.json",
     "@basecn": "https://basecn.dev/r/{name}.json",
     "@waves-cn": "https://waves-cn.vercel.app/r/{name}.json",
-    "@ss-components": "https://shadcnstudio.com/r/{style}/{name}.json"
+    "@ss-components": "https://shadcnstudio.com/r/{style}/{name}.json",
+    "@beui": "https://beui.saura3h.xyz/r/{name}.json"
   }
 }

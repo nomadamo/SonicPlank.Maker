@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/tooltip";
 import { FlowNodeType } from "@/types/flow-node";
 import { NodePropertiesDialog } from "@/components/node-properties-dialog";
+import { useViewport } from "@xyflow/react";
 
 export default function NodeActionBar({
   nodes,
@@ -33,6 +34,7 @@ export default function NodeActionBar({
 }) {
   const [key, setKey] = useState(0);
   const [propertiesOpen, setPropertiesOpen] = useState(false);
+  const { zoom } = useViewport();
 
   useLayoutEffect(() => {
     setKey(nodes.length * Math.random());
@@ -42,7 +44,7 @@ export default function NodeActionBar({
 
   return (
     <>
-      {nodes.length === 1 && nodes[0].type === "audioFlowNode" ? (
+      {nodes.length === 1 ? (
         <motion.div
           key={key}
           initial={{
@@ -66,12 +68,14 @@ export default function NodeActionBar({
             positioning={{
               placement: "float-bottom",
               gutter: "20px",
-              anchor: `--audioNode_${nodes[0]?.id}`,
+              anchor: `--${nodes[0]?.type}_${nodes[0]?.id}`,
             }}
           >
             <ActionBarContent
               style={{
                 boxShadow: "0 0px 24px rgba(0, 0, 0, 0.45)",
+                transform: `scale(${zoom})`,
+                transformOrigin: "top center",
               }}
             >
               <ActionBarBody>
@@ -110,32 +114,42 @@ function ActionSelector({
   onDuplicate?: (ids: string[]) => void;
   onOpenProperties?: () => void;
 }) {
+  const node = nodes[0];
   const allIds = nodes.map((n) => n.id);
-  const multiSelect = nodes.length > 1;
+  const type = node?.type;
+
+  // Constraints: Duplicate is disabled for limit-1 nodes (targetOutputNode)
+  const isDuplicateDisabled = type === "targetOutputNode";
 
   return (
     <>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button variant="ghost" onClick={onOpenProperties}>
-              <TablePropertiesIcon />
-            </Button>
-          }
-        />
-        <TooltipContent>Properties</TooltipContent>
-      </Tooltip>
+      {["audioFlowNode", "captureSourceNode", "targetOutputNode", "textOverlayNode", "colorOverlayNode", "imageOverlayNode", "visualizerOverlayNode"].includes(type || "") && (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button variant="ghost" onClick={onOpenProperties}>
+                <TablePropertiesIcon />
+              </Button>
+            }
+          />
+          <TooltipContent>Properties</TooltipContent>
+        </Tooltip>
+      )}
 
       <Tooltip>
         <TooltipTrigger
           render={
-            <Button variant="ghost" onClick={() => onDuplicate?.(allIds)}>
+            <Button 
+              variant="ghost" 
+              disabled={isDuplicateDisabled}
+              onClick={() => !isDuplicateDisabled && onDuplicate?.(allIds)}
+            >
               <CopyIcon />
             </Button>
           }
         />
         <TooltipContent>
-          {multiSelect ? `Duplicate ${nodes.length} nodes` : "Duplicate"}
+          {isDuplicateDisabled ? "Duplicate (Limit 1)" : "Duplicate"}
         </TooltipContent>
       </Tooltip>
 
@@ -148,7 +162,7 @@ function ActionSelector({
           }
         />
         <TooltipContent>
-          {multiSelect ? `Delete ${nodes.length} nodes` : "Delete"}
+          Delete
         </TooltipContent>
       </Tooltip>
 
@@ -156,13 +170,40 @@ function ActionSelector({
 
       <Tooltip>
         <TooltipTrigger>
-          <InfoIcon />
+          <InfoIcon className="w-5 h-5 text-zinc-400" />
         </TooltipTrigger>
         <TooltipContent>
-          {nodes[0]?.data?.title || "Unknown Title"}
-          {" by "}
-          {nodes[0]?.data?.artist || "Unknown Artist"}
-          {multiSelect && ` (+${nodes.length - 1} more)`}
+          {type === "audioFlowNode" && (
+            <>
+              {node.data.title || "Unknown Title"}
+              {" by "}
+              {node.data.artist || "Unknown Artist"}
+            </>
+          )}
+          {type === "captureSourceNode" && (
+            <>Capture: {node.data.captureSourceName || "No source selected"}</>
+          )}
+          {type === "targetOutputNode" && (
+            <>Compositor Output Node</>
+          )}
+          {type === "masterOutputNode" && (
+            <>Master Speaker Output</>
+          )}
+          {type === "textOverlayNode" && (
+            <>Text Overlay: "{node.data.textContent || "Watermark"}"</>
+          )}
+          {type === "colorOverlayNode" && (
+            <>Color Overlay: {node.data.backgroundColor || "#4f46e5"}</>
+          )}
+          {type === "imageOverlayNode" && (
+            <>Image Overlay: {node.data.imagePath ? String(node.data.imagePath).split(/[/\\]/).pop() : "None"}</>
+          )}
+          {type === "visualizerOverlayNode" && (
+            <>Audio Visualizer layer</>
+          )}
+          {type === "overlayGroupNode" && (
+            <>Overlay Compositor Node</>
+          )}
         </TooltipContent>
       </Tooltip>
     </>

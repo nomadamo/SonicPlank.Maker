@@ -3,8 +3,6 @@ import { useSetAtom } from "jotai";
 import { flowDataAtom, defaultFlowData } from "./flowStore";
 import { timelineDataAtom, defaultTimelineData } from "./timelineStore";
 import { ReactFlowProvider } from "@xyflow/react";
-import WaveSurfer, { WaveSurferOptions } from "wavesurfer.js";
-import { useWaveSurferContext } from "./wavesurferprovider";
 import { LoadingAnimation } from "@/components/animations/loading-animation";
 import { useLibraryStore } from "./libraryStore";
 import { useSettings } from "./settingsStore";
@@ -17,13 +15,6 @@ type StateMachineContextValue = {
   setQuitRequested(value: boolean): void;
   persistRequested: boolean;
   setPersistRequested(value: boolean): void;
-  initInstance: (
-    id: string,
-    container: HTMLDivElement | null,
-    options: WaveSurferOptions,
-  ) => WaveSurfer;
-  getInstance: (id: string) => WaveSurfer | undefined;
-  destroyInstance: (id: string) => void;
   theme: "light" | "dark" | "system";
   setTheme(value: "light" | "dark" | "system"): void;
 };
@@ -41,7 +32,6 @@ export const StateMachineProvider: React.FC<React.PropsWithChildren> = (
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [quitRequested, setQuitRequested] = useState(false);
   const [persistRequested, setPersistRequested] = useState(false);
-  const { initInstance, getInstance, destroyInstance } = useWaveSurferContext();
   const { settings, updateSettings } = useSettings();
   const theme = settings.theme;
 
@@ -99,6 +89,24 @@ export const StateMachineProvider: React.FC<React.PropsWithChildren> = (
 
         if (receivedFlowData) {
           const newFlowData = JSON.parse(receivedFlowData);
+          if (newFlowData && Array.isArray(newFlowData.nodes)) {
+            newFlowData.nodes = newFlowData.nodes.map((node: any) => {
+              if (node.data) {
+                const {
+                  isPlaying,
+                  isPreviewActive,
+                  isRecording,
+                  isStreaming,
+                  ...cleanData
+                } = node.data;
+                return {
+                  ...node,
+                  data: cleanData,
+                };
+              }
+              return node;
+            });
+          }
           setFlowData(newFlowData);
           console.log("New data set in FlowData");
         } else {
@@ -210,9 +218,6 @@ export const StateMachineProvider: React.FC<React.PropsWithChildren> = (
           setQuitRequested,
           persistRequested,
           setPersistRequested,
-          initInstance,
-          getInstance,
-          destroyInstance,
           theme,
           setTheme,
         }}

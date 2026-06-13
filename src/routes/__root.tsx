@@ -4,7 +4,6 @@ import { LoadingAnimation } from "@/components/animations/loading-animation";
 import ErrorBoundary from "@/components/errorboundary";
 import { ExitDialog } from "@/components/exit-dialog";
 import { StateMachineProvider } from "@/store/stateMachine";
-import { WaveSurferProvider } from "@/store/wavesurferprovider";
 
 function RootComponent() {
   const location = useLocation();
@@ -12,21 +11,17 @@ function RootComponent() {
 
   if (isPreview) {
     return (
-      <WaveSurferProvider>
-        <StateMachineProvider>
-          <Outlet />
-        </StateMachineProvider>
-      </WaveSurferProvider>
+      <StateMachineProvider>
+        <Outlet />
+      </StateMachineProvider>
     );
   }
 
   return (
-    <WaveSurferProvider>
-      <StateMachineProvider>
-        <ExitDialog />
-        <App />
-      </StateMachineProvider>
-    </WaveSurferProvider>
+    <StateMachineProvider>
+      <ExitDialog />
+      <App />
+    </StateMachineProvider>
   );
 }
 

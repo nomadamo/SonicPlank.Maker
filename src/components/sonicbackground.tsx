@@ -152,13 +152,13 @@ function Background() {
               height="50"
               viewBox="0 0 50 50"
             >
-              <g strokeWidth="0.75" stroke="hsl(261, 60%, 38%)" fill="none">
+              <g strokeWidth="0.75" stroke="var(--border)" fill="none">
                 <rect width="25" height="25" x="0" y="0" opacity="0.45" />
                 <circle
                   r="1.082105263157895"
                   cx="0"
                   cy="0"
-                  fill="hsl(261, 60%, 38%)"
+                  fill="var(--border)"
                   stroke="none"
                 />
                 <rect width="25" height="25" x="25" y="0" opacity="0.45" />
@@ -166,7 +166,7 @@ function Background() {
                   r="1.082105263157895"
                   cx="25"
                   cy="0"
-                  fill="hsl(261, 60%, 38%)"
+                  fill="var(--border)"
                   stroke="none"
                 />
                 <rect width="25" height="25" x="50" y="0" opacity="0.45" />
@@ -174,7 +174,7 @@ function Background() {
                   r="1.082105263157895"
                   cx="50"
                   cy="0"
-                  fill="hsl(261, 60%, 38%)"
+                  fill="var(--border)"
                   stroke="none"
                 />
                 <rect width="25" height="25" x="0" y="25" opacity="0.45" />
@@ -182,7 +182,7 @@ function Background() {
                   r="1.082105263157895"
                   cx="0"
                   cy="25"
-                  fill="hsl(261, 60%, 38%)"
+                  fill="var(--border)"
                   stroke="none"
                 />
                 <rect width="25" height="25" x="25" y="25" opacity="0.45" />
@@ -190,7 +190,7 @@ function Background() {
                   r="1.082105263157895"
                   cx="25"
                   cy="25"
-                  fill="hsl(261, 60%, 38%)"
+                  fill="var(--border)"
                   stroke="none"
                 />
                 <rect width="25" height="25" x="50" y="25" opacity="0.45" />
@@ -198,7 +198,7 @@ function Background() {
                   r="1.082105263157895"
                   cx="50"
                   cy="25"
-                  fill="hsl(261, 60%, 38%)"
+                  fill="var(--border)"
                   stroke="none"
                 />
                 <rect width="25" height="25" x="0" y="50" opacity="0.45" />
@@ -206,7 +206,7 @@ function Background() {
                   r="1.082105263157895"
                   cx="0"
                   cy="50"
-                  fill="hsl(261, 60%, 38%)"
+                  fill="var(--border)"
                   stroke="none"
                 />
                 <rect width="25" height="25" x="25" y="50" opacity="0.45" />
@@ -214,7 +214,7 @@ function Background() {
                   r="1.082105263157895"
                   cx="25"
                   cy="50"
-                  fill="hsl(261, 60%, 38%)"
+                  fill="var(--border)"
                   stroke="none"
                 />
                 <rect width="25" height="25" x="50" y="50" opacity="0.45" />
@@ -222,7 +222,7 @@ function Background() {
                   r="1.082105263157895"
                   cx="50"
                   cy="50"
-                  fill="hsl(261, 60%, 38%)"
+                  fill="var(--border)"
                   stroke="none"
                 />
               </g>

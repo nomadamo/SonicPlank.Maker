@@ -39,9 +39,7 @@
     "components/ui/resizable.tsx",
     "components/ui/menu.tsx",
     "components/devtools.tsx",
-    "src/__canvas_preview__.tsx",
-    "components/ui/waveform.tsx",
-    "components/waves-cn/wave-player.tsx",
-    "lib/wave-cn.tsx"
+    "src/components/__canvas_preview__.tsx",
+    "components/ui/waveform.tsx"
   ]
 }

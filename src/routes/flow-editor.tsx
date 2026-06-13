@@ -14,7 +14,13 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AudioNode } from "@/components/audio-node";
 import { MasterOutputNode } from "@/components/master-output-node";
-import { ConfigurationNode } from "@/components/configuration-node";
+import { CaptureSourceNode } from "@/components/capture-source-node";
+import { TextOverlayNode } from "@/components/text-overlay-node";
+import { ColorOverlayNode } from "@/components/color-overlay-node";
+import { ImageOverlayNode } from "@/components/image-overlay-node";
+import { VisualizerOverlayNode } from "@/components/visualizer-overlay-node";
+import { TargetOutputNode } from "@/components/target-output-node";
+import { OverlayGroupNode } from "@/components/overlay-group-node";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { AnimatedRoute } from "@/components/animated-route";
 import { LoadingAnimation } from "@/components/animations/loading-animation";
@@ -27,6 +33,7 @@ import { FlowNodeType } from "@/types/flow-node";
 // @ts-ignore
 import "@xyflow/react/dist/style.css";
 import { SonicBackground } from "@/components/sonicbackground";
+import { isValidConnection } from "@/utils/flow-connections";
 import {
   DownloadIcon,
   LibraryIcon,
@@ -37,6 +44,11 @@ import {
   WorkflowIcon,
   Monitor as MonitorIcon,
   Music as MusicIcon,
+  Type as TypeIcon,
+  Palette as PaletteIcon,
+  Image as ImageIcon,
+  Activity as ActivityIcon,
+  Layers as LayersIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAtomValue, useSetAtom } from "jotai";
@@ -45,7 +57,10 @@ import {
   flowEdgesAtom,
   flowViewportAtom,
   flowDataAtom,
+  updateNodeDataAtom,
 } from "@/store/flowStore";
+import { executeNodeAction } from "@/utils/node-actions";
+import { triggerNodeActionAtom } from "@/store/transientNodeStore";
 import {
   ActionBar,
   ActionBarBody,
@@ -82,7 +97,13 @@ import { toast } from "sonner";
 const nodeTypes = {
   audioFlowNode: AudioNode,
   masterOutputNode: MasterOutputNode,
-  configurationNode: ConfigurationNode,
+  captureSourceNode: CaptureSourceNode,
+  textOverlayNode: TextOverlayNode,
+  colorOverlayNode: ColorOverlayNode,
+  imageOverlayNode: ImageOverlayNode,
+  visualizerOverlayNode: VisualizerOverlayNode,
+  targetOutputNode: TargetOutputNode,
+  overlayGroupNode: OverlayGroupNode,
 };
 
 const edgeTypes: EdgeTypes = {
@@ -92,6 +113,243 @@ const edgeTypes: EdgeTypes = {
 const fitViewOptions: FitViewOptions = {
   padding: "100px",
 };
+
+interface AddNodesMenuProps {
+  closePopover: () => void;
+  setAddLibraryOpen: (open: boolean) => void;
+  hasOutputNode: boolean;
+  onAddOutputNode: () => void;
+  onAddSourceNode: () => void;
+  onAddTargetOutputNode: () => void;
+  onAddTextOverlayNode: () => void;
+  onAddColorOverlayNode: () => void;
+  onAddImageOverlayNode: () => void;
+  onAddVisualizerOverlayNode: () => void;
+  onAddOverlayGroupNode: () => void;
+}
+
+function AddNodesMenu({
+  closePopover,
+  setAddLibraryOpen,
+  hasOutputNode,
+  onAddOutputNode,
+  onAddSourceNode,
+  onAddTargetOutputNode,
+  onAddTextOverlayNode,
+  onAddColorOverlayNode,
+  onAddImageOverlayNode,
+  onAddVisualizerOverlayNode,
+  onAddOverlayGroupNode,
+}: AddNodesMenuProps) {
+  return (
+    <div className="flex flex-col gap-3">
+      {/* Audio & Outputs */}
+      <div className="flex flex-col gap-1">
+        <span className="text-[9px] font-semibold text-zinc-500 uppercase tracking-wider px-1">
+          Audio & Outputs
+        </span>
+        {/* Audio Node */}
+        <button
+          onClick={() => {
+            setAddLibraryOpen(true);
+            closePopover();
+          }}
+          className="flex items-start gap-3 p-2 rounded-lg text-left hover:bg-zinc-900 transition-colors group cursor-pointer"
+        >
+          <div className="p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 group-hover:bg-emerald-500/20 transition-colors mt-0.5">
+            <MusicIcon className="w-3.5 h-3.5 text-emerald-400" />
+          </div>
+          <div>
+            <div className="text-xs font-semibold text-zinc-200">
+              Audio Node
+            </div>
+            <div className="text-[10px] text-zinc-400">
+              Import audio assets from library
+            </div>
+          </div>
+        </button>
+
+        {/* Master Output Node */}
+        <button
+          onClick={() => {
+            onAddOutputNode();
+            closePopover();
+          }}
+          className="flex items-start gap-3 p-2 rounded-lg text-left hover:bg-zinc-900 transition-colors group cursor-pointer"
+        >
+          <div className="p-2 rounded-lg bg-blue-500/10 border border-blue-500/20 group-hover:bg-blue-500/20 transition-colors mt-0.5">
+            <WorkflowIcon className="w-3.5 h-3.5 text-blue-400" />
+          </div>
+          <div>
+            <div className="text-xs font-semibold text-zinc-200">
+              Master Output Node
+            </div>
+            <div className="text-[10px] text-zinc-400">
+              Route mixed channel flows to speaker output
+            </div>
+          </div>
+        </button>
+      </div>
+
+      {/* Capture Pipeline */}
+      <div className="flex flex-col gap-1 border-t border-zinc-800/50 pt-2">
+        <span className="text-[9px] font-semibold text-zinc-500 uppercase tracking-wider px-1">
+          Capture Pipeline
+        </span>
+
+        {/* Capture Source Node */}
+        <button
+          onClick={() => {
+            onAddSourceNode();
+            closePopover();
+          }}
+          className="flex items-start gap-3 p-2 rounded-lg text-left transition-colors group hover:bg-zinc-900 cursor-pointer"
+        >
+          <div className="p-2 rounded-lg mt-0.5 border transition-colors bg-indigo-500/10 border-indigo-500/20 text-indigo-400 group-hover:bg-indigo-500/20">
+            <MonitorIcon className="w-3.5 h-3.5" />
+          </div>
+          <div>
+            <div className="text-xs font-semibold text-zinc-200 flex items-center gap-1.5">
+              Capture Source
+            </div>
+            <div className="text-[10px] text-zinc-400">
+              Select capture target monitor or window
+            </div>
+          </div>
+        </button>
+
+        {/* Target Output Node */}
+        <button
+          onClick={() => {
+            if (!hasOutputNode) {
+              onAddTargetOutputNode();
+              closePopover();
+            }
+          }}
+          disabled={hasOutputNode}
+          className={`flex items-start gap-3 p-2 rounded-lg text-left transition-colors group ${
+            hasOutputNode
+              ? "opacity-50 cursor-not-allowed"
+              : "hover:bg-zinc-900 cursor-pointer"
+          }`}
+        >
+          <div
+            className={`p-2 rounded-lg mt-0.5 border transition-colors ${
+              hasOutputNode
+                ? "bg-zinc-800/20 border-zinc-800 text-zinc-500"
+                : "bg-red-500/10 border-red-500/20 text-red-400 group-hover:bg-red-500/20"
+            }`}
+          >
+            <MonitorIcon className="w-3.5 h-3.5" />
+          </div>
+          <div>
+            <div className="text-xs font-semibold text-zinc-200 flex items-center gap-1.5">
+              Compositor Output
+              {hasOutputNode && (
+                <span className="text-[8px] bg-zinc-800/80 text-zinc-400 px-1 py-0.5 rounded border border-zinc-700 font-normal">
+                  Limit 1
+                </span>
+              )}
+            </div>
+            <div className="text-[10px] text-zinc-400">
+              Canvas compositor output preview & recorder
+            </div>
+          </div>
+        </button>
+      </div>
+
+      {/* Visual Overlays Group */}
+      <div className="flex flex-col gap-1.5 border-t border-zinc-800/50 pt-2">
+        <span className="text-[9px] font-semibold text-zinc-500 uppercase tracking-wider px-1 mb-1">
+          Visual Overlays
+        </span>
+
+        {/* Overlay Compositor */}
+        <button
+          onClick={() => {
+            onAddOverlayGroupNode();
+            closePopover();
+          }}
+          className="flex items-start gap-3 p-2 rounded-lg text-left hover:bg-zinc-900 transition-colors group cursor-pointer"
+        >
+          <div className="p-2 rounded-lg mt-0.5 border transition-colors bg-indigo-500/10 border-indigo-500/20 text-indigo-400 group-hover:bg-indigo-500/20">
+            <LayersIcon className="w-3.5 h-3.5" />
+          </div>
+          <div>
+            <div className="text-xs font-semibold text-zinc-200 flex items-center gap-1.5">
+              Overlay Compositor
+            </div>
+            <div className="text-[10px] text-zinc-400">
+              Consolidate and layer text, color, image, and visualizers
+            </div>
+          </div>
+        </button>
+
+        <div className="grid grid-cols-2 gap-1.5 mt-1">
+          <button
+            onClick={() => {
+              onAddTextOverlayNode();
+              closePopover();
+            }}
+            className="flex items-center gap-2 p-1.5 rounded-lg text-left hover:bg-zinc-900 transition-colors group cursor-pointer border border-zinc-900 hover:border-zinc-800"
+          >
+            <div className="p-1 rounded bg-indigo-500/10 border border-indigo-500/20 text-indigo-400">
+              <TypeIcon className="w-3.5 h-3.5" />
+            </div>
+            <span className="text-[10px] font-medium text-zinc-200">
+              Text Watermark
+            </span>
+          </button>
+
+          <button
+            onClick={() => {
+              onAddColorOverlayNode();
+              closePopover();
+            }}
+            className="flex items-center gap-2 p-1.5 rounded-lg text-left hover:bg-zinc-900 transition-colors group cursor-pointer border border-zinc-900 hover:border-zinc-800"
+          >
+            <div className="p-1 rounded bg-pink-500/10 border border-pink-500/20 text-pink-400">
+              <PaletteIcon className="w-3.5 h-3.5" />
+            </div>
+            <span className="text-[10px] font-medium text-zinc-200">
+              Color Block
+            </span>
+          </button>
+
+          <button
+            onClick={() => {
+              onAddImageOverlayNode();
+              closePopover();
+            }}
+            className="flex items-center gap-2 p-1.5 rounded-lg text-left hover:bg-zinc-900 transition-colors group cursor-pointer border border-zinc-900 hover:border-zinc-800"
+          >
+            <div className="p-1 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
+              <ImageIcon className="w-3.5 h-3.5" />
+            </div>
+            <span className="text-[10px] font-medium text-zinc-200">
+              Image Logo
+            </span>
+          </button>
+
+          <button
+            onClick={() => {
+              onAddVisualizerOverlayNode();
+              closePopover();
+            }}
+            className="flex items-center gap-2 p-1.5 rounded-lg text-left hover:bg-zinc-900 transition-colors group cursor-pointer border border-zinc-900 hover:border-zinc-800"
+          >
+            <div className="p-1 rounded bg-cyan-500/10 border border-cyan-500/20 text-cyan-400">
+              <ActivityIcon className="w-3.5 h-3.5" />
+            </div>
+            <span className="text-[10px] font-medium text-zinc-200">
+              Visualizer
+            </span>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export const Route = createFileRoute("/flow-editor")({
   component: FlowEditor,
@@ -119,13 +377,115 @@ function FlowEditor() {
     useEdgesState(flowEdgesData);
   const [currentViewport, setCurrentViewport] = useState(flowViewportData);
 
+  const updateNodeData = useSetAtom(updateNodeDataAtom);
+  const runNodeAction = useSetAtom(triggerNodeActionAtom);
+
+  // Global keydown triggers handler
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // 1. Skip if typing in an input, textarea or contenteditable element
+      const activeEl = document.activeElement;
+      if (
+        activeEl?.tagName === "INPUT" ||
+        activeEl?.tagName === "TEXTAREA" ||
+        activeEl?.getAttribute("contenteditable") === "true"
+      ) {
+        return;
+      }
+
+      const key = e.code || e.key;
+      const isModifier = [
+        "Control",
+        "ControlLeft",
+        "ControlRight",
+        "Shift",
+        "ShiftLeft",
+        "ShiftRight",
+        "Alt",
+        "AltLeft",
+        "AltRight",
+        "Meta",
+        "MetaLeft",
+        "MetaRight",
+        "OSLeft",
+        "OSRight",
+      ].includes(key);
+
+      if (isModifier) return;
+
+      const modifiers: string[] = [];
+      if (e.ctrlKey) modifiers.push("Ctrl");
+      if (e.altKey) modifiers.push("Alt");
+      if (e.shiftKey) modifiers.push("Shift");
+      if (e.metaKey) modifiers.push("Meta");
+
+      const eventHotkeyStr =
+        modifiers.length > 0 ? `${modifiers.join("+")}+${key}` : key;
+
+      // 2. Iterate through all nodes to find matching triggers
+      currentNodes.forEach((node) => {
+        const triggers = node.data?.triggers;
+        if (!triggers || !Array.isArray(triggers)) return;
+
+        triggers.forEach((trigger) => {
+          if (trigger.triggerKey === eventHotkeyStr) {
+            e.preventDefault();
+            e.stopPropagation();
+
+            console.log(
+              `[Global Triggers] Trigger key "${key}" matched action "${trigger.action}" for node ${node.id} (${node.type})`,
+            );
+
+            // Execute the action via the transient action runner
+            const result = runNodeAction({
+              nodeId: node.id,
+              nodeType: node.type || "",
+              actionName: trigger.action,
+            });
+
+            if (result && result.patch) {
+              // Update local state reactively if there is a persistent patch
+              if (result.persistentPatch && Object.keys(result.persistentPatch).length > 0) {
+                setCurrentNodes((prevNodes) =>
+                  prevNodes.map((n) =>
+                    n.id === node.id
+                      ? { ...n, data: { ...n.data, ...result.persistentPatch } }
+                      : n,
+                  ),
+                );
+              }
+
+              // Toast feedback
+              const nodeName =
+                node.data.title ||
+                node.type?.replace("OverlayNode", "").replace("Node", "") ||
+                "Node";
+              toast.info(
+                `Triggered "${trigger.action}" on "${nodeName}" (Key: ${eventHotkeyStr})`,
+                {
+                  position: "bottom-right",
+                },
+              );
+            }
+          }
+        });
+      });
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [currentNodes, setCurrentNodes, runNodeAction]);
+
   // Dialog states
   const [addLibraryOpen, setAddLibraryOpen] = useState(false);
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
   const [isAddPopoverOpen, setIsAddPopoverOpen] = useState(false);
+  const [isEmptyPopoverOpen, setIsEmptyPopoverOpen] = useState(false);
 
-  const hasConfigNode = currentNodes.some(
-    (node) => node.type === "configurationNode"
+  const hasOutputNode = currentNodes.some(
+    (node) => node.type === "targetOutputNode",
   );
 
   // ─── Refs ───────────────────────────────────────────────────────────────────
@@ -364,7 +724,7 @@ function FlowEditor() {
         addEdge(
           {
             ...connection,
-            data: { duration: 3, shape: "circle", direction: "forward" },
+            data: { duration: 0.5, shape: "circle", direction: "forward" },
           },
           current,
         ),
@@ -403,13 +763,36 @@ function FlowEditor() {
     [onNodesChange, setHasUnsavedChanges],
   );
 
+  const handleIsValidConnection = useCallback(
+    (connection: any) => {
+      return isValidConnection(connection, currentNodes);
+    },
+    [currentNodes],
+  );
+
   const handleConnect = useCallback(
-    (connection) => onConnect(connection),
-    [onConnect],
+    (connection: any) => {
+      if (isValidConnection(connection, currentNodes)) {
+        onConnect(connection);
+      }
+    },
+    [onConnect, currentNodes],
   );
 
   // ─── Drag-and-drop from Library ─────────────────────────────────────────────
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
+
+  const getCenterProjectPosition = useCallback(() => {
+    const bounds = reactFlowWrapper.current?.getBoundingClientRect();
+    const w = bounds ? bounds.width : window.innerWidth;
+    const h = bounds ? bounds.height : window.innerHeight;
+    const jitterX = (Math.random() - 0.5) * 40;
+    const jitterY = (Math.random() - 0.5) * 40;
+    return {
+      x: (w / 2 - currentViewport.x) / currentViewport.zoom + jitterX,
+      y: (h / 2 - currentViewport.y) / currentViewport.zoom + jitterY,
+    };
+  }, [currentViewport]);
 
   const onDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -473,7 +856,7 @@ function FlowEditor() {
     const newNode: FlowNodeType = {
       id: crypto.randomUUID(),
       type: "masterOutputNode",
-      position: { x: currentViewport.x + 100, y: currentViewport.y + 100 },
+      position: getCenterProjectPosition(),
       data: {
         title: "Master Output",
         artist: "",
@@ -486,22 +869,21 @@ function FlowEditor() {
     setPersistRequested(true);
     setHasUnsavedChanges(true);
   }, [
-    currentViewport,
+    getCenterProjectPosition,
     setCurrentNodes,
     setPersistRequested,
     setHasUnsavedChanges,
   ]);
 
-  const onAddConfigNode = useCallback(() => {
+  const onAddSourceNode = useCallback(() => {
     const newNode: FlowNodeType = {
       id: crypto.randomUUID(),
-      type: "configurationNode",
-      position: { x: currentViewport.x + 150, y: currentViewport.y + 150 },
+      type: "captureSourceNode",
+      position: getCenterProjectPosition(),
       data: {
-        title: "Screen Capture",
         captureSourceId: "",
         captureSourceName: "",
-        captureType: "screen",
+        captureResolution: "original",
         captureAudio: false,
       },
     };
@@ -509,7 +891,143 @@ function FlowEditor() {
     setPersistRequested(true);
     setHasUnsavedChanges(true);
   }, [
-    currentViewport,
+    getCenterProjectPosition,
+    setCurrentNodes,
+    setPersistRequested,
+    setHasUnsavedChanges,
+  ]);
+
+  const onAddTextOverlayNode = useCallback(() => {
+    const newNode: FlowNodeType = {
+      id: crypto.randomUUID(),
+      type: "textOverlayNode",
+      position: getCenterProjectPosition(),
+      data: {
+        x: 10,
+        y: 10,
+        width: 40,
+        height: 10,
+        opacity: 1,
+        textContent: "Watermark Text",
+        fontSize: 5,
+        textColor: "#ffffff",
+      },
+    };
+    setCurrentNodes((nodes) => [...nodes, newNode]);
+    setPersistRequested(true);
+    setHasUnsavedChanges(true);
+  }, [
+    getCenterProjectPosition,
+    setCurrentNodes,
+    setPersistRequested,
+    setHasUnsavedChanges,
+  ]);
+
+  const onAddColorOverlayNode = useCallback(() => {
+    const newNode: FlowNodeType = {
+      id: crypto.randomUUID(),
+      type: "colorOverlayNode",
+      position: getCenterProjectPosition(),
+      data: {
+        x: 10,
+        y: 10,
+        width: 30,
+        height: 20,
+        opacity: 1,
+        backgroundColor: "#4f46e5",
+      },
+    };
+    setCurrentNodes((nodes) => [...nodes, newNode]);
+    setPersistRequested(true);
+    setHasUnsavedChanges(true);
+  }, [
+    getCenterProjectPosition,
+    setCurrentNodes,
+    setPersistRequested,
+    setHasUnsavedChanges,
+  ]);
+
+  const onAddImageOverlayNode = useCallback(() => {
+    const newNode: FlowNodeType = {
+      id: crypto.randomUUID(),
+      type: "imageOverlayNode",
+      position: getCenterProjectPosition(),
+      data: {
+        x: 10,
+        y: 10,
+        width: 30,
+        height: 20,
+        opacity: 1,
+        imagePath: "",
+      },
+    };
+    setCurrentNodes((nodes) => [...nodes, newNode]);
+    setPersistRequested(true);
+    setHasUnsavedChanges(true);
+  }, [
+    getCenterProjectPosition,
+    setCurrentNodes,
+    setPersistRequested,
+    setHasUnsavedChanges,
+  ]);
+
+  const onAddVisualizerOverlayNode = useCallback(() => {
+    const newNode: FlowNodeType = {
+      id: crypto.randomUUID(),
+      type: "visualizerOverlayNode",
+      position: getCenterProjectPosition(),
+      data: {
+        x: 10,
+        y: 70,
+        width: 80,
+        height: 20,
+        opacity: 1,
+        backgroundColor: "rgba(0, 0, 0, 0.3)",
+      },
+    };
+    setCurrentNodes((nodes) => [...nodes, newNode]);
+    setPersistRequested(true);
+    setHasUnsavedChanges(true);
+  }, [
+    getCenterProjectPosition,
+    setCurrentNodes,
+    setPersistRequested,
+    setHasUnsavedChanges,
+  ]);
+
+  const onAddOverlayGroupNode = useCallback(() => {
+    const newNode: FlowNodeType = {
+      id: crypto.randomUUID(),
+      type: "overlayGroupNode",
+      position: getCenterProjectPosition(),
+      data: {
+        title: "Overlay Compositor",
+      },
+    };
+    setCurrentNodes((nodes) => [...nodes, newNode]);
+    setPersistRequested(true);
+    setHasUnsavedChanges(true);
+  }, [
+    getCenterProjectPosition,
+    setCurrentNodes,
+    setPersistRequested,
+    setHasUnsavedChanges,
+  ]);
+
+  const onAddTargetOutputNode = useCallback(() => {
+    const newNode: FlowNodeType = {
+      id: crypto.randomUUID(),
+      type: "targetOutputNode",
+      position: getCenterProjectPosition(),
+      data: {
+        title: "Compositor Output",
+      },
+    };
+    setCurrentNodes((nodes) => [...nodes, newNode]);
+    setPersistRequested(true);
+    setHasUnsavedChanges(true);
+  }, [
+    getCenterProjectPosition,
     setCurrentNodes,
     setPersistRequested,
     setHasUnsavedChanges,
@@ -546,8 +1064,8 @@ function FlowEditor() {
             nodeTypes={nodeTypes}
             edges={currentEdges}
             edgeTypes={edgeTypes}
-            minZoom={0.65}
-            maxZoom={1}
+            minZoom={0.5}
+            maxZoom={2}
             fitView={!isEmpty}
             fitViewOptions={fitViewOptions}
             connectionLineComponent={ConnectionLine}
@@ -555,6 +1073,7 @@ function FlowEditor() {
             onNodesChange={handleNodesChange}
             onEdgesChange={handleEdgesChange}
             onConnect={handleConnect}
+            isValidConnection={handleIsValidConnection}
             onSelectionChange={handleSelectionChange}
             viewport={currentViewport}
             onViewportChange={setCurrentViewport}
@@ -567,204 +1086,153 @@ function FlowEditor() {
                 onDelete={handleDelete}
                 onDuplicate={handleDuplicate}
               />
-              <motion.div
-                initial={{
-                  opacity: 0,
-                  y: 10,
-                  transition: { duration: 0.25, ease: "easeInOut" },
-                }}
-                exit={{
-                  opacity: 0,
-                  y: -10,
-                  transition: { duration: 0.25, ease: "easeInOut" },
-                }}
-                animate={{
-                  opacity: 1,
-                  y: 0,
-                  transition: { duration: 0.25, ease: "easeInOut" },
-                }}
-              >
-                <ActionBar
-                  open={true}
-                  positioning={{
-                    placement: "bottom",
-                    gutter: "20px",
+              {/* Main Action Bar */}
+              {!isEmpty && (
+                <motion.div
+                  initial={{
+                    opacity: 0,
+                    y: 10,
+                    transition: { duration: 0.25, ease: "easeInOut" },
+                  }}
+                  exit={{
+                    opacity: 0,
+                    y: -10,
+                    transition: { duration: 0.25, ease: "easeInOut" },
+                  }}
+                  animate={{
+                    opacity: 1,
+                    y: 0,
+                    transition: { duration: 0.25, ease: "easeInOut" },
                   }}
                 >
-                  <ActionBarContent
-                    style={{
-                      boxShadow: "0 0px 24px rgba(0, 0, 0, 0.45)",
+                  <ActionBar
+                    open={true}
+                    positioning={{
+                      placement: "bottom",
+                      gutter: "20px",
                     }}
                   >
-                    <ActionBarBody>
-                      {/* Add Nodes Popover */}
-                      <Popover open={isAddPopoverOpen} onOpenChange={setIsAddPopoverOpen}>
+                    <ActionBarContent
+                      style={{
+                        boxShadow: "0 0px 24px rgba(0, 0, 0, 0.45)",
+                      }}
+                    >
+                      <ActionBarBody>
+                        {/* Add Nodes Popover */}
+                        <Popover
+                          open={isAddPopoverOpen}
+                          onOpenChange={setIsAddPopoverOpen}
+                        >
+                          <Tooltip>
+                            <TooltipTrigger
+                              render={
+                                <PopoverTrigger
+                                  render={
+                                    <Button variant="ghost">
+                                      <PlusIcon />
+                                    </Button>
+                                  }
+                                />
+                              }
+                            />
+                            <TooltipContent>Add Node</TooltipContent>
+                          </Tooltip>
+
+                          <PopoverContent className="bg-zinc-950 border border-zinc-800 text-zinc-100 rounded-2xl w-96 shadow-2xl p-4 flex flex-col gap-3">
+                            <PopoverHeader className="pb-2 border-b border-zinc-800/80">
+                              <PopoverTitle className="text-sm font-semibold text-zinc-200">
+                                Add Canvas Node
+                              </PopoverTitle>
+                              <p className="text-[11px] text-zinc-400">
+                                Select a node type to add to the editor
+                              </p>
+                            </PopoverHeader>
+                            <AddNodesMenu
+                              closePopover={() => setIsAddPopoverOpen(false)}
+                              setAddLibraryOpen={setAddLibraryOpen}
+                              hasOutputNode={hasOutputNode}
+                              onAddOutputNode={onAddOutputNode}
+                              onAddSourceNode={onAddSourceNode}
+                              onAddTargetOutputNode={onAddTargetOutputNode}
+                              onAddTextOverlayNode={onAddTextOverlayNode}
+                              onAddColorOverlayNode={onAddColorOverlayNode}
+                              onAddImageOverlayNode={onAddImageOverlayNode}
+                              onAddVisualizerOverlayNode={
+                                onAddVisualizerOverlayNode
+                              }
+                              onAddOverlayGroupNode={onAddOverlayGroupNode}
+                            />
+                          </PopoverContent>
+                        </Popover>
+
+                        {/* Save */}
                         <Tooltip>
                           <TooltipTrigger
                             render={
-                              <PopoverTrigger
-                                render={
-                                  <Button variant="ghost">
-                                    <PlusIcon />
-                                  </Button>
-                                }
-                              />
+                              <Button
+                                disabled={!hasUnsavedChanges}
+                                variant="ghost"
+                                onClick={handleSave}
+                                className="relative"
+                              >
+                                <SaveIcon />
+                                {hasUnsavedChanges && (
+                                  <div className="absolute top-0 right-0 h-2 w-2 rounded-full bg-red-500 dark:bg-red-400" />
+                                )}
+                              </Button>
                             }
-                          />
-                          <TooltipContent>Add Node</TooltipContent>
+                          ></TooltipTrigger>
+                          <TooltipContent>Save</TooltipContent>
                         </Tooltip>
 
-                        <PopoverContent className="bg-zinc-950 border border-zinc-800 text-zinc-100 rounded-2xl w-80 shadow-2xl p-4 flex flex-col gap-3">
-                          <PopoverHeader className="pb-2 border-b border-zinc-800/80">
-                            <PopoverTitle className="text-sm font-semibold text-zinc-200">Add Canvas Node</PopoverTitle>
-                            <p className="text-[11px] text-zinc-400">Select a node type to add to the editor</p>
-                          </PopoverHeader>
+                        {/* Export */}
+                        <Tooltip>
+                          <TooltipTrigger
+                            render={
+                              <Button
+                                variant="ghost"
+                                disabled={isEmpty}
+                                onClick={handleExport}
+                              >
+                                <DownloadIcon />
+                              </Button>
+                            }
+                          />
+                          <TooltipContent>Export JSON</TooltipContent>
+                        </Tooltip>
 
-                          <div className="flex flex-col gap-2">
-                            {/* Audio Node */}
-                            <button
-                              onClick={() => {
-                                setAddLibraryOpen(true);
-                                setIsAddPopoverOpen(false);
-                              }}
-                              className="flex items-start gap-3 p-2.5 rounded-xl text-left hover:bg-zinc-900 transition-colors group cursor-pointer"
-                            >
-                              <div className="p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 group-hover:bg-emerald-500/20 transition-colors mt-0.5">
-                                <MusicIcon className="w-4 h-4 text-emerald-400" />
-                              </div>
-                              <div>
-                                <div className="text-xs font-semibold text-zinc-200">Audio Node</div>
-                                <div className="text-[10px] text-zinc-400 mt-0.5">Import audio assets from the library</div>
-                              </div>
-                            </button>
+                        {/* Import */}
+                        <Tooltip>
+                          <TooltipTrigger
+                            render={
+                              <Button variant="ghost" onClick={handleImport}>
+                                <UploadIcon />
+                              </Button>
+                            }
+                          />
+                          <TooltipContent>Import JSON</TooltipContent>
+                        </Tooltip>
 
-                            {/* Master Output Node */}
-                            <button
-                              onClick={() => {
-                                onAddOutputNode();
-                                setIsAddPopoverOpen(false);
-                              }}
-                              className="flex items-start gap-3 p-2.5 rounded-xl text-left hover:bg-zinc-900 transition-colors group cursor-pointer"
-                            >
-                              <div className="p-2 rounded-lg bg-blue-500/10 border border-blue-500/20 group-hover:bg-blue-500/20 transition-colors mt-0.5">
-                                <WorkflowIcon className="w-4 h-4 text-blue-400" />
-                              </div>
-                              <div>
-                                <div className="text-xs font-semibold text-zinc-200">Master Output Node</div>
-                                <div className="text-[10px] text-zinc-400 mt-0.5">Route mixed channel flows to speaker output</div>
-                              </div>
-                            </button>
-
-                            {/* Screen Capture Config Node */}
-                            <button
-                              onClick={() => {
-                                if (!hasConfigNode) {
-                                  onAddConfigNode();
-                                  setIsAddPopoverOpen(false);
-                                }
-                              }}
-                              disabled={hasConfigNode}
-                              className={`flex items-start gap-3 p-2.5 rounded-xl text-left transition-colors group ${
-                                hasConfigNode
-                                  ? "opacity-50 cursor-not-allowed"
-                                  : "hover:bg-zinc-900 cursor-pointer"
-                              }`}
-                            >
-                              <div className={`p-2 rounded-lg mt-0.5 border transition-colors ${
-                                hasConfigNode
-                                  ? "bg-zinc-800/20 border-zinc-800 text-zinc-500"
-                                  : "bg-indigo-500/10 border-indigo-500/20 text-indigo-400 group-hover:bg-indigo-500/20"
-                              }`}>
-                                <MonitorIcon className="w-4 h-4" />
-                              </div>
-                              <div>
-                                <div className="text-xs font-semibold text-zinc-200 flex items-center gap-1.5">
-                                  Screen Capture Node
-                                  {hasConfigNode && (
-                                    <span className="text-[8px] bg-zinc-800/80 text-zinc-400 px-1 py-0.5 rounded border border-zinc-700 font-normal">
-                                      Limit 1
-                                    </span>
-                                  )}
-                                </div>
-                                <div className="text-[10px] text-zinc-400 mt-0.5">
-                                  {hasConfigNode
-                                    ? "Already exists on the flow canvas"
-                                    : "Configure stream mirroring input source"}
-                                </div>
-                              </div>
-                            </button>
-                          </div>
-                        </PopoverContent>
-                      </Popover>
-
-
-                      {/* Save */}
-                      <Tooltip>
-                        <TooltipTrigger
-                          render={
-                            <Button
-                              disabled={!hasUnsavedChanges}
-                              variant="ghost"
-                              onClick={handleSave}
-                              className="relative"
-                            >
-                              <SaveIcon />
-                              {hasUnsavedChanges && (
-                                <div className="absolute top-0 right-0 h-2 w-2 rounded-full bg-red-500 dark:bg-red-400" />
-                              )}
-                            </Button>
-                          }
-                        ></TooltipTrigger>
-                        <TooltipContent>Save</TooltipContent>
-                      </Tooltip>
-
-                      {/* Export */}
-                      <Tooltip>
-                        <TooltipTrigger
-                          render={
-                            <Button
-                              variant="ghost"
-                              disabled={isEmpty}
-                              onClick={handleExport}
-                            >
-                              <DownloadIcon />
-                            </Button>
-                          }
-                        />
-                        <TooltipContent>Export JSON</TooltipContent>
-                      </Tooltip>
-
-                      {/* Import */}
-                      <Tooltip>
-                        <TooltipTrigger
-                          render={
-                            <Button variant="ghost" onClick={handleImport}>
-                              <UploadIcon />
-                            </Button>
-                          }
-                        />
-                        <TooltipContent>Import JSON</TooltipContent>
-                      </Tooltip>
-
-                      {/* Clear canvas */}
-                      <Tooltip>
-                        <TooltipTrigger
-                          render={
-                            <Button
-                              variant="ghost"
-                              disabled={isEmpty}
-                              onClick={() => setClearConfirmOpen(true)}
-                            >
-                              <Trash2Icon />
-                            </Button>
-                          }
-                        />
-                        <TooltipContent>Clear Canvas</TooltipContent>
-                      </Tooltip>
-                    </ActionBarBody>
-                  </ActionBarContent>
-                </ActionBar>
-              </motion.div>
+                        {/* Clear canvas */}
+                        <Tooltip>
+                          <TooltipTrigger
+                            render={
+                              <Button
+                                variant="ghost"
+                                disabled={isEmpty}
+                                onClick={() => setClearConfirmOpen(true)}
+                              >
+                                <Trash2Icon />
+                              </Button>
+                            }
+                          />
+                          <TooltipContent>Clear Canvas</TooltipContent>
+                        </Tooltip>
+                      </ActionBarBody>
+                    </ActionBarContent>
+                  </ActionBar>
+                </motion.div>
+              )}
             </div>
             <Controls position="bottom-left" />
             <MiniMap position="bottom-left" className="left-10!" />
@@ -802,14 +1270,44 @@ function FlowEditor() {
                     onto the canvas
                   </p>
                   <div className="flex gap-2 mt-1">
-                    <Button
-                      variant="outline"
-                      className="gap-2"
-                      onClick={() => setAddLibraryOpen(true)}
+                    <Popover
+                      open={isEmptyPopoverOpen}
+                      onOpenChange={setIsEmptyPopoverOpen}
                     >
-                      <PlusIcon className="h-4 w-4" />
-                      Add from Library
-                    </Button>
+                      <PopoverTrigger
+                        render={
+                          <Button variant="outline" className="gap-2">
+                            <PlusIcon className="h-4 w-4" />
+                            Add Node
+                          </Button>
+                        }
+                      />
+                      <PopoverContent className="bg-zinc-950 border border-zinc-800 text-zinc-100 rounded-2xl w-96 shadow-2xl p-4 flex flex-col gap-3">
+                        <PopoverHeader className="pb-2 border-b border-zinc-800/80">
+                          <PopoverTitle className="text-sm font-semibold text-zinc-200">
+                            Add Canvas Node
+                          </PopoverTitle>
+                          <p className="text-[11px] text-zinc-400">
+                            Select a node type to add to the editor
+                          </p>
+                        </PopoverHeader>
+                        <AddNodesMenu
+                          closePopover={() => setIsEmptyPopoverOpen(false)}
+                          setAddLibraryOpen={setAddLibraryOpen}
+                          hasOutputNode={hasOutputNode}
+                          onAddOutputNode={onAddOutputNode}
+                          onAddSourceNode={onAddSourceNode}
+                          onAddTargetOutputNode={onAddTargetOutputNode}
+                          onAddTextOverlayNode={onAddTextOverlayNode}
+                          onAddColorOverlayNode={onAddColorOverlayNode}
+                          onAddImageOverlayNode={onAddImageOverlayNode}
+                          onAddVisualizerOverlayNode={
+                            onAddVisualizerOverlayNode
+                          }
+                          onAddOverlayGroupNode={onAddOverlayGroupNode}
+                        />
+                      </PopoverContent>
+                    </Popover>
                     <Button
                       variant="ghost"
                       className="gap-2"
@@ -830,6 +1328,7 @@ function FlowEditor() {
       <AddFromLibraryDialog
         open={addLibraryOpen}
         onOpenChange={setAddLibraryOpen}
+        getCenterPosition={getCenterProjectPosition}
       />
 
       {/* Clear canvas confirmation */}

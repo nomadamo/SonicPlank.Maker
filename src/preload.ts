@@ -44,12 +44,21 @@ contextBridge.exposeInMainWorld("electron", {
     const metadata = await ipcRenderer.invoke("getaudiometadata", filePath);
     return metadata;
   },
-  openFileDialog: async (): Promise<string[]> => {
-    const filePaths = await ipcRenderer.invoke("openfiledialog");
+  openFileDialog: async (options?: any): Promise<string[]> => {
+    const filePaths = await ipcRenderer.invoke("openfiledialog", options);
     return filePaths;
   },
-  saveRecording: async (fileName: string, arrayBuffer: ArrayBuffer): Promise<string> => {
-    const filePath = await ipcRenderer.invoke("saverecording", fileName, arrayBuffer);
+  saveRecording: async (
+    fileName: string,
+    arrayBuffer: ArrayBuffer,
+    customPath?: string,
+  ): Promise<string> => {
+    const filePath = await ipcRenderer.invoke(
+      "saverecording",
+      fileName,
+      arrayBuffer,
+      customPath,
+    );
     return filePath;
   },
   getFilePath: (file: any) => webUtils.getPathForFile(file),
@@ -61,10 +70,60 @@ contextBridge.exposeInMainWorld("electron", {
     const displays = await ipcRenderer.invoke("getDisplays");
     return displays;
   },
+  setOverlays: async (overlays: any[]): Promise<void> => {
+    await ipcRenderer.invoke("setOverlays", overlays);
+  },
+  getOverlays: async (): Promise<any[]> => {
+    const res = await ipcRenderer.invoke("getOverlays");
+    return res;
+  },
+  startStream: async (rtmpUrl: string): Promise<{ success: boolean }> => {
+    const res = await ipcRenderer.invoke("startStream", rtmpUrl);
+    return res;
+  },
+  stopStream: async (): Promise<{ success: boolean }> => {
+    const res = await ipcRenderer.invoke("stopStream");
+    return res;
+  },
+  pushStreamData: async (
+    arrayBuffer: ArrayBuffer,
+  ): Promise<{ success: boolean }> => {
+    const res = await ipcRenderer.invoke("pushStreamData", arrayBuffer);
+    return res;
+  },
+  initPreviewWindow: async (width: number, height: number): Promise<number> => {
+    const windowHandle = ipcRenderer.invoke(
+      "initPreviewWindow",
+      width,
+      height,
+    ) as Promise<number>;
+    return windowHandle;
+  },
+  onOverlaysUpdated: (callback: (overlays: any[]) => void) => {
+    ipcRenderer.on("onOverlaysUpdated", (_event, overlays) =>
+      callback(overlays),
+    );
+  },
+  removeOnOverlaysUpdated: (callback: (overlays: any[]) => void) => {
+    ipcRenderer.removeAllListeners("onOverlaysUpdated");
+  },
   onLog: (callback: (event: any, data: any) => void) => {
     ipcRenderer.on("log", callback);
   },
   removeOnLog: (callback: (event: any, data: any) => void) => {
     ipcRenderer.removeListener("log", callback);
+  },
+  sendAudioData: (visualizerId: string, dataArray: number[]) => {
+    ipcRenderer.send("sendAudioData", visualizerId, dataArray);
+  },
+  onAudioDataUpdated: (
+    callback: (visualizerId: string, dataArray: number[]) => void,
+  ) => {
+    ipcRenderer.on("onAudioDataUpdated", (_event, visualizerId, dataArray) => {
+      callback(visualizerId, dataArray);
+    });
+  },
+  removeOnAudioDataUpdated: () => {
+    ipcRenderer.removeAllListeners("onAudioDataUpdated");
   },
 });

@@ -1,6 +1,10 @@
-import type { ComponentProps } from "react";
-
+import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import { ChevronDown, ChevronUp } from "lucide-react";
+import { useSetAtom } from "jotai";
+import { updateNodeDataAtom } from "@/store/flowStore";
+import * as React from "react";
+import type { ComponentProps } from "react";
 
 export function BaseNode({ className, ...props }: ComponentProps<"div">) {
   return (
@@ -8,11 +12,6 @@ export function BaseNode({ className, ...props }: ComponentProps<"div">) {
       className={cn(
         "bg-card text-card-foreground relative rounded-md border",
         "hover:ring-1",
-        // React Flow displays node elements inside of a `NodeWrapper`
-        // component, which compiles down to a div with the class
-        // `react-flow__node`. When a node is selected, the class `selected` is
-        // added to the `react-flow__node` element. This allows us to style the
-        // node when it is selected.
         "in-[.selected]:border-muted-foreground",
         "in-[.selected]:shadow-lg",
         className,
@@ -23,10 +22,6 @@ export function BaseNode({ className, ...props }: ComponentProps<"div">) {
   );
 }
 
-/**
- * A container for a consistent header layout intended to be used inside the
- * `<BaseNode />` component.
- */
 export function BaseNodeHeader({
   className,
   ...props
@@ -36,18 +31,12 @@ export function BaseNodeHeader({
       {...props}
       className={cn(
         "mx-0 my-0 -mb-1 flex flex-row items-center justify-between gap-2 px-3 py-2",
-        // Remove or modify these classes if you modify the padding in the
-        // `<BaseNode />` component.
         className,
       )}
     />
   );
 }
 
-/**
- * The title text for the node. To maintain a native application feel, the title
- * text is not selectable.
- */
 export function BaseNodeHeaderTitle({
   className,
   ...props
@@ -84,5 +73,119 @@ export function BaseNodeFooter({ className, ...props }: ComponentProps<"div">) {
       )}
       {...props}
     />
+  );
+}
+
+const borderColors = {
+  emerald: "border-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.35)] ring-1 ring-emerald-500/30",
+  indigo: "border-indigo-500 shadow-[0_0_15px_rgba(99,102,241,0.35)] ring-1 ring-indigo-500/30",
+  cyan: "border-cyan-500 shadow-[0_0_15px_rgba(6,182,212,0.35)] ring-1 ring-cyan-500/30",
+  purple: "border-purple-500 shadow-[0_0_15px_rgba(168,85,247,0.35)] ring-1 ring-purple-500/30",
+  rose: "border-rose-500 shadow-[0_0_15px_rgba(244,63,94,0.35)] ring-1 ring-rose-500/30",
+  pink: "border-pink-500 shadow-[0_0_15px_rgba(236,72,153,0.35)] ring-1 ring-pink-500/30",
+  orange: "border-orange-500 shadow-[0_0_15px_rgba(249,115,22,0.35)] ring-1 ring-orange-500/30",
+  amber: "border-amber-500 shadow-[0_0_15px_rgba(245,158,11,0.35)] ring-1 ring-amber-500/30",
+  red: "border-red-500 shadow-[0_0_15px_rgba(239,68,68,0.35)] ring-1 ring-red-500/30",
+  zinc: "border-zinc-500 shadow-[0_0_15px_rgba(113,113,122,0.35)] ring-1 ring-zinc-500/30",
+};
+
+const iconColors = {
+  emerald: "bg-emerald-500/10 border-emerald-500/20 text-emerald-400",
+  indigo: "bg-indigo-500/10 border-indigo-500/20 text-indigo-400",
+  cyan: "bg-cyan-500/10 border-cyan-500/20 text-cyan-400",
+  purple: "bg-purple-500/10 border-purple-500/20 text-purple-400",
+  rose: "bg-rose-500/10 border-rose-500/20 text-rose-400",
+  pink: "bg-pink-500/10 border-pink-500/20 text-pink-400",
+  orange: "bg-orange-500/10 border-orange-500/20 text-orange-400",
+  amber: "bg-amber-500/10 border-amber-500/20 text-amber-400",
+  red: "bg-red-500/10 border-red-500/20 text-red-400",
+  zinc: "bg-zinc-500/10 border-zinc-500/20 text-zinc-400",
+};
+
+interface BaseNodeCardProps {
+  id: string;
+  selected?: boolean;
+  isMinimized?: boolean;
+  borderColor?: keyof typeof borderColors;
+  iconColor?: keyof typeof iconColors;
+  icon: React.ComponentType<{ className?: string }>;
+  title: string;
+  subtitle?: string;
+  children?: React.ReactNode;
+  headerActions?: React.ReactNode;
+  anchorName?: string;
+  className?: string;
+}
+
+export function BaseNodeCard({
+  id,
+  selected = false,
+  isMinimized = false,
+  borderColor = "zinc",
+  iconColor = "zinc",
+  icon: IconComponent,
+  title,
+  subtitle,
+  children,
+  headerActions,
+  anchorName,
+  className,
+}: BaseNodeCardProps) {
+  const updateNodeData = useSetAtom(updateNodeDataAtom);
+
+  const toggleMinimize = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    updateNodeData({
+      id,
+      patch: { isMinimized: !isMinimized },
+    });
+  };
+
+  const borderClass = borderColors[borderColor] || borderColors.zinc;
+  const iconClass = iconColors[iconColor] || iconColors.zinc;
+
+  return (
+    <Card
+      className={cn(
+        "w-80 panel flex flex-col select-none bg-zinc-950/95 backdrop-blur-md border text-white rounded-xl shadow-2xl transition-all duration-200",
+        isMinimized ? "p-3.5 gap-0" : "p-4 gap-4",
+        selected ? borderClass : "border-zinc-800",
+        className
+      )}
+      id={`flow-node-${id}`}
+      style={{ anchorName } as React.CSSProperties}
+    >
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className={cn("p-2 rounded-lg border", iconClass)}>
+            <IconComponent className="w-5 h-5 shrink-0" />
+          </div>
+          <div>
+            <h4 className="text-sm font-semibold text-zinc-100">{title}</h4>
+            {subtitle && <p className="text-[11px] text-zinc-400">{subtitle}</p>}
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 nodrag nopan nowheel">
+          {headerActions}
+          <button
+            onClick={toggleMinimize}
+            className="p-1.5 rounded hover:bg-zinc-800 text-zinc-400 hover:text-zinc-100 transition-colors cursor-pointer"
+            title={isMinimized ? "Expand" : "Collapse"}
+          >
+            {isMinimized ? (
+              <ChevronDown className="w-4 h-4" />
+            ) : (
+              <ChevronUp className="w-4 h-4" />
+            )}
+          </button>
+        </div>
+      </div>
+
+      {/* Body Content */}
+      {!isMinimized && children}
+    </Card>
   );
 }

@@ -18,6 +18,7 @@ import { MusicIcon, PlusCircleIcon, WorkflowIcon } from "lucide-react";
 interface AddFromLibraryDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  getCenterPosition?: () => { x: number; y: number };
 }
 
 function formatDuration(seconds: number | undefined | null): string {
@@ -30,6 +31,7 @@ function formatDuration(seconds: number | undefined | null): string {
 export function AddFromLibraryDialog({
   open,
   onOpenChange,
+  getCenterPosition,
 }: AddFromLibraryDialogProps) {
   const { items } = useLibraryStore();
   const displayItems = items.filter((item) => !item.isStream);
@@ -39,10 +41,13 @@ export function AddFromLibraryDialog({
     (item: LibraryItem) => {
       const nodeCount = flowNodes?.length || 0;
       const offset = (nodeCount % 8) * 30;
+      const position = getCenterPosition
+        ? getCenterPosition()
+        : { x: 140 + offset, y: 140 + offset };
       const newNode = {
         id: crypto.randomUUID(),
         type: "audioFlowNode" as const,
-        position: { x: 140 + offset, y: 140 + offset },
+        position,
         data: {
           title: item.title,
           artist: item.artist,
@@ -54,7 +59,7 @@ export function AddFromLibraryDialog({
       setFlowNodes((prev) => [...(prev || []), newNode]);
       onOpenChange(false);
     },
-    [flowNodes, setFlowNodes, onOpenChange],
+    [flowNodes, setFlowNodes, onOpenChange, getCenterPosition],
   );
 
   const isEmpty = displayItems.length === 0;
