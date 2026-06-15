@@ -386,7 +386,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
             </div>
           </TabsContent>
 
-          {/* Output / Streaming Tab */}
+          {/* Output / Recording Tab */}
           <TabsContent value="output" className="flex flex-col gap-4 min-h-[360px]">
             {/* Recording Path */}
             <div className="flex flex-col gap-3">
@@ -450,89 +450,9 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
               </div>
             </div>
 
-            <Separator />
-
-            {/* Streaming Server URL & Token */}
-            <div className="flex flex-col gap-3">
-              <div className="flex flex-col gap-1 text-left">
-                <label className="text-sm font-medium">RTMP Streaming Server</label>
-                <span className="text-xs text-muted-foreground text-left">
-                  Set your default RTMP/RTMPS server address and stream key
-                </span>
-              </div>
-              <div className="flex flex-col gap-3 mt-1">
-                <div className="flex flex-col gap-1.5 text-left">
-                  <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">
-                    Server URL
-                  </label>
-                  <Input
-                    placeholder="e.g. rtmp://a.rtmp.youtube.com/live2"
-                    value={settings.streamUrl || ""}
-                    onChange={(e) => updateSettings({ streamUrl: e.target.value })}
-                    className="text-xs font-mono"
-                  />
-                </div>
-                <div className="flex flex-col gap-1.5 text-left">
-                  <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">
-                    Stream Key / Token
-                  </label>
-                  <Input
-                    type="password"
-                    placeholder="Enter stream key..."
-                    value={settings.streamToken || ""}
-                    onChange={(e) => updateSettings({ streamToken: e.target.value })}
-                    className="text-xs font-mono"
-                  />
-                </div>
-                <div className="flex flex-col gap-1.5 text-left">
-                  <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">
-                    Streaming Video Bitrate (Kbps)
-                  </label>
-                  <Input
-                    type="number"
-                    placeholder="e.g. 6000"
-                    value={settings.streamBitrateKbps ?? 6000}
-                    onChange={(e) => {
-                      const val = parseInt(e.target.value, 10);
-                      updateSettings({ streamBitrateKbps: isNaN(val) ? undefined : val });
-                    }}
-                    className="text-xs font-mono w-40"
-                  />
-                </div>
-                <div className="flex flex-col gap-1.5 text-left">
-                  <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">
-                    Streaming Video Encoder
-                  </label>
-                  <Select
-                    value={settings.streamEncoder || "copy"}
-                    onValueChange={(val) => {
-                      if (typeof val === "string") {
-                        updateSettings({
-                          streamEncoder: val as any,
-                        });
-                      }
-                    }}
-                  >
-                    <SelectTrigger className="w-full text-xs">
-                      <SelectValue placeholder="Select encoder">
-                        {settings.streamEncoder === "copy" ? "Copy Stream (No Transcode)" :
-                         settings.streamEncoder === "libx264" ? "Software CPU (x264)" :
-                         settings.streamEncoder === "h264_nvenc" ? "NVIDIA GPU (NVENC)" :
-                         settings.streamEncoder === "h264_amf" ? "AMD GPU (AMF)" :
-                         settings.streamEncoder === "h264_qsv" ? "Intel GPU (QSV)" :
-                         "Copy Stream (No Transcode)"}
-                      </SelectValue>
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="copy">Copy Stream (No Transcode)</SelectItem>
-                      <SelectItem value="libx264">Software CPU (x264)</SelectItem>
-                      <SelectItem value="h264_nvenc">NVIDIA GPU (NVENC)</SelectItem>
-                      <SelectItem value="h264_amf">AMD GPU (AMF)</SelectItem>
-                      <SelectItem value="h264_qsv">Intel GPU (QSV)</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
+            <div className="text-xs text-muted-foreground text-left mt-2 p-3 bg-muted/30 rounded-md border border-border">
+              Stream URL, key, bitrate and encoder are now configured directly on the
+              <strong> Compositor Output</strong> node — click <em>Go Live</em> to access them.
             </div>
           </TabsContent>
         </Tabs>

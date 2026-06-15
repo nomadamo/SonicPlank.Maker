@@ -66,7 +66,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const updateNodeData = useSetAtom(updateNodeDataAtom);
-  const { settings } = useSettings();
+  const { settings, updateSettings } = useSettings();
   const { getVal, setVal } = useTransientNodeState(node.id, "targetOutputNode");
 
   const isPreviewActive = getVal<boolean>("isPreviewActive");
@@ -1558,13 +1558,10 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
 
           {showStreamInput && !isStreaming && (
             <div className="flex flex-col gap-2 p-2.5 bg-zinc-950 border border-zinc-800 rounded-lg mt-1 text-[11px]">
+              {/* RTMP URL */}
               <div className="flex flex-col gap-0.5">
-                <span className="font-semibold text-zinc-200">
-                  RTMP Target URL
-                </span>
-                <span className="text-[9px] text-zinc-500">
-                  Provide RTMP endpoint + key
-                </span>
+                <span className="font-semibold text-zinc-200">RTMP Target URL</span>
+                <span className="text-[9px] text-zinc-500">Server URL + stream key combined, or enter separately below</span>
               </div>
               <input
                 type="text"
@@ -1580,12 +1577,59 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
                     Warning: Stream URL should start with rtmp:// or rtmps://
                   </span>
                 )}
+
+              {/* Stream Key (optional — appended to base URL) */}
+              <div className="flex flex-col gap-1 mt-1">
+                <span className="text-[9px] font-semibold text-zinc-400 uppercase tracking-wider">Stream Key</span>
+                <input
+                  type="password"
+                  value={settings.streamToken || ""}
+                  onChange={(e) => updateSettings({ streamToken: e.target.value })}
+                  className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200 focus:border-indigo-500 focus:outline-none font-mono"
+                  placeholder="Enter stream key (optional)..."
+                />
+              </div>
+
+              {/* Bitrate + Encoder side-by-side */}
+              <div className="flex gap-2 mt-1">
+                <div className="flex flex-col gap-1 flex-1">
+                  <span className="text-[9px] font-semibold text-zinc-400 uppercase tracking-wider">Bitrate (Kbps)</span>
+                  <input
+                    type="number"
+                    value={settings.streamBitrateKbps ?? 6000}
+                    onChange={(e) => {
+                      const val = parseInt(e.target.value, 10);
+                      updateSettings({ streamBitrateKbps: isNaN(val) ? undefined : val });
+                    }}
+                    className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200 focus:border-indigo-500 focus:outline-none font-mono"
+                    placeholder="6000"
+                    min={500}
+                    max={51000}
+                    step={500}
+                  />
+                </div>
+                <div className="flex flex-col gap-1 flex-1">
+                  <span className="text-[9px] font-semibold text-zinc-400 uppercase tracking-wider">Encoder</span>
+                  <select
+                    value={settings.streamEncoder || "copy"}
+                    onChange={(e) => updateSettings({ streamEncoder: e.target.value as any })}
+                    className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200 focus:border-indigo-500 focus:outline-none cursor-pointer"
+                  >
+                    <option value="copy">Auto (WebCodecs)</option>
+                    <option value="libx264">CPU (x264)</option>
+                    <option value="h264_nvenc">NVIDIA (NVENC)</option>
+                    <option value="h264_amf">AMD (AMF)</option>
+                    <option value="h264_qsv">Intel (QSV)</option>
+                  </select>
+                </div>
+              </div>
+
               {!isPreviewActive && (
-                <span className="text-[9px] text-zinc-500">
+                <span className="text-[9px] text-zinc-500 mt-0.5">
                   Preview will start automatically when streaming begins.
                 </span>
               )}
-              <div className="flex gap-2 justify-end">
+              <div className="flex gap-2 justify-end mt-1">
                 <button
                   onClick={() => setShowStreamInput(false)}
                   className="text-[10px] text-zinc-400 hover:text-zinc-200 cursor-pointer"
