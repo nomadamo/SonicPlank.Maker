@@ -200,6 +200,16 @@ export function CaptureSourceNode(NodeRef: NodeProps<FlowNodeType>) {
     [node.id, updateNodeData],
   );
 
+  const handleMaxFrameRateChange = useCallback(
+    (val: string) => {
+      updateNodeData({
+        id: node.id,
+        patch: { maxCaptureFrameRate: parseInt(val, 10) },
+      });
+    },
+    [node.id, updateNodeData],
+  );
+
   const handleAudioToggle = useCallback(
     (checked: boolean) => {
       updateNodeData({
@@ -333,6 +343,42 @@ export function CaptureSourceNode(NodeRef: NodeProps<FlowNodeType>) {
             checked={!!node.data.captureAudio}
             onCheckedChange={handleAudioToggle}
           />
+        </div>
+
+        {/* Frame rate*/}
+        <div className="flex flex-col gap-1.5 nodrag nopan nowheel">
+          <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">
+            Maximum FPS
+          </label>
+          <Select
+            value={{
+              value: node.data.maxCaptureFrameRate || 30,
+              label: node.data.maxCaptureFrameRate?.toString() || "30",
+            }}
+            multiple={false}
+            onValueChange={(val) => {
+              if (typeof val === "string") {
+                handleMaxFrameRateChange(val);
+              }
+            }}
+          >
+            <SelectTrigger className="w-full h-9 bg-zinc-900 border border-zinc-800 rounded-lg flex items-center justify-between px-3 text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-zinc-200">
+              <SelectValue placeholder="Select a max frame rate">
+                {node.data.maxCaptureFrameRate?.toString()}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent className="bg-zinc-950 border border-zinc-800 rounded-lg p-1 max-h-60 overflow-y-auto shadow-xl">
+              {[0, 30, 60, 120].map((value) => (
+                <SelectItem
+                  key={value}
+                  value={value.toString()}
+                  className="flex items-center p-2 hover:bg-zinc-900 rounded cursor-pointer text-sm text-zinc-300"
+                >
+                  {value === 0 ? "No limit" : value}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
       </BaseNodeCard>
       <Handle

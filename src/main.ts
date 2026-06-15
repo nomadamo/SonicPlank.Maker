@@ -603,6 +603,50 @@ const registerIpcHandlers = () => {
     }
   });
 
+  // Spawn FFmpeg with the given args and wire up the shared stdin-error /
+  // stderr-stats-parsing / close handlers used by every streaming mode.
+  function spawnFfmpegStream(ffmpegArgs: string[]) {
+    ffmpegProcess = spawn("ffmpeg", ffmpegArgs);
+
+    ffmpegProcess.stdin.on("error", (err: any) => {
+      console.error("FFmpeg stdin error:", err);
+    });
+
+    ffmpegProcess.stderr.on("data", (data: any) => {
+      const line: string = data.toString();
+      console.log(`FFmpeg status: ${line}`);
+
+      // Parse the progress line: frame= NNN fps= NN q=... size=...KiB time=... bitrate=...kbits/s speed=...x drop=NNN
+      const frameMatch = line.match(/frame=\s*(\d+)/);
+      const fpsMatch = line.match(/fps=\s*([\d.]+)/);
+      const sizeMatch = line.match(/size=\s*([\d.]+\s*\w+)/);
+      const timeMatch = line.match(/time=\s*([\d:.]+)/);
+      const bitrateMatch = line.match(/bitrate=\s*([\d.]+\s*\w+\/s)/);
+      const speedMatch = line.match(/speed=\s*([\d.]+x)/);
+      const dropMatch = line.match(/drop=\s*(\d+)/);
+
+      if (fpsMatch || bitrateMatch) {
+        const stats = {
+          frame: frameMatch ? parseInt(frameMatch[1]) : null,
+          fps: fpsMatch ? parseFloat(fpsMatch[1]) : null,
+          size: sizeMatch ? sizeMatch[1].trim() : null,
+          time: timeMatch ? timeMatch[1].trim() : null,
+          bitrate: bitrateMatch ? bitrateMatch[1].trim() : null,
+          speed: speedMatch ? speedMatch[1].trim() : null,
+          dropped: dropMatch ? parseInt(dropMatch[1]) : null,
+        };
+        BrowserWindow.getAllWindows().forEach((win) => {
+          if (!win.isDestroyed()) win.webContents.send("onStreamStatus", stats);
+        });
+      }
+    });
+
+    ffmpegProcess.on("close", (code: number) => {
+      console.log(`FFmpeg process exited with code ${code}`);
+      ffmpegProcess = null;
+    });
+  }
+
   ipcMain.handle("startStream", (_event, rtmpUrl, options) => {
     try {
       if (ffmpegProcess) {
@@ -610,6 +654,7 @@ const registerIpcHandlers = () => {
         ffmpegProcess = null;
       }
 
+      const mode = options?.mode || "mjpeg";
       const encoder = options?.encoder || "libx264";
       const bitrateKbps = options?.bitrateKbps || 6000;
       const fps = options?.fps || 30;
@@ -617,6 +662,35 @@ const registerIpcHandlers = () => {
       const height: number | null = options?.height || null;
       const bufsizeKbps = bitrateKbps * 2; // 2x bitrate for stable rate control
 
+      // ── Mode: h264 ──────────────────────────────────────────────────────────
+      // Frames are already encoded to H.264 on the GPU by the renderer's
+      // WebCodecs VideoEncoder. FFmpeg only needs to mux to FLV — `-c:v copy`,
+      // no decode, no re-encode (near-zero CPU). The FLV muxer auto-converts
+      // the Annex-B bitstream to AVCC, so no bitstream filter is required.
+      if (mode === "h264") {
+        console.log(
+          `Starting FFmpeg RTMP mux (WebCodecs H.264 passthrough) to ${rtmpUrl} | ${fps}fps`,
+        );
+        const ffmpegArgs = [
+          "-y",
+          "-f",
+          "h264",
+          "-r",
+          `${fps}`,
+          "-i",
+          "pipe:0",
+          "-c:v",
+          "copy",
+          "-an",
+          "-f",
+          "flv",
+          rtmpUrl,
+        ];
+        spawnFfmpegStream(ffmpegArgs);
+        return { success: true };
+      }
+
+      // ── Mode: mjpeg (fallback) ──────────────────────────────────────────────
       const resLabel = width && height ? ` | output: ${width}x${height}` : "";
       console.log(
         `Starting FFmpeg RTMP stream to ${rtmpUrl} | encoder: ${encoder} | bitrate: ${bitrateKbps}k | ${fps}fps${resLabel}`,
@@ -722,46 +796,7 @@ const registerIpcHandlers = () => {
       // -an suppresses the "Output file does not contain any stream" warning.
       ffmpegArgs.push("-an", "-f", "flv", rtmpUrl);
 
-      ffmpegProcess = spawn("ffmpeg", ffmpegArgs);
-
-      ffmpegProcess.stdin.on("error", (err: any) => {
-        console.error("FFmpeg stdin error:", err);
-      });
-
-      ffmpegProcess.stderr.on("data", (data: any) => {
-        const line: string = data.toString();
-        console.log(`FFmpeg status: ${line}`);
-
-        // Parse the progress line: frame= NNN fps= NN q=... size=...KiB time=... bitrate=...kbits/s speed=...x drop=NNN
-        const frameMatch = line.match(/frame=\s*(\d+)/);
-        const fpsMatch = line.match(/fps=\s*([\d.]+)/);
-        const sizeMatch = line.match(/size=\s*([\d.]+\s*\w+)/);
-        const timeMatch = line.match(/time=\s*([\d:.]+)/);
-        const bitrateMatch = line.match(/bitrate=\s*([\d.]+\s*\w+\/s)/);
-        const speedMatch = line.match(/speed=\s*([\d.]+x)/);
-        const dropMatch = line.match(/drop=\s*(\d+)/);
-
-        if (fpsMatch || bitrateMatch) {
-          const stats = {
-            frame: frameMatch ? parseInt(frameMatch[1]) : null,
-            fps: fpsMatch ? parseFloat(fpsMatch[1]) : null,
-            size: sizeMatch ? sizeMatch[1].trim() : null,
-            time: timeMatch ? timeMatch[1].trim() : null,
-            bitrate: bitrateMatch ? bitrateMatch[1].trim() : null,
-            speed: speedMatch ? speedMatch[1].trim() : null,
-            dropped: dropMatch ? parseInt(dropMatch[1]) : null,
-          };
-          BrowserWindow.getAllWindows().forEach((win) => {
-            if (!win.isDestroyed())
-              win.webContents.send("onStreamStatus", stats);
-          });
-        }
-      });
-
-      ffmpegProcess.on("close", (code: number) => {
-        console.log(`FFmpeg process exited with code ${code}`);
-        ffmpegProcess = null;
-      });
+      spawnFfmpegStream(ffmpegArgs);
 
       return { success: true };
     } catch (error: any) {

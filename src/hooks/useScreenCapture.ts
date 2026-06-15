@@ -11,18 +11,21 @@ export interface UseScreenCaptureResult {
   startCapture: (
     sourceId: string,
     captureAudio?: boolean,
-    resolutionOverride?: { maxWidth?: number; maxHeight?: number }
+    maxFrameRate?: number,
+    resolutionOverride?: { maxWidth?: number; maxHeight?: number },
   ) => Promise<MediaStream | null>;
   stopCapture: () => void;
 }
 
 export function useScreenCapture(): UseScreenCaptureResult {
   const [sources, setSources] = useState<ScreenCaptureSource[]>([]);
-  const [activeSource, setActiveSource] = useState<ScreenCaptureSource | null>(null);
+  const [activeSource, setActiveSource] = useState<ScreenCaptureSource | null>(
+    null,
+  );
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  
+
   const streamRef = useRef<MediaStream | null>(null);
 
   // Refresh available displays and windows
@@ -34,7 +37,8 @@ export function useScreenCapture(): UseScreenCaptureResult {
       setSources(screenSources);
       return screenSources;
     } catch (err: any) {
-      const errMsg = err?.message || "Failed to retrieve screen capture sources";
+      const errMsg =
+        err?.message || "Failed to retrieve screen capture sources";
       setError(errMsg);
       return [];
     } finally {
@@ -47,7 +51,9 @@ export function useScreenCapture(): UseScreenCaptureResult {
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => {
         track.stop();
-        console.log(`[useScreenCapture] Stopped track: ${track.kind} (${track.label})`);
+        console.log(
+          `[useScreenCapture] Stopped track: ${track.kind} (${track.label})`,
+        );
       });
       streamRef.current = null;
       setStream(null);
@@ -60,7 +66,8 @@ export function useScreenCapture(): UseScreenCaptureResult {
     async (
       sourceId: string,
       captureAudio = false,
-      resolutionOverride?: { maxWidth?: number; maxHeight?: number }
+      frameRate = 30,
+      resolutionOverride?: { maxWidth?: number; maxHeight?: number },
     ): Promise<MediaStream | null> => {
       setLoading(true);
       setError(null);
@@ -84,6 +91,7 @@ export function useScreenCapture(): UseScreenCaptureResult {
             maxWidth: maxWidth,
             minHeight: 180,
             maxHeight: maxHeight,
+            maxFrameRate: frameRate,
           },
         };
 
@@ -101,11 +109,14 @@ export function useScreenCapture(): UseScreenCaptureResult {
           video: videoConstraints,
         };
 
-        console.log("[useScreenCapture] Requesting media stream with constraints:", constraints);
-        
+        console.log(
+          "[useScreenCapture] Requesting media stream with constraints:",
+          constraints,
+        );
+
         // Request the stream from Chromium media engine
         const mediaStream = await navigator.mediaDevices.getUserMedia(
-          constraints as unknown as MediaStreamConstraints
+          constraints as unknown as MediaStreamConstraints,
         );
 
         streamRef.current = mediaStream;
@@ -143,7 +154,7 @@ export function useScreenCapture(): UseScreenCaptureResult {
         setLoading(false);
       }
     },
-    [sources, stopCapture]
+    [sources, stopCapture],
   );
 
   // Auto clean-up when component unmounts

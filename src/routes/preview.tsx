@@ -1,7 +1,15 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useScreenCapture } from "@/hooks/useScreenCapture";
-import { Loader2, Radio, Disc, Square, Monitor, Lock, Unlock } from "lucide-react";
+import {
+  Loader2,
+  Radio,
+  Disc,
+  Square,
+  Monitor,
+  Lock,
+  Unlock,
+} from "lucide-react";
 import { OverlayElement } from "@/types/flow-node";
 import { useSettings } from "@/store/settingsStore";
 
@@ -46,7 +54,9 @@ function formatTime(seconds: number): string {
 
 function cleanStreamUrl(url: string): string {
   const trimmed = url.trim();
-  const twitchMatch = trimmed.match(/https?:\/\/(?:www\.)?twitch\.tv\/[^/]+\/(live_[a-zA-Z0-9_]+)/i);
+  const twitchMatch = trimmed.match(
+    /https?:\/\/(?:www\.)?twitch\.tv\/[^/]+\/(live_[a-zA-Z0-9_]+)/i,
+  );
   if (twitchMatch) {
     return `rtmp://live.twitch.tv/app/${twitchMatch[1]}`;
   }
@@ -56,6 +66,7 @@ function cleanStreamUrl(url: string): string {
 function PreviewComponent() {
   const { sourceId, audio, maxWidth, maxHeight, aspect } = Route.useSearch();
   const captureAudio = audio === "true";
+  const maxCaptureFrameRate = 30;
   const { settings } = useSettings();
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -164,7 +175,9 @@ function PreviewComponent() {
       newY = Math.round(newY * 10) / 10;
 
       setOverlays((prev) =>
-        prev.map((o) => (o.id === activeDragId ? { ...o, x: newX, y: newY } : o)),
+        prev.map((o) =>
+          o.id === activeDragId ? { ...o, x: newX, y: newY } : o,
+        ),
       );
     };
 
@@ -284,14 +297,22 @@ function PreviewComponent() {
       // Constrain minimum size
       const minSize = 2;
       if (newWidth < minSize) {
-        if (activeHandle === "l" || activeHandle === "bl" || activeHandle === "tl") {
+        if (
+          activeHandle === "l" ||
+          activeHandle === "bl" ||
+          activeHandle === "tl"
+        ) {
           newX = start.x + start.width - minSize;
         }
         newWidth = minSize;
         if (maintainAspect) newHeight = minSize / R;
       }
       if (newHeight < minSize) {
-        if (activeHandle === "t" || activeHandle === "tr" || activeHandle === "tl") {
+        if (
+          activeHandle === "t" ||
+          activeHandle === "tr" ||
+          activeHandle === "tl"
+        ) {
           newY = start.y + start.height - minSize;
         }
         newHeight = minSize;
@@ -367,7 +388,9 @@ function PreviewComponent() {
       const baseUrl = settings.streamUrl.trim();
       const token = settings.streamToken?.trim() || "";
       if (token) {
-        return baseUrl.endsWith("/") ? `${baseUrl}${token}` : `${baseUrl}/${token}`;
+        return baseUrl.endsWith("/")
+          ? `${baseUrl}${token}`
+          : `${baseUrl}/${token}`;
       }
       return baseUrl;
     }
@@ -411,7 +434,10 @@ function PreviewComponent() {
       console.log(
         `[PreviewWindow] Starting capture for sourceId: ${sourceId}, audio: ${captureAudio}, bounds: ${maxWidth}x${maxHeight}`,
       );
-      startCapture(sourceId, captureAudio, { maxWidth, maxHeight });
+      startCapture(sourceId, captureAudio, maxCaptureFrameRate, {
+        maxWidth,
+        maxHeight,
+      });
     }
     return () => {
       console.log("[PreviewWindow] Stopping capture tracks.");
@@ -498,7 +524,8 @@ function PreviewComponent() {
     window.electron
       .getAvailableThemes()
       .then((themes) => {
-        const defaultTheme = themes.find((t) => t.id === "default") || themes[0];
+        const defaultTheme =
+          themes.find((t) => t.id === "default") || themes[0];
         if (defaultTheme) {
           window.electron
             .loadThemeStyles(defaultTheme.id)
@@ -510,12 +537,18 @@ function PreviewComponent() {
                 document.head.appendChild(styleTag);
               }
               styleTag.textContent = styles;
-              console.log(`[PreviewWindow] Loaded theme styles: ${defaultTheme.name}`);
+              console.log(
+                `[PreviewWindow] Loaded theme styles: ${defaultTheme.name}`,
+              );
             })
-            .catch((err) => console.error("[PreviewWindow] Failed to load theme CSS:", err));
+            .catch((err) =>
+              console.error("[PreviewWindow] Failed to load theme CSS:", err),
+            );
         }
       })
-      .catch((err) => console.error("[PreviewWindow] Failed to fetch available themes:", err));
+      .catch((err) =>
+        console.error("[PreviewWindow] Failed to fetch available themes:", err),
+      );
   }, []);
 
   // Subscribe to real-time audio data from the main window compositor
@@ -529,14 +562,19 @@ function PreviewComponent() {
   }, []);
 
   // Keep track of audio node playback times in a ref to avoid triggering component re-renders
-  const audioTimesRef = useRef<Record<string, { currentTime: number; duration: number }>>({});
+  const audioTimesRef = useRef<
+    Record<string, { currentTime: number; duration: number }>
+  >({});
 
   // Subscribe to real-time audio playback time updates
   useEffect(() => {
     const handleTimeUpdated = (nodeId: string, currentTime: number) => {
       // Find duration of this audio node from active overlays
-      const overlay = overlays.find((o) => o.audioNodeId === nodeId && o.type === "nowPlaying");
-      const duration = overlay?.duration !== undefined ? Number(overlay.duration) : 0;
+      const overlay = overlays.find(
+        (o) => o.audioNodeId === nodeId && o.type === "nowPlaying",
+      );
+      const duration =
+        overlay?.duration !== undefined ? Number(overlay.duration) : 0;
       audioTimesRef.current[nodeId] = { currentTime, duration };
     };
 
@@ -569,8 +607,24 @@ function PreviewComponent() {
       canvas.height = targetHeight;
     }
 
-    // 1. Draw base video frame
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    // Fill with black first so any gap from canvas resize is clean, not green
+    // (GPU canvas textures can briefly show as YUV-zero green when uncleared).
+    ctx.fillStyle = "#000000";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // 1. Draw base video frame — cover mode: fill canvas, crop overflow, no bars.
+    const vw = video.videoWidth;
+    const vh = video.videoHeight;
+    if (vw > 0 && vh > 0) {
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
+      const scale = Math.max(canvas.width / vw, canvas.height / vh);
+      const dw = vw * scale;
+      const dh = vh * scale;
+      const dx = (canvas.width - dw) / 2;
+      const dy = (canvas.height - dh) / 2;
+      ctx.drawImage(video, dx, dy, dw, dh);
+    }
 
     // 2. Draw overlays sequentially
     overlays.forEach((overlay) => {
@@ -750,7 +804,9 @@ function PreviewComponent() {
         }
       } else if (overlay.type === "nowPlaying") {
         // Draw Now Playing Overlay
-        const tracking = overlay.audioNodeId ? audioTimesRef.current[overlay.audioNodeId] : null;
+        const tracking = overlay.audioNodeId
+          ? audioTimesRef.current[overlay.audioNodeId]
+          : null;
         const curTime = tracking ? tracking.currentTime : 0;
         const totalDur = tracking ? tracking.duration : 0;
         const pct = totalDur > 0 ? curTime / totalDur : 0;
@@ -772,19 +828,26 @@ function PreviewComponent() {
         ctx.save();
         drawRoundedRect(ctx, artX, artY, artSize, artSize, artSize * 0.12);
         ctx.clip();
-        
-        let img = overlay.albumArt ? imageCacheRef.current[overlay.albumArt] : null;
+
+        let img = overlay.albumArt
+          ? imageCacheRef.current[overlay.albumArt]
+          : null;
         if (overlay.albumArt && !img) {
           img = new Image();
           img.src = overlay.albumArt;
           imageCacheRef.current[overlay.albumArt] = img;
         }
-        
+
         if (img && img.complete && img.naturalWidth > 0) {
           ctx.drawImage(img, artX, artY, artSize, artSize);
         } else {
           // Fallback placeholder gradient
-          const grad = ctx.createLinearGradient(artX, artY, artX + artSize, artY + artSize);
+          const grad = ctx.createLinearGradient(
+            artX,
+            artY,
+            artX + artSize,
+            artY + artSize,
+          );
           grad.addColorStop(0, "#4f46e5");
           grad.addColorStop(1, "#06b6d4");
           ctx.fillStyle = grad;
@@ -807,12 +870,15 @@ function PreviewComponent() {
         ctx.textAlign = "left";
         ctx.textBaseline = "top";
         ctx.font = `bold ${artSize * 0.22}px Inter, sans-serif`;
-        
+
         // Truncate title if too long
         const maxTextWidth = wVal - (pad * 3 + artSize) - pad;
         let displayTitle = overlay.title || "No Track Connected";
         if (ctx.measureText(displayTitle).width > maxTextWidth) {
-          while (displayTitle.length > 0 && ctx.measureText(displayTitle + "...").width > maxTextWidth) {
+          while (
+            displayTitle.length > 0 &&
+            ctx.measureText(displayTitle + "...").width > maxTextWidth
+          ) {
             displayTitle = displayTitle.slice(0, -1);
           }
           displayTitle += "...";
@@ -824,7 +890,10 @@ function PreviewComponent() {
         ctx.font = `500 ${artSize * 0.16}px Inter, sans-serif`;
         let displayArtist = overlay.artist || "Connect Audio Source";
         if (ctx.measureText(displayArtist).width > maxTextWidth) {
-          while (displayArtist.length > 0 && ctx.measureText(displayArtist + "...").width > maxTextWidth) {
+          while (
+            displayArtist.length > 0 &&
+            ctx.measureText(displayArtist + "...").width > maxTextWidth
+          ) {
             displayArtist = displayArtist.slice(0, -1);
           }
           displayArtist += "...";
@@ -834,8 +903,11 @@ function PreviewComponent() {
         // Progress Line & Timer
         const progressY = yVal + hVal - pad * 1.6;
         const timerSpace = artSize * 0.75; // Approx width of MM:SS / MM:SS
-        const barW = Math.max(10, wVal - (pad * 3 + artSize) - timerSpace - pad * 2);
-        
+        const barW = Math.max(
+          10,
+          wVal - (pad * 3 + artSize) - timerSpace - pad * 2,
+        );
+
         // Progress background
         ctx.fillStyle = "rgba(255, 255, 255, 0.1)";
         ctx.beginPath();
@@ -846,7 +918,14 @@ function PreviewComponent() {
         if (pct > 0) {
           ctx.fillStyle = "#6366f1"; // Indigo accent
           ctx.beginPath();
-          drawRoundedRect(ctx, textX, progressY, barW * pct, hVal * 0.04, hVal * 0.02);
+          drawRoundedRect(
+            ctx,
+            textX,
+            progressY,
+            barW * pct,
+            hVal * 0.04,
+            hVal * 0.02,
+          );
           ctx.fill();
         }
 
@@ -856,7 +935,7 @@ function PreviewComponent() {
         ctx.textAlign = "right";
         ctx.textBaseline = "middle";
         const timeStr = `${formatTime(curTime)} / ${formatTime(totalDur)}`;
-        ctx.fillText(timeStr, xVal + wVal - pad, progressY + (hVal * 0.02));
+        ctx.fillText(timeStr, xVal + wVal - pad, progressY + hVal * 0.02);
       }
 
       ctx.restore();
@@ -931,7 +1010,11 @@ function PreviewComponent() {
       const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
       const fileName = `sonicplank-capture-${timestamp}.webm`;
       try {
-        await window.electron.saveRecording(fileName, arrayBuffer, settings.recordingPath);
+        await window.electron.saveRecording(
+          fileName,
+          arrayBuffer,
+          settings.recordingPath,
+        );
         console.log("[PreviewWindow] Disk capture saved successfully.");
       } catch (err) {
         console.error("[PreviewWindow] Failed to save capture to disk:", err);
@@ -1063,7 +1146,9 @@ function PreviewComponent() {
                   }}
                 >
                   <div className="bg-indigo-600/90 backdrop-blur-sm text-[9px] font-bold text-white px-1.5 py-0.5 rounded shadow self-start uppercase tracking-wider font-mono">
-                    {overlay.type?.replace("OverlayNode", "").replace("Node", "") || overlay.type}
+                    {overlay.type
+                      ?.replace("OverlayNode", "")
+                      .replace("Node", "") || overlay.type}
                   </div>
                   <div className="text-[9px] text-indigo-200 bg-zinc-950/80 px-1 py-0.5 rounded self-end font-mono">
                     {overlay.x}%, {overlay.y}%
@@ -1095,22 +1180,38 @@ function PreviewComponent() {
                   <div
                     onMouseDown={(e) => handleResizeMouseDown(e, overlay, "t")}
                     className="absolute w-2.5 h-2.5 bg-white border-2 border-indigo-600 rounded-full shadow z-50 hover:bg-indigo-400 cursor-ns-resize"
-                    style={{ top: "-5px", left: "50%", transform: "translateX(-50%)" }}
+                    style={{
+                      top: "-5px",
+                      left: "50%",
+                      transform: "translateX(-50%)",
+                    }}
                   />
                   <div
                     onMouseDown={(e) => handleResizeMouseDown(e, overlay, "b")}
                     className="absolute w-2.5 h-2.5 bg-white border-2 border-indigo-600 rounded-full shadow z-50 hover:bg-indigo-400 cursor-ns-resize"
-                    style={{ bottom: "-5px", left: "50%", transform: "translateX(-50%)" }}
+                    style={{
+                      bottom: "-5px",
+                      left: "50%",
+                      transform: "translateX(-50%)",
+                    }}
                   />
                   <div
                     onMouseDown={(e) => handleResizeMouseDown(e, overlay, "l")}
                     className="absolute w-2.5 h-2.5 bg-white border-2 border-indigo-600 rounded-full shadow z-50 hover:bg-indigo-400 cursor-ew-resize"
-                    style={{ top: "50%", left: "-5px", transform: "translateY(-50%)" }}
+                    style={{
+                      top: "50%",
+                      left: "-5px",
+                      transform: "translateY(-50%)",
+                    }}
                   />
                   <div
                     onMouseDown={(e) => handleResizeMouseDown(e, overlay, "r")}
                     className="absolute w-2.5 h-2.5 bg-white border-2 border-indigo-600 rounded-full shadow z-50 hover:bg-indigo-400 cursor-ew-resize"
-                    style={{ top: "50%", right: "-5px", transform: "translateY(-50%)" }}
+                    style={{
+                      top: "50%",
+                      right: "-5px",
+                      transform: "translateY(-50%)",
+                    }}
                   />
                 </div>
               ))}
@@ -1131,10 +1232,12 @@ function PreviewComponent() {
 
       {/* Floating Translucent Control Bar */}
       {stream && (
-        <div 
+        <div
           style={{ zIndex: 10000 }}
           className={`absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-3 bg-zinc-950/80 backdrop-blur-md px-4 py-2.5 rounded-full border border-zinc-800 shadow-2xl transition-all duration-300 ${
-            !isLocked ? "opacity-100 border-indigo-500/50 shadow-[0_0_20px_rgba(99,102,241,0.2)]" : "opacity-0 hover:opacity-100 group-hover:opacity-100"
+            !isLocked
+              ? "opacity-100 border-indigo-500/50 shadow-[0_0_20px_rgba(99,102,241,0.2)]"
+              : "opacity-0 hover:opacity-100 group-hover:opacity-100"
           }`}
         >
           {/* Lock/Unlock layout positioning toggle button */}
@@ -1225,11 +1328,13 @@ function PreviewComponent() {
             className="w-full bg-zinc-900 border border-zinc-800 rounded px-2.5 py-1.5 text-xs text-zinc-200 focus:border-indigo-500 focus:outline-none"
             placeholder="rtmp://..."
           />
-          {rtmpUrl && !rtmpUrl.startsWith("rtmp://") && !rtmpUrl.startsWith("rtmps://") && (
-            <span className="text-[10px] text-amber-500 font-semibold mt-0.5">
-              Warning: Stream URL should start with rtmp:// or rtmps://
-            </span>
-          )}
+          {rtmpUrl &&
+            !rtmpUrl.startsWith("rtmp://") &&
+            !rtmpUrl.startsWith("rtmps://") && (
+              <span className="text-[10px] text-amber-500 font-semibold mt-0.5">
+                Warning: Stream URL should start with rtmp:// or rtmps://
+              </span>
+            )}
           <div className="flex gap-2 justify-end">
             <button
               onClick={() => setShowStreamInput(false)}

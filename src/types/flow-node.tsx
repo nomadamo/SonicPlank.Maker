@@ -3,7 +3,7 @@ import type { NodeBase } from "@xyflow/system";
 export interface NodeTrigger {
   id: string;
   triggerKey: string; // e.code, e.g. "Space", "KeyM"
-  action: string;      // Action name, e.g. "togglePlay"
+  action: string; // Action name, e.g. "togglePlay"
 }
 
 export interface OverlayElement {
@@ -45,6 +45,9 @@ export type FlowNodeType<
     captureType?: string;
     captureAudio?: boolean;
     captureResolution?: string;
+    maxCaptureFrameRate?: number;
+    // How the source is fit into a differently-shaped output canvas.
+    fitMode?: "contain" | "cover" | "stretch";
     overlays?: OverlayElement[];
     albumArt?: string;
     // New states and configurations for triggers & visualizers
