@@ -14,6 +14,16 @@ export interface DisplayInfo {
   isPrimary: boolean;
 }
 
+export interface StreamStats {
+  frame: number | null;
+  fps: number | null;
+  size: string | null;
+  time: string | null;
+  bitrate: string | null;
+  speed: string | null;
+  dropped: number | null;
+}
+
 declare global {
   interface Window {
     electron: {
@@ -32,7 +42,7 @@ declare global {
       getDisplays: () => Promise<DisplayInfo[]>;
       setOverlays: (overlays: any[]) => Promise<void>;
       getOverlays: () => Promise<any[]>;
-      startStream: (rtmpUrl: string) => Promise<{ success: boolean }>;
+      startStream: (rtmpUrl: string, options?: any) => Promise<{ success: boolean }>;
       stopStream: () => Promise<{ success: boolean }>;
       pushStreamData: (arrayBuffer: ArrayBuffer) => Promise<{ success: boolean }>;
       onOverlaysUpdated: (callback: (overlays: any[]) => void) => void;
@@ -42,6 +52,14 @@ declare global {
       sendAudioData: (visualizerId: string, dataArray: number[]) => void;
       onAudioDataUpdated: (callback: (visualizerId: string, dataArray: number[]) => void) => void;
       removeOnAudioDataUpdated: () => void;
+      openPopOutPreview: (args: { sourceId: string; audio: boolean; width: number; height: number; aspect: string }) => Promise<void>;
+      getAvailableThemes: () => Promise<any[]>;
+      loadThemeStyles: (themeName: string) => Promise<string>;
+      sendAudioTime: (nodeId: string, currentTime: number, paused: boolean) => void;
+      onAudioTimeUpdated: (callback: (nodeId: string, currentTime: number, paused: boolean) => void) => void;
+      removeOnAudioTimeUpdated: () => void;
+      onStreamStatus: (callback: (stats: StreamStats) => void) => void;
+      removeOnStreamStatus: () => void;
     };
   }
 }

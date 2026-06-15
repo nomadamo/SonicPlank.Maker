@@ -137,8 +137,8 @@ export function CaptureSourceNode(NodeRef: NodeProps<FlowNodeType>) {
       original: {
         label: "Original / Fit Window",
         aspect: "auto",
-        width: 3840,
-        height: 2160,
+        width: undefined,
+        height: undefined,
       },
       hd: {
         label: "16:9 HD (1280x720)",

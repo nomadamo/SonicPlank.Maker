@@ -526,7 +526,7 @@ function Library() {
         style={{
           display: "flex",
           flexDirection: "column",
-          height: "calc(100vh - 120px)",
+          height: "calc(100vh - 125px)",
           position: "relative",
         }}
         className="mt-13"
@@ -973,12 +973,14 @@ function LibraryCard({
             onClick={() => onSelect(item.id)}
             onDoubleClick={() => onPlay()}
             className={cn(
-              "border rounded-xl p-[14px] cursor-pointer transition-all duration-150 relative group",
-              isSelected ? "bg-card hover:shadow-md" : "border-transparent",
+              "border p-[14px] cursor-pointer transition-all duration-200 relative group bg-zinc-950/45 border-zinc-800 text-white shadow-lg rounded-xl",
+              isSelected
+                ? "border-indigo-500 shadow-[0_0_15px_rgba(99,102,241,0.35)] ring-1 ring-indigo-500/30 bg-zinc-950/80"
+                : "hover:bg-zinc-900/60 hover:border-zinc-700",
             )}
           >
             {/* Album Art */}
-            <div className="w-full aspect-square rounded-lg bg-muted flex items-center justify-center mb-3 overflow-hidden relative">
+            <div className="w-full aspect-square rounded-lg bg-zinc-950 flex items-center justify-center mb-3 overflow-hidden relative border border-zinc-900">
               {item.albumArt ? (
                 <img
                   src={item.albumArt}
@@ -986,21 +988,39 @@ function LibraryCard({
                   className="w-full h-full object-cover"
                 />
               ) : isStream ? (
-                <Icon
-                  name={streamIcon as IconName}
-                  className="text-muted-foreground opacity-40"
-                  size={32}
-                  strokeWidth={1.5}
-                />
+                <div
+                  className="p-3.5 rounded-xl border"
+                  style={{
+                    backgroundColor: `${streamColor || "#a78bfa"}10`,
+                    borderColor: `${streamColor || "#a78bfa"}20`,
+                    color: streamColor || "#a78bfa",
+                  }}
+                >
+                  <Icon
+                    name={streamIcon as IconName}
+                    size={28}
+                    strokeWidth={1.5}
+                  />
+                </div>
               ) : categoryIcon ? (
-                <Icon
-                  name={categoryIcon}
-                  className="text-muted-foreground opacity-40"
-                  size={32}
-                  strokeWidth={1.5}
-                />
+                <div
+                  className="p-3.5 rounded-xl border"
+                  style={{
+                    backgroundColor: `${categoryColor || "#71717a"}15`,
+                    borderColor: `${categoryColor || "#71717a"}25`,
+                    color: categoryColor || "#a1a1aa",
+                  }}
+                >
+                  <Icon
+                    name={categoryIcon}
+                    size={28}
+                    strokeWidth={1.5}
+                  />
+                </div>
               ) : (
-                <MusicIcon className="text-muted-foreground opacity-40" />
+                <div className="p-3.5 rounded-xl border bg-zinc-500/10 border-zinc-500/20 text-zinc-400">
+                  <MusicIcon size={28} />
+                </div>
               )}
 
               {/* Play Overlay */}

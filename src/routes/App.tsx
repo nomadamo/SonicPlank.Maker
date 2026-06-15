@@ -154,30 +154,38 @@ export default function App() {
   return (
     <>
       <div
+        className="border-zinc-800/60 bg-zinc-950/40 backdrop-blur-md flex items-center justify-between"
         style={{
-          display: "flex",
-          alignContent: "space-between",
           width: "100%",
-          height: "30px",
+          height: "35px",
         }}
       >
         <FloatingNav items={items} />
         <Dialog>
-          <DialogTrigger>
-            <img src="/img/icon.png" width={"38px"} height={"38px"} />
-          </DialogTrigger>
-          <DialogContent style={{ maxWidth: "600px", maxHeight: "600px" }}>
+          <DialogTrigger
+            render={
+              <button className="flex items-center justify-center h-[35px] w-[35px] hover:bg-zinc-800/40 transition-colors duration-150 outline-none cursor-pointer">
+                <img
+                  src="/img/icon.png"
+                  width={"20px"}
+                  height={"20px"}
+                  className="opacity-90"
+                />
+              </button>
+            }
+          />
+          <DialogContent style={{ maxWidth: "500px" }}>
             <DialogHeader>
               <DialogTitle>SonicPlank.Maker</DialogTitle>
             </DialogHeader>
             <Separator />
-            <p>
-              {/*
-                // TODO: Fill out a proper about section
-               */}
-              Placeholder about text. To be replaced.
-            </p>
-            <LicenseViewer />
+            <div className="text-zinc-300 space-y-3">
+              <p>
+                A high-fidelity digital audio workstation, flow-based routing
+                engine, and compositor environment.
+              </p>
+              <LicenseViewer />
+            </div>
             <Separator />
             <DialogDescription>Copyright 2026 © Damon Batey</DialogDescription>
           </DialogContent>
@@ -187,18 +195,17 @@ export default function App() {
             {
               WebkitAppRegion: "drag",
               display: "flex",
-              alignContent: "start",
-              width: "100%",
-              height: "30px",
+              alignItems: "center",
+              flex: 1,
+              height: "35px",
             } as React.CSSProperties
           }
         >
           <div
             id="windowTitle"
+            className="text-[11px] font-semibold text-zinc-400 select-none tracking-wide"
             style={{
-              marginTop: "5px",
               marginLeft: "10px",
-              height: "40px",
             }}
           >
             SonicPlank.Maker

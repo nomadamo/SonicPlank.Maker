@@ -77,8 +77,8 @@ contextBridge.exposeInMainWorld("electron", {
     const res = await ipcRenderer.invoke("getOverlays");
     return res;
   },
-  startStream: async (rtmpUrl: string): Promise<{ success: boolean }> => {
-    const res = await ipcRenderer.invoke("startStream", rtmpUrl);
+  startStream: async (rtmpUrl: string, options?: any): Promise<{ success: boolean }> => {
+    const res = await ipcRenderer.invoke("startStream", rtmpUrl, options);
     return res;
   },
   stopStream: async (): Promise<{ success: boolean }> => {
@@ -125,5 +125,39 @@ contextBridge.exposeInMainWorld("electron", {
   },
   removeOnAudioDataUpdated: () => {
     ipcRenderer.removeAllListeners("onAudioDataUpdated");
+  },
+  openPopOutPreview: async (args: {
+    sourceId: string;
+    audio: boolean;
+    width: number;
+    height: number;
+    aspect: string;
+  }): Promise<void> => {
+    await ipcRenderer.invoke("openPopOutPreview", args);
+  },
+  getAvailableThemes: async (): Promise<any[]> => {
+    return await ipcRenderer.invoke("getAvailableThemes");
+  },
+  loadThemeStyles: async (themeName: string): Promise<string> => {
+    return await ipcRenderer.invoke("loadThemeStyles", themeName);
+  },
+  sendAudioTime: (nodeId: string, currentTime: number, paused: boolean) => {
+    ipcRenderer.send("sendAudioTime", nodeId, currentTime, paused);
+  },
+  onAudioTimeUpdated: (
+    callback: (nodeId: string, currentTime: number, paused: boolean) => void,
+  ) => {
+    ipcRenderer.on("onAudioTimeUpdated", (_event, nodeId, currentTime, paused) => {
+      callback(nodeId, currentTime, paused);
+    });
+  },
+  removeOnAudioTimeUpdated: () => {
+    ipcRenderer.removeAllListeners("onAudioTimeUpdated");
+  },
+  onStreamStatus: (callback: (stats: any) => void) => {
+    ipcRenderer.on("onStreamStatus", (_event, stats) => callback(stats));
+  },
+  removeOnStreamStatus: () => {
+    ipcRenderer.removeAllListeners("onStreamStatus");
   },
 });

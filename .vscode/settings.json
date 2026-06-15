@@ -1,4 +1,7 @@
 {
-    "js/ts.tsdk.path": "node_modules\\typescript\\lib",
-    "editor.tabSize": 2
+  "js/ts.tsdk.path": "node_modules\\typescript\\lib",
+  "editor.tabSize": 2,
+  "piny.project_settings": {
+    "open-pages": ["pinyfakepage.html"]
+  }
 }

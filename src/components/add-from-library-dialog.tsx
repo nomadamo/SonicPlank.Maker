@@ -54,6 +54,7 @@ export function AddFromLibraryDialog({
           mediaPath: item.filePath,
           volume: 1,
           duration: item.duration,
+          albumArt: item.albumArt || "",
         },
       };
       setFlowNodes((prev) => [...(prev || []), newNode]);

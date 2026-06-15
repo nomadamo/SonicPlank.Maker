@@ -376,7 +376,7 @@ function Timeline() {
 
   return (
     <AnimatedRoute variant="fade">
-      <div className="flex h-[calc(100vh-60px)] w-full overflow-hidden relative">
+      <div className="flex h-[calc(100vh-65px)] w-full overflow-hidden relative">
         {/* Ghost Line for resizing */}
         <div
           ref={ghostLineRef}

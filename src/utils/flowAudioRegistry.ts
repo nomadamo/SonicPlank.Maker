@@ -22,7 +22,9 @@ export function getOrCreateFlowAudio(
       : "file:///" + mediaPath.replace(/\\/g, "/");
 
   if (item) {
-    if (item.audio.src !== cleanPath) {
+    const currentSrcDecoded = decodeURI(item.audio.src).toLowerCase();
+    const targetSrcDecoded = decodeURI(cleanPath).toLowerCase();
+    if (currentSrcDecoded !== targetSrcDecoded) {
       console.log(
         `[flowAudioRegistry] Updating src for nodeId ${nodeId} to: ${cleanPath}`,
       );
@@ -79,6 +81,10 @@ export function getOrCreateFlowAudio(
 
 export function getFlowAudioAnalyser(nodeId: string): AnalyserNode | null {
   return flowRegistry.get(nodeId)?.analyserNode || null;
+}
+
+export function getFlowAudio(nodeId: string): FlowAudioItem | null {
+  return flowRegistry.get(nodeId) || null;
 }
 
 export function removeFlowAudio(nodeId: string) {

@@ -18,6 +18,44 @@ import { updateNodeDataAtom } from "@/store/flowStore";
 import { useTransientNodeState } from "@/store/transientNodeStore";
 import { useSettings } from "@/store/settingsStore";
 import { getFlowAudioAnalyser } from "@/utils/flowAudioRegistry";
+import type { StreamStats } from "../global";
+
+function drawRoundedRect(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number,
+) {
+  if (w < 2 * r) r = w / 2;
+  if (h < 2 * r) r = h / 2;
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+function formatTime(seconds: number): string {
+  if (!seconds || isNaN(seconds)) return "0:00";
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  return `${mins}:${secs.toString().padStart(2, "0")}`;
+}
+
+function cleanStreamUrl(url: string): string {
+  const trimmed = url.trim();
+  const twitchMatch = trimmed.match(
+    /https?:\/\/(?:www\.)?twitch\.tv\/[^/]+\/(live_[a-zA-Z0-9_]+)/i,
+  );
+  if (twitchMatch) {
+    return `rtmp://live.twitch.tv/app/${twitchMatch[1]}`;
+  }
+  return trimmed;
+}
 
 export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
   const node = NodeRef;
@@ -64,7 +102,9 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
       const baseUrl = settings.streamUrl.trim();
       const token = settings.streamToken?.trim() || "";
       if (token) {
-        return baseUrl.endsWith("/") ? `${baseUrl}${token}` : `${baseUrl}/${token}`;
+        return baseUrl.endsWith("/")
+          ? `${baseUrl}${token}`
+          : `${baseUrl}/${token}`;
       }
       return baseUrl;
     }
@@ -74,6 +114,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
     );
   });
   const [showStreamInput, setShowStreamInput] = useState(false);
+  const [streamStats, setStreamStats] = useState<StreamStats | null>(null);
 
   // Sync default stream settings to state when settings change
   useEffect(() => {
@@ -94,6 +135,8 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
     }
   }, [settings.streamUrl, settings.streamToken]);
   const streamRecorderRef = useRef<MediaRecorder | null>(null);
+  // Tracks whether streaming auto-started the capture (so it can be auto-stopped)
+  const streamOwnsCaptureRef = useRef<boolean>(false);
 
   // Audio Analyser states
   const cardAudioContextRef = useRef<AudioContext | null>(null);
@@ -108,6 +151,31 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
   // Retrieve React Flow layout context (reactively updating when connections change)
   const edges = useEdges();
   const nodes = useNodes();
+
+  // Keep track of audio node playback times in a ref to avoid triggering component re-renders
+  // on every 30fps update, which would kill React rendering performance.
+  const audioTimesRef = useRef<
+    Record<string, { currentTime: number; duration: number }>
+  >({});
+
+  useEffect(() => {
+    const handleTimeUpdated = (nodeId: string, currentTime: number) => {
+      // Find duration of this audio node from flow editor nodes
+      const audioNode = nodes.find(
+        (n) => n.id === nodeId && n.type === "audioFlowNode",
+      );
+      const duration =
+        audioNode?.data.duration !== undefined
+          ? Number(audioNode.data.duration)
+          : 0;
+      audioTimesRef.current[nodeId] = { currentTime, duration };
+    };
+
+    window.electron.onAudioTimeUpdated(handleTimeUpdated);
+    return () => {
+      window.electron.removeOnAudioTimeUpdated();
+    };
+  }, [nodes]);
 
   const isValidSourceConnection = useCallback(
     (connection: any) => {
@@ -215,8 +283,8 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
       original: {
         label: "Original / Fit Window",
         aspect: "auto",
-        width: 3840,
-        height: 2160,
+        width: undefined,
+        height: undefined,
       },
       hd: {
         label: "16:9 HD (1280x720)",
@@ -272,6 +340,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
               "colorOverlayNode",
               "imageOverlayNode",
               "visualizerOverlayNode",
+              "nowPlayingNode",
             ].includes(n.type || "")
           ),
       )
@@ -279,8 +348,35 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
 
     const list: OverlayElement[] = [];
     overlayNodes.forEach((n) => {
-      const type = n.type?.replace("OverlayNode", "") as OverlayElement["type"];
+      const type = (
+        n.type === "nowPlayingNode"
+          ? "nowPlaying"
+          : n.type?.replace("OverlayNode", "")
+      ) as OverlayElement["type"];
       const data = n.data as any;
+
+      let albumArt = "";
+      let title = "";
+      let artist = "";
+      let audioNodeId = "";
+      let duration = 0;
+
+      if (n.type === "nowPlayingNode") {
+        const audioEdge = edges.find((e) => e.target === n.id);
+        if (audioEdge) {
+          const audioNode = nodes.find(
+            (an) => an.id === audioEdge.source && an.type === "audioFlowNode",
+          );
+          if (audioNode) {
+            albumArt = (audioNode.data.albumArt as string) || "";
+            title = (audioNode.data.title as string) || "Unknown Title";
+            artist = (audioNode.data.artist as string) || "Unknown Artist";
+            audioNodeId = audioNode.id;
+            duration = Number(audioNode.data.duration) || 0;
+          }
+        }
+      }
+
       list.push({
         id: n.id,
         type,
@@ -298,6 +394,11 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
         fontFamily: data.fontFamily as string,
         fontWeight: data.fontWeight as string,
         fontStyle: data.fontStyle as string,
+        albumArt,
+        title,
+        artist,
+        audioNodeId,
+        duration,
       });
     });
 
@@ -305,20 +406,56 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
   }, [edges, nodes, connectedOverlayGroupNode]);
 
   // Synchronise overlays to main process whenever they change
+  const prevOverlaysRef = useRef<string>("");
   useEffect(() => {
-    window.electron.setOverlays(overlays);
+    const overlaysJson = JSON.stringify(overlays);
+    if (prevOverlaysRef.current !== overlaysJson) {
+      prevOverlaysRef.current = overlaysJson;
+      window.electron.setOverlays(overlays);
+    }
   }, [overlays]);
 
-  // Watch for source/preset changes and automatically restart capture stream if preview is active
+  // Watch for preview state and parameter changes to manage screen capture stream declaratively
+  const lastCaptureParamsRef = useRef<{
+    sourceId: string;
+    audio: boolean;
+    width: number;
+    height: number;
+  } | null>(null);
+
   useEffect(() => {
     if (isPreviewActive && captureSourceId) {
-      console.log(
-        "[TargetOutputNode] Re-starting stream due to input properties modifications.",
-      );
-      startCapture(captureSourceId, captureAudio, {
-        maxWidth: activePreset.width,
-        maxHeight: activePreset.height,
-      });
+      const currentParams = {
+        sourceId: captureSourceId,
+        audio: captureAudio,
+        width: activePreset.width,
+        height: activePreset.height,
+      };
+
+      const hasChanged =
+        !lastCaptureParamsRef.current ||
+        lastCaptureParamsRef.current.sourceId !== currentParams.sourceId ||
+        lastCaptureParamsRef.current.audio !== currentParams.audio ||
+        lastCaptureParamsRef.current.width !== currentParams.width ||
+        lastCaptureParamsRef.current.height !== currentParams.height;
+
+      if (hasChanged) {
+        console.log(
+          `[TargetOutputNode] Starting/restarting stream with target: ${captureSourceId}`,
+        );
+        lastCaptureParamsRef.current = currentParams;
+        startCapture(captureSourceId, captureAudio, {
+          maxWidth: activePreset.width,
+          maxHeight: activePreset.height,
+        }).then((activeStream) => {
+          if (!activeStream) {
+            setIsPreviewActive(false);
+            lastCaptureParamsRef.current = null;
+          }
+        });
+      }
+    } else if (!isPreviewActive) {
+      lastCaptureParamsRef.current = null;
     }
   }, [
     captureSourceId,
@@ -327,6 +464,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
     activePreset.height,
     isPreviewActive,
     startCapture,
+    setIsPreviewActive,
   ]);
 
   // Handle stream assignment to HTMLVideoElement
@@ -577,6 +715,140 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
             }
           }
         }
+      } else if (overlay.type === "nowPlaying") {
+        // Draw Now Playing Overlay
+        const tracking = overlay.audioNodeId
+          ? audioTimesRef.current[overlay.audioNodeId]
+          : null;
+        const curTime = tracking ? tracking.currentTime : 0;
+        const totalDur = tracking ? tracking.duration : 0;
+        const pct = totalDur > 0 ? curTime / totalDur : 0;
+
+        const pad = hVal * 0.12;
+        const artSize = hVal - pad * 2;
+        const artX = xVal + pad;
+        const artY = yVal + pad;
+
+        // Card Background
+        drawRoundedRect(ctx, xVal, yVal, wVal, hVal, hVal * 0.15);
+        ctx.fillStyle = "rgba(12, 12, 12, 0.85)";
+        ctx.fill();
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.08)";
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        // Cover Art
+        ctx.save();
+        drawRoundedRect(ctx, artX, artY, artSize, artSize, artSize * 0.12);
+        ctx.clip();
+
+        let img = overlay.albumArt
+          ? cardImageCacheRef.current[overlay.albumArt]
+          : null;
+        if (overlay.albumArt && !img) {
+          img = new Image();
+          img.src = overlay.albumArt;
+          cardImageCacheRef.current[overlay.albumArt] = img;
+        }
+
+        if (img && img.complete && img.naturalWidth > 0) {
+          ctx.drawImage(img, artX, artY, artSize, artSize);
+        } else {
+          // Fallback placeholder gradient
+          const grad = ctx.createLinearGradient(
+            artX,
+            artY,
+            artX + artSize,
+            artY + artSize,
+          );
+          grad.addColorStop(0, "#4f46e5");
+          grad.addColorStop(1, "#06b6d4");
+          ctx.fillStyle = grad;
+          ctx.fill();
+          // Draw music symbol
+          ctx.fillStyle = "#ffffff";
+          ctx.font = `${artSize * 0.4}px sans-serif`;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText("🎵", artX + artSize / 2, artY + artSize / 2);
+        }
+        ctx.restore();
+
+        // Text Information
+        const textX = artX + artSize + pad;
+        const titleY = yVal + pad + artSize * 0.12;
+        const artistY = yVal + pad + artSize * 0.48;
+
+        ctx.fillStyle = "#ffffff";
+        ctx.textAlign = "left";
+        ctx.textBaseline = "top";
+        ctx.font = `bold ${artSize * 0.22}px Inter, sans-serif`;
+
+        // Truncate title if too long
+        const maxTextWidth = wVal - (pad * 3 + artSize) - pad;
+        let displayTitle = overlay.title || "No Track Connected";
+        if (ctx.measureText(displayTitle).width > maxTextWidth) {
+          while (
+            displayTitle.length > 0 &&
+            ctx.measureText(displayTitle + "...").width > maxTextWidth
+          ) {
+            displayTitle = displayTitle.slice(0, -1);
+          }
+          displayTitle += "...";
+        }
+        ctx.fillText(displayTitle, textX, titleY);
+
+        // Artist
+        ctx.fillStyle = "#a1a1aa";
+        ctx.font = `500 ${artSize * 0.16}px Inter, sans-serif`;
+        let displayArtist = overlay.artist || "Connect Audio Source";
+        if (ctx.measureText(displayArtist).width > maxTextWidth) {
+          while (
+            displayArtist.length > 0 &&
+            ctx.measureText(displayArtist + "...").width > maxTextWidth
+          ) {
+            displayArtist = displayArtist.slice(0, -1);
+          }
+          displayArtist += "...";
+        }
+        ctx.fillText(displayArtist, textX, artistY);
+
+        // Progress Line & Timer
+        const progressY = yVal + hVal - pad * 1.6;
+        const timerSpace = artSize * 0.75; // Approx width of MM:SS / MM:SS
+        const barW = Math.max(
+          10,
+          wVal - (pad * 3 + artSize) - timerSpace - pad * 2,
+        );
+
+        // Progress background
+        ctx.fillStyle = "rgba(255, 255, 255, 0.1)";
+        ctx.beginPath();
+        drawRoundedRect(ctx, textX, progressY, barW, hVal * 0.04, hVal * 0.02);
+        ctx.fill();
+
+        // Progress active
+        if (pct > 0) {
+          ctx.fillStyle = "#6366f1"; // Indigo accent
+          ctx.beginPath();
+          drawRoundedRect(
+            ctx,
+            textX,
+            progressY,
+            barW * pct,
+            hVal * 0.04,
+            hVal * 0.02,
+          );
+          ctx.fill();
+        }
+
+        // Timestamps
+        ctx.fillStyle = "#a1a1aa";
+        ctx.font = `500 ${artSize * 0.14}px monospace, sans-serif`;
+        ctx.textAlign = "right";
+        ctx.textBaseline = "middle";
+        const timeStr = `${formatTime(curTime)} / ${formatTime(totalDur)}`;
+        ctx.fillText(timeStr, xVal + wVal - pad, progressY + hVal * 0.02);
       }
 
       ctx.restore();
@@ -585,9 +857,9 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
     cardRequestRef.current = requestAnimationFrame(renderCardCompositor);
   }, [overlays, activePreset]);
 
-  // Handle compositor loop activation
+  // Handle compositor loop activation — runs when preview is active OR streaming is active
   useEffect(() => {
-    if (isPreviewActive && stream) {
+    if ((isPreviewActive || isStreaming) && stream) {
       cardRequestRef.current = requestAnimationFrame(renderCardCompositor);
     }
     return () => {
@@ -595,37 +867,35 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
         cancelAnimationFrame(cardRequestRef.current);
       }
     };
-  }, [isPreviewActive, stream, renderCardCompositor]);
+  }, [isPreviewActive, isStreaming, stream, renderCardCompositor]);
 
   const handlePopOut = useCallback(() => {
     if (!captureSourceId) return;
-    const url = `index.html#/preview?sourceId=${captureSourceId}&audio=${captureAudio}&maxWidth=${activePreset.width}&maxHeight=${activePreset.height}&aspect=${activePreset.aspect}`;
-    window.open(url, "_blank", "width=1280,height=720,frame=true");
+    window.electron
+      .openPopOutPreview({
+        sourceId: captureSourceId,
+        audio: captureAudio,
+        width: activePreset.width || 0,
+        height: activePreset.height || 0,
+        aspect: activePreset.aspect,
+      })
+      .catch((err) => {
+        console.error(
+          "[TargetOutputNode] Failed to launch pop-out preview child process:",
+          err,
+        );
+      });
   }, [captureSourceId, captureAudio, activePreset]);
 
-  const handleTogglePreview = useCallback(async () => {
+  const handleTogglePreview = useCallback(() => {
     if (isPreviewActive) {
       stopCapture();
       setIsPreviewActive(false);
     } else {
       if (!captureSourceId) return;
       setIsPreviewActive(true);
-      const activeStream = await startCapture(captureSourceId, captureAudio, {
-        maxWidth: activePreset.width,
-        maxHeight: activePreset.height,
-      });
-      if (!activeStream) {
-        setIsPreviewActive(false);
-      }
     }
-  }, [
-    isPreviewActive,
-    captureSourceId,
-    captureAudio,
-    startCapture,
-    stopCapture,
-    activePreset,
-  ]);
+  }, [isPreviewActive, captureSourceId, setIsPreviewActive, stopCapture]);
 
   const handleVideoLoadedMetadata = useCallback(
     (e: React.SyntheticEvent<HTMLVideoElement>) => {
@@ -656,12 +926,22 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
       });
     }
 
-    let options = { mimeType: "video/webm;codecs=h264" };
+    const recordBitrate = (settings.recordingBitrateKbps || 12000) * 1000;
+    let options = {
+      mimeType: "video/webm;codecs=h264",
+      videoBitsPerSecond: recordBitrate,
+    };
     if (!MediaRecorder.isTypeSupported(options.mimeType)) {
-      options = { mimeType: "video/webm;codecs=vp9" };
+      options = {
+        mimeType: "video/webm;codecs=vp9",
+        videoBitsPerSecond: recordBitrate,
+      };
     }
     if (!MediaRecorder.isTypeSupported(options.mimeType)) {
-      options = { mimeType: "video/webm" };
+      options = {
+        mimeType: "video/webm",
+        videoBitsPerSecond: recordBitrate,
+      };
     }
 
     console.log(
@@ -711,11 +991,34 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
 
   // RTMP Streaming
   const startStreaming = useCallback(async () => {
-    if (!rtmpUrl) return;
+    if (!rtmpUrl || !captureSourceId) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
 
     localStorage.setItem("rtmpUrl", rtmpUrl);
+
+    // If no capture stream is active (preview not open), start one silently
+    let activeStream = stream;
+    if (!activeStream) {
+      console.log(
+        "[TargetOutputNode] No active stream — auto-starting capture for streaming.",
+      );
+      activeStream = await startCapture(captureSourceId, captureAudio, {
+        maxWidth: activePreset.width,
+        maxHeight: activePreset.height,
+      });
+      if (!activeStream) {
+        console.error(
+          "[TargetOutputNode] Failed to start capture for streaming.",
+        );
+        return;
+      }
+      streamOwnsCaptureRef.current = true;
+    }
+
+    // Brief delay to allow the video element to receive the stream and the canvas
+    // render loop to produce its first frame before we start capturing from it.
+    await new Promise((resolve) => setTimeout(resolve, 300));
 
     const streamToStream = (canvas as any).captureStream
       ? (canvas as any).captureStream(60)
@@ -725,14 +1028,15 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
       return;
     }
 
-    if (stream) {
-      stream.getAudioTracks().forEach((track) => {
-        streamToStream.addTrack(track);
-      });
-    }
+    activeStream.getAudioTracks().forEach((track) => {
+      streamToStream.addTrack(track);
+    });
 
     try {
-      const initRes = await window.electron.startStream(rtmpUrl);
+      const initRes = await window.electron.startStream(rtmpUrl, {
+        encoder: settings.streamEncoder || "copy",
+        bitrateKbps: settings.streamBitrateKbps || 6000,
+      });
       if (!initRes.success) {
         console.error("Failed to initialize main process stream.");
         return;
@@ -742,12 +1046,22 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
       return;
     }
 
-    let options = { mimeType: "video/webm;codecs=h264,opus" };
+    const videoBitrate = (settings.streamBitrateKbps || 6000) * 1000;
+    let options = {
+      mimeType: "video/webm;codecs=h264,opus",
+      videoBitsPerSecond: videoBitrate,
+    };
     if (!MediaRecorder.isTypeSupported(options.mimeType)) {
-      options = { mimeType: "video/webm;codecs=vp8,opus" };
+      options = {
+        mimeType: "video/webm;codecs=vp8,opus",
+        videoBitsPerSecond: videoBitrate,
+      };
     }
     if (!MediaRecorder.isTypeSupported(options.mimeType)) {
-      options = { mimeType: "video/webm" };
+      options = {
+        mimeType: "video/webm",
+        videoBitsPerSecond: videoBitrate,
+      };
     }
 
     console.log(
@@ -767,7 +1081,14 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
     streamRecorderRef.current = recorder;
     setIsStreaming(true);
     setShowStreamInput(false);
-  }, [stream, rtmpUrl]);
+  }, [
+    stream,
+    rtmpUrl,
+    captureSourceId,
+    captureAudio,
+    activePreset,
+    startCapture,
+  ]);
 
   const stopStreaming = useCallback(async () => {
     if (streamRecorderRef.current) {
@@ -776,22 +1097,34 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
     }
     await window.electron.stopStream();
     setIsStreaming(false);
-  }, []);
+    // If streaming auto-started the capture (preview wasn't open), stop it now
+    if (streamOwnsCaptureRef.current && !isPreviewActive) {
+      stopCapture();
+      streamOwnsCaptureRef.current = false;
+    }
+  }, [isPreviewActive, stopCapture]);
 
-  // Clean up recording and streaming if capture is toggled off
+  // Subscribe to live FFmpeg stream stats while streaming is active
+  useEffect(() => {
+    if (!isStreaming) {
+      setStreamStats(null);
+      return;
+    }
+    window.electron.onStreamStatus((stats) => {
+      setStreamStats(stats);
+    });
+    return () => {
+      window.electron.removeOnStreamStatus();
+    };
+  }, [isStreaming]);
+
+  // Clean up recording if preview is toggled off.
+  // Streaming is NOT stopped here — it manages its own capture lifecycle.
   useEffect(() => {
     if (!isPreviewActive || !stream) {
       if (isRecording) stopRecording();
-      if (isStreaming) stopStreaming();
     }
-  }, [
-    isPreviewActive,
-    stream,
-    isRecording,
-    isStreaming,
-    stopRecording,
-    stopStreaming,
-  ]);
+  }, [isPreviewActive, stream, isRecording, stopRecording]);
 
   return (
     <>
@@ -806,11 +1139,11 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
         subtitle="Composite, record & stream"
         anchorName={`--targetOutputNode_${node.id}`}
       >
-        {/* Handle labels */}
-        <div className="absolute left-3.5 top-[33.3%] -translate-y-1/2 text-[9px] font-bold text-zinc-500 uppercase tracking-wider pointer-events-none select-none">
+        {/* Sourrce Handle label */}
+        <div className="left-3.5 text-[9px] font-bold text-zinc-500 uppercase tracking-wider pointer-events-none select-none">
           Source
         </div>
-        <div className="absolute left-3.5 top-[66.6%] -translate-y-1/2 text-[9px] font-bold text-zinc-500 uppercase tracking-wider pointer-events-none select-none">
+        <div className="left-3.5 text-[9px] font-bold text-zinc-500 uppercase tracking-wider pointer-events-none select-none">
           Overlays
         </div>
 
@@ -864,7 +1197,9 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
                   : activePreset.aspect,
             }}
           >
-            {isPreviewActive && stream ? (
+            {/* Offscreen video + canvas: always mounted when a source is connected so
+                 canvasRef is available for streaming even without preview active */}
+            {captureSourceId && (
               <>
                 <video
                   ref={videoRef}
@@ -872,14 +1207,26 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
                   playsInline
                   muted
                   onLoadedMetadata={handleVideoLoadedMetadata}
-                  className="hidden"
+                  style={{
+                    position: "absolute",
+                    width: "1px",
+                    height: "1px",
+                    opacity: 0,
+                    pointerEvents: "none",
+                  }}
                 />
                 <canvas
                   ref={canvasRef}
                   className="w-full h-full object-contain"
+                  style={{
+                    // Only show canvas visually when preview is explicitly enabled.
+                    // Streaming uses the canvas via captureStream() even when hidden.
+                    display: isPreviewActive && stream ? "block" : "none",
+                  }}
                 />
               </>
-            ) : (
+            )}
+            {!(isPreviewActive && stream) && !isStreaming && (
               <div className="flex flex-col items-center gap-2 text-zinc-500 text-center px-4 py-8">
                 <MonitorIcon className="w-8 h-8 text-zinc-700 stroke-[1.5]" />
                 <span className="text-[10px]">
@@ -893,16 +1240,24 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
             )}
           </div>
 
-          {/* Record / Stream controls */}
-          {isPreviewActive && stream && (
+          {/* Record / Stream controls — visible whenever a capture source is connected */}
+          {captureSourceId && (
             <div className="flex items-center gap-2 justify-between mt-1">
               <button
                 onClick={isRecording ? stopRecording : startRecording}
+                disabled={!isPreviewActive || !stream}
+                title={
+                  !isPreviewActive || !stream
+                    ? "Enable Preview to record"
+                    : undefined
+                }
                 className={cn(
-                  "flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-[10px] font-semibold uppercase tracking-wider cursor-pointer border transition-all",
+                  "flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-[10px] font-semibold uppercase tracking-wider border transition-all",
                   isRecording
-                    ? "bg-red-500/10 text-red-400 border-red-500/20 hover:bg-red-500/20 animate-pulse"
-                    : "bg-zinc-900 text-zinc-300 border-zinc-800 hover:bg-zinc-800 hover:text-white",
+                    ? "bg-red-500/10 text-red-400 border-red-500/20 hover:bg-red-500/20 animate-pulse cursor-pointer"
+                    : !isPreviewActive || !stream
+                      ? "bg-zinc-900/50 text-zinc-600 border-zinc-800/50 cursor-not-allowed"
+                      : "bg-zinc-900 text-zinc-300 border-zinc-800 hover:bg-zinc-800 hover:text-white cursor-pointer",
                 )}
               >
                 {isRecording ? (
@@ -943,7 +1298,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
             </div>
           )}
 
-          {showStreamInput && isPreviewActive && stream && (
+          {showStreamInput && !isStreaming && (
             <div className="flex flex-col gap-2 p-2.5 bg-zinc-950 border border-zinc-800 rounded-lg mt-1 text-[11px]">
               <div className="flex flex-col gap-0.5">
                 <span className="font-semibold text-zinc-200">
@@ -956,10 +1311,22 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
               <input
                 type="text"
                 value={rtmpUrl}
-                onChange={(e) => setRtmpUrl(e.target.value)}
+                onChange={(e) => setRtmpUrl(cleanStreamUrl(e.target.value))}
                 className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200 focus:border-indigo-500 focus:outline-none"
                 placeholder="rtmp://..."
               />
+              {rtmpUrl &&
+                !rtmpUrl.startsWith("rtmp://") &&
+                !rtmpUrl.startsWith("rtmps://") && (
+                  <span className="text-[10px] text-amber-500 font-semibold mt-0.5">
+                    Warning: Stream URL should start with rtmp:// or rtmps://
+                  </span>
+                )}
+              {!isPreviewActive && (
+                <span className="text-[9px] text-zinc-500">
+                  Preview will start automatically when streaming begins.
+                </span>
+              )}
               <div className="flex gap-2 justify-end">
                 <button
                   onClick={() => setShowStreamInput(false)}
@@ -994,6 +1361,63 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
             </div>
           )}
         </div>
+
+        {/* Live stream stats bar */}
+        {isStreaming && streamStats && (
+          <div className="flex flex-col gap-1.5 nodrag nopan nowheel">
+            <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">
+              Stream statistics
+            </label>
+            <div className="flex items-center gap-2 justify-between mt-1">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5 px-2 py-1.5 bg-zinc-950 border border-purple-500/20 rounded-lg text-[9px] font-mono">
+                <span className="text-zinc-500 font-sans font-semibold uppercase tracking-wider text-[8px]">
+                  Live
+                </span>
+                {streamStats.fps !== null && (
+                  <span
+                    className={cn(
+                      "font-semibold",
+                      streamStats.fps >= 25
+                        ? "text-emerald-400"
+                        : streamStats.fps >= 15
+                          ? "text-amber-400"
+                          : "text-red-400",
+                    )}
+                  >
+                    {streamStats.fps.toFixed(1)} fps
+                  </span>
+                )}
+                {streamStats.bitrate && (
+                  <span className="text-zinc-300">{streamStats.bitrate}</span>
+                )}
+                {streamStats.speed && (
+                  <span
+                    className={cn(
+                      streamStats.speed && parseFloat(streamStats.speed) >= 0.9
+                        ? "text-emerald-400"
+                        : streamStats.speed &&
+                            parseFloat(streamStats.speed) >= 0.5
+                          ? "text-amber-400"
+                          : "text-red-400",
+                    )}
+                  >
+                    {streamStats.speed}
+                  </span>
+                )}
+                {streamStats.dropped !== null && streamStats.dropped > 0 && (
+                  <span className="text-red-400">
+                    ⚠ {streamStats.dropped} dropped
+                  </span>
+                )}
+                {streamStats.time && (
+                  <span className="text-zinc-500 ml-auto">
+                    {streamStats.time}
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
       </BaseNodeCard>
 
       {/* Target input handles */}
@@ -1003,7 +1427,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
         position={Position.Left}
         isConnectable={node.isConnectable}
         isValidConnection={isValidSourceConnection}
-        style={{ top: "33.3%" }}
+        style={{ top: "19.5%" }}
         className="hover:!border-red-400 hover:!shadow-[0_0_10px_rgba(248,113,113,0.5)] hover:!scale-125"
       />
       <Handle
@@ -1012,7 +1436,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
         position={Position.Left}
         isConnectable={node.isConnectable}
         isValidConnection={isValidOverlayConnection}
-        style={{ top: "66.6%" }}
+        style={{ top: "27%" }}
         className="hover:!border-red-400 hover:!shadow-[0_0_10px_rgba(248,113,113,0.5)] hover:!scale-125"
       />
     </>

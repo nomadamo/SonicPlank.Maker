@@ -238,7 +238,7 @@ export function Clip({
               <StaticWaveform
                 className="flex-1 opacity-60 pointer-events-none"
                 audioUrl={clip.item.filePath}
-                barColor="oklch(0.6104 0.0767 299.7335)"
+                barColor="oklch(0.70 0.01 286.07)"
                 height={70}
                 pixelsPerSecond={pixelsPerSecond}
               />

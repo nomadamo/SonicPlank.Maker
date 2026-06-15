@@ -8,7 +8,7 @@ export interface NodeTrigger {
 
 export interface OverlayElement {
   id: string;
-  type: "text" | "color" | "image" | "visualizer";
+  type: "text" | "color" | "image" | "visualizer" | "nowPlaying";
   x: number; // percentage coordinate (0-100) for scaling
   y: number; // percentage coordinate (0-100) for scaling
   width: number; // percentage width (0-100)
@@ -23,6 +23,11 @@ export interface OverlayElement {
   fontFamily?: string;
   fontWeight?: string;
   fontStyle?: string;
+  albumArt?: string;
+  title?: string;
+  artist?: string;
+  audioNodeId?: string;
+  duration?: number;
 }
 
 export type FlowNodeType<
@@ -41,6 +46,7 @@ export type FlowNodeType<
     captureAudio?: boolean;
     captureResolution?: string;
     overlays?: OverlayElement[];
+    albumArt?: string;
     // New states and configurations for triggers & visualizers
     visualizerType?: string;
     triggers?: NodeTrigger[];

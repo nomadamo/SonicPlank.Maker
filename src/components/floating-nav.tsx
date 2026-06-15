@@ -10,7 +10,8 @@ import {
   useLocation,
 } from "@tanstack/react-router";
 import React from "react";
-import { Button, ButtonProps } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 export interface TabProps {
   id: number;
@@ -20,14 +21,14 @@ export interface TabProps {
   className?: string | undefined;
 }
 
-interface ButtonLinkProps extends ButtonProps {
-  ref: Ref<HTMLButtonElement>;
-}
+interface ButtonLinkProps extends React.ComponentPropsWithoutRef<
+  typeof Button
+> {}
 
 const ButtonLinkComponent = React.forwardRef<
   HTMLAnchorElement,
   ButtonLinkProps
->((props, ref) => {
+>(({ className, ...props }, ref) => {
   return (
     <Button
       ref={ref as any}
@@ -35,7 +36,10 @@ const ButtonLinkComponent = React.forwardRef<
       size="icon-xs"
       variant="ghost"
       type="button"
-      className="relative flex flex-row rounded-full items-center justify-center hover:bg-accent-5 flex-1 px-1 py-1 font-medium text-gray-600 dark:text-gray-300"
+      className={cn(
+        "relative flex flex-row rounded-full items-center justify-center flex-1 px-3 py-1.5 font-medium text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800/20 transition-all duration-200 [&.active]:text-zinc-100 [&.active]:font-semibold",
+        className,
+      )}
     />
   );
 });
@@ -86,10 +90,10 @@ const FloatingNav = ({ items }: { items: TabProps[] }) => {
   }, [active]);
 
   return (
-    <div className="absolute left-1/2 -translate-x-1/2 z-50 w-dvw rounded-full max-w-lg mt-6 px-27">
+    <div className="absolute left-1/2 z-50 -translate-x-1/2 z-50 w-dvw rounded-full max-w-lg mt-15 px-27">
       <div
         ref={containerRef}
-        className="relative bg-card flex items-center justify-between font-medium shadow-lg rounded-full gap-2 px-1 py-1 border border-secondary dark:border-secondary"
+        className="relative bg-zinc-950/80 backdrop-blur-md flex items-center justify-between font-medium shadow-2xl rounded-full gap-2 px-1 py-1 border border-zinc-800"
       >
         {items.map((item, index) => (
           <RouteButton
@@ -110,7 +114,7 @@ const FloatingNav = ({ items }: { items: TabProps[] }) => {
         <motion.div
           animate={indicatorStyle}
           transition={{ type: "spring", stiffness: 400, damping: 30 }}
-          className="absolute top-1 bottom-1 rounded-full bg-gray-400/9 dark:bg-gray-300/9"
+          className="absolute top-1 bottom-1 rounded-full bg-zinc-800/85 border border-zinc-700/60 shadow-lg"
         />
       </div>
     </div>

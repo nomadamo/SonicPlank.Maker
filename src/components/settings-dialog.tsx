@@ -109,7 +109,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent style={{ maxWidth: "500px" }}>
+      <DialogContent style={{ maxWidth: "500px", minHeight: "560px" }} className="flex flex-col justify-between">
         <DialogHeader>
           <DialogTitle>Settings</DialogTitle>
           <DialogDescription>
@@ -126,7 +126,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
           </TabsList>
 
           {/* General Tab */}
-          <TabsContent value="general" className="flex flex-col gap-4">
+          <TabsContent value="general" className="flex flex-col gap-4 min-h-[360px]">
             {/* Theme Selection */}
             <div className="flex flex-col gap-3">
               <label className="text-sm font-medium">Theme</label>
@@ -290,7 +290,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
           </TabsContent>
 
           {/* Audio Tab */}
-          <TabsContent value="audio" className="flex flex-col gap-4">
+          <TabsContent value="audio" className="flex flex-col gap-4 min-h-[360px]">
             {/* Audio Output Device */}
             <div className="flex flex-col gap-3">
               <label className="text-sm font-medium text-left">Audio Output</label>
@@ -387,7 +387,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
           </TabsContent>
 
           {/* Output / Streaming Tab */}
-          <TabsContent value="output" className="flex flex-col gap-4">
+          <TabsContent value="output" className="flex flex-col gap-4 min-h-[360px]">
             {/* Recording Path */}
             <div className="flex flex-col gap-3">
               <div className="flex flex-col gap-1 text-left">
@@ -433,6 +433,21 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                   </Button>
                 )}
               </div>
+              <div className="flex flex-col gap-1.5 text-left mt-1">
+                <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">
+                  Recording Video Bitrate (Kbps)
+                </label>
+                <Input
+                  type="number"
+                  placeholder="e.g. 12000"
+                  value={settings.recordingBitrateKbps ?? 12000}
+                  onChange={(e) => {
+                    const val = parseInt(e.target.value, 10);
+                    updateSettings({ recordingBitrateKbps: isNaN(val) ? undefined : val });
+                  }}
+                  className="text-xs font-mono w-40"
+                />
+              </div>
             </div>
 
             <Separator />
@@ -468,6 +483,54 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                     onChange={(e) => updateSettings({ streamToken: e.target.value })}
                     className="text-xs font-mono"
                   />
+                </div>
+                <div className="flex flex-col gap-1.5 text-left">
+                  <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">
+                    Streaming Video Bitrate (Kbps)
+                  </label>
+                  <Input
+                    type="number"
+                    placeholder="e.g. 6000"
+                    value={settings.streamBitrateKbps ?? 6000}
+                    onChange={(e) => {
+                      const val = parseInt(e.target.value, 10);
+                      updateSettings({ streamBitrateKbps: isNaN(val) ? undefined : val });
+                    }}
+                    className="text-xs font-mono w-40"
+                  />
+                </div>
+                <div className="flex flex-col gap-1.5 text-left">
+                  <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">
+                    Streaming Video Encoder
+                  </label>
+                  <Select
+                    value={settings.streamEncoder || "copy"}
+                    onValueChange={(val) => {
+                      if (typeof val === "string") {
+                        updateSettings({
+                          streamEncoder: val as any,
+                        });
+                      }
+                    }}
+                  >
+                    <SelectTrigger className="w-full text-xs">
+                      <SelectValue placeholder="Select encoder">
+                        {settings.streamEncoder === "copy" ? "Copy Stream (No Transcode)" :
+                         settings.streamEncoder === "libx264" ? "Software CPU (x264)" :
+                         settings.streamEncoder === "h264_nvenc" ? "NVIDIA GPU (NVENC)" :
+                         settings.streamEncoder === "h264_amf" ? "AMD GPU (AMF)" :
+                         settings.streamEncoder === "h264_qsv" ? "Intel GPU (QSV)" :
+                         "Copy Stream (No Transcode)"}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="copy">Copy Stream (No Transcode)</SelectItem>
+                      <SelectItem value="libx264">Software CPU (x264)</SelectItem>
+                      <SelectItem value="h264_nvenc">NVIDIA GPU (NVENC)</SelectItem>
+                      <SelectItem value="h264_amf">AMD GPU (AMF)</SelectItem>
+                      <SelectItem value="h264_qsv">Intel GPU (QSV)</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
               </div>
             </div>

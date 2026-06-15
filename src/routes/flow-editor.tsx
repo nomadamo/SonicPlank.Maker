@@ -21,11 +21,11 @@ import { ImageOverlayNode } from "@/components/image-overlay-node";
 import { VisualizerOverlayNode } from "@/components/visualizer-overlay-node";
 import { TargetOutputNode } from "@/components/target-output-node";
 import { OverlayGroupNode } from "@/components/overlay-group-node";
+import { NowPlayingNode } from "@/components/now-playing-node";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { AnimatedRoute } from "@/components/animated-route";
 import { LoadingAnimation } from "@/components/animations/loading-animation";
 import { motion } from "motion/react";
-import NodeActionBar from "@/components/node-action-bar";
 import ConnectionLine from "@/components/ConnectionLine";
 import { useStateMachine } from "@/store/stateMachine";
 import { useSettings } from "@/store/settingsStore";
@@ -104,6 +104,7 @@ const nodeTypes = {
   visualizerOverlayNode: VisualizerOverlayNode,
   targetOutputNode: TargetOutputNode,
   overlayGroupNode: OverlayGroupNode,
+  nowPlayingNode: NowPlayingNode,
 };
 
 const edgeTypes: EdgeTypes = {
@@ -126,6 +127,7 @@ interface AddNodesMenuProps {
   onAddImageOverlayNode: () => void;
   onAddVisualizerOverlayNode: () => void;
   onAddOverlayGroupNode: () => void;
+  onAddNowPlayingNode: () => void;
 }
 
 function AddNodesMenu({
@@ -140,6 +142,7 @@ function AddNodesMenu({
   onAddImageOverlayNode,
   onAddVisualizerOverlayNode,
   onAddOverlayGroupNode,
+  onAddNowPlayingNode,
 }: AddNodesMenuProps) {
   return (
     <div className="flex flex-col gap-3">
@@ -345,6 +348,21 @@ function AddNodesMenu({
               Visualizer
             </span>
           </button>
+
+          <button
+            onClick={() => {
+              onAddNowPlayingNode();
+              closePopover();
+            }}
+            className="flex items-center gap-2 p-1.5 rounded-lg text-left hover:bg-zinc-900 transition-colors group cursor-pointer border border-zinc-900 hover:border-zinc-800"
+          >
+            <div className="p-1 rounded bg-indigo-500/10 border border-indigo-500/20 text-indigo-400">
+              <MusicIcon className="w-3.5 h-3.5" />
+            </div>
+            <span className="text-[10px] font-medium text-zinc-200">
+              Now Playing
+            </span>
+          </button>
         </div>
       </div>
     </div>
@@ -501,6 +519,54 @@ function FlowEditor() {
     edges: flowEdgesData,
     viewport: flowViewportData,
   });
+
+  // ─── IPC Overlays Update Subscription ───────────────────────────────────────
+  useEffect(() => {
+    window.electron.onOverlaysUpdated((updatedOverlays) => {
+      console.log("[FlowEditor] Overlays updated from IPC:", updatedOverlays);
+      if (!updatedOverlays) return;
+
+      // Update coordinates of overlay nodes in flow editor state
+      setCurrentNodes((prevNodes) => {
+        let changed = false;
+        const nextNodes = prevNodes.map((node) => {
+          const matchingOverlay = updatedOverlays.find((o) => o.id === node.id);
+          if (matchingOverlay) {
+            // Check if coordinates or dimensions are actually different to avoid unnecessary updates
+            if (
+              node.data.x !== matchingOverlay.x ||
+              node.data.y !== matchingOverlay.y ||
+              node.data.width !== matchingOverlay.width ||
+              node.data.height !== matchingOverlay.height
+            ) {
+              changed = true;
+              return {
+                ...node,
+                data: {
+                  ...node.data,
+                  x: matchingOverlay.x,
+                  y: matchingOverlay.y,
+                  width: matchingOverlay.width,
+                  height: matchingOverlay.height,
+                },
+              };
+            }
+          }
+          return node;
+        });
+        if (changed) {
+          setHasUnsavedChanges(true);
+          setPersistRequested(true);
+          return nextNodes;
+        }
+        return prevNodes;
+      });
+    });
+
+    return () => {
+      window.electron.removeOnOverlaysUpdated(() => {});
+    };
+  }, [setCurrentNodes, setHasUnsavedChanges, setPersistRequested]);
 
   // ─── Store → ReactFlow sync ─────────────────────────────────────────────────
   useEffect(() => {
@@ -838,6 +904,7 @@ function FlowEditor() {
           mediaPath: item.filePath,
           volume: 1,
           duration: item.duration,
+          albumArt: item.albumArt || "",
         },
       };
       setCurrentNodes((nodes) => [...nodes, newNode]);
@@ -1014,6 +1081,29 @@ function FlowEditor() {
     setHasUnsavedChanges,
   ]);
 
+  const onAddNowPlayingNode = useCallback(() => {
+    const newNode: FlowNodeType = {
+      id: crypto.randomUUID(),
+      type: "nowPlayingNode",
+      position: getCenterProjectPosition(),
+      data: {
+        x: 10,
+        y: 10,
+        width: 35,
+        height: 12,
+        opacity: 1,
+      },
+    };
+    setCurrentNodes((nodes) => [...nodes, newNode]);
+    setPersistRequested(true);
+    setHasUnsavedChanges(true);
+  }, [
+    getCenterProjectPosition,
+    setCurrentNodes,
+    setPersistRequested,
+    setHasUnsavedChanges,
+  ]);
+
   const onAddTargetOutputNode = useCallback(() => {
     const newNode: FlowNodeType = {
       id: crypto.randomUUID(),
@@ -1052,7 +1142,7 @@ function FlowEditor() {
           style={{
             width: "100vw",
             marginTop: "0px",
-            height: "calc(100vh - 61px)",
+            height: "calc(100vh - 65px)",
             overflow: "hidden",
           }}
           onDragOver={onDragOver}
@@ -1075,17 +1165,12 @@ function FlowEditor() {
             onConnect={handleConnect}
             isValidConnection={handleIsValidConnection}
             onSelectionChange={handleSelectionChange}
-            viewport={currentViewport}
+            defaultViewport={flowViewportData}
             onViewportChange={setCurrentViewport}
             deleteKeyCode={["Delete", "Backspace"]}
             onNodesDelete={(deleted) => handleDelete(deleted.map((n) => n.id))}
           >
             <div className="flex w-[130]">
-              <NodeActionBar
-                nodes={selectedNodes}
-                onDelete={handleDelete}
-                onDuplicate={handleDuplicate}
-              />
               {/* Main Action Bar */}
               {!isEmpty && (
                 <motion.div
@@ -1161,6 +1246,7 @@ function FlowEditor() {
                                 onAddVisualizerOverlayNode
                               }
                               onAddOverlayGroupNode={onAddOverlayGroupNode}
+                              onAddNowPlayingNode={onAddNowPlayingNode}
                             />
                           </PopoverContent>
                         </Popover>
@@ -1305,6 +1391,7 @@ function FlowEditor() {
                             onAddVisualizerOverlayNode
                           }
                           onAddOverlayGroupNode={onAddOverlayGroupNode}
+                          onAddNowPlayingNode={onAddNowPlayingNode}
                         />
                       </PopoverContent>
                     </Popover>

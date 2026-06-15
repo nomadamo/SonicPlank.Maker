@@ -24,7 +24,14 @@ export const CONNECTION_RULES: Record<string, Record<string, HandleConnectionRul
         "colorOverlayNode",
         "imageOverlayNode",
         "visualizerOverlayNode",
+        "nowPlayingNode",
       ],
+      allowedSourceHandleSuffix: "source",
+    },
+  },
+  nowPlayingNode: {
+    target: {
+      allowedSourceTypes: ["audioFlowNode"],
       allowedSourceHandleSuffix: "source",
     },
   },

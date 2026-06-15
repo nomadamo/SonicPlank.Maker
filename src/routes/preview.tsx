@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useScreenCapture } from "@/hooks/useScreenCapture";
-import { Loader2, Radio, Disc, Square, Monitor } from "lucide-react";
+import { Loader2, Radio, Disc, Square, Monitor, Lock, Unlock } from "lucide-react";
 import { OverlayElement } from "@/types/flow-node";
 import { useSettings } from "@/store/settingsStore";
 
@@ -18,6 +18,41 @@ export const Route = createFileRoute("/preview")({
   component: PreviewComponent,
 });
 
+function drawRoundedRect(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number,
+) {
+  if (w < 2 * r) r = w / 2;
+  if (h < 2 * r) r = h / 2;
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+function formatTime(seconds: number): string {
+  if (!seconds || isNaN(seconds)) return "0:00";
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  return `${mins}:${secs.toString().padStart(2, "0")}`;
+}
+
+function cleanStreamUrl(url: string): string {
+  const trimmed = url.trim();
+  const twitchMatch = trimmed.match(/https?:\/\/(?:www\.)?twitch\.tv\/[^/]+\/(live_[a-zA-Z0-9_]+)/i);
+  if (twitchMatch) {
+    return `rtmp://live.twitch.tv/app/${twitchMatch[1]}`;
+  }
+  return trimmed;
+}
+
 function PreviewComponent() {
   const { sourceId, audio, maxWidth, maxHeight, aspect } = Route.useSearch();
   const captureAudio = audio === "true";
@@ -30,6 +65,295 @@ function PreviewComponent() {
 
   const [overlays, setOverlays] = useState<OverlayElement[]>([]);
   const [dynamicAspectRatio, setDynamicAspectRatio] = useState<string>("16/9");
+
+  // Draggable overlays state & refs
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [isLocked, setIsLocked] = useState(true);
+  const [activeDragId, setActiveDragId] = useState<string | null>(null);
+  const dragStartRef = useRef<{
+    offsetX: number;
+    offsetY: number;
+    width: number;
+    height: number;
+  }>({ offsetX: 0, offsetY: 0, width: 0, height: 0 });
+
+  // Resizable overlays state & refs
+  const [activeResizeId, setActiveResizeId] = useState<string | null>(null);
+  const [activeHandle, setActiveHandle] = useState<string | null>(null);
+  const resizeStartRef = useRef<{
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    clickX: number;
+    clickY: number;
+    aspectRatio: number;
+  }>({ x: 0, y: 0, width: 0, height: 0, clickX: 0, clickY: 0, aspectRatio: 1 });
+
+  const handleMouseDown = (e: React.MouseEvent, overlay: OverlayElement) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const container = containerRef.current;
+    if (!container) return;
+
+    const rect = container.getBoundingClientRect();
+    const clickX = ((e.clientX - rect.left) / rect.width) * 100;
+    const clickY = ((e.clientY - rect.top) / rect.height) * 100;
+
+    dragStartRef.current = {
+      offsetX: clickX - overlay.x,
+      offsetY: clickY - overlay.y,
+      width: overlay.width,
+      height: overlay.height,
+    };
+
+    setActiveDragId(overlay.id);
+  };
+
+  const handleResizeMouseDown = (
+    e: React.MouseEvent,
+    overlay: OverlayElement,
+    handle: string,
+  ) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const container = containerRef.current;
+    if (!container) return;
+
+    const rect = container.getBoundingClientRect();
+    const clickX = ((e.clientX - rect.left) / rect.width) * 100;
+    const clickY = ((e.clientY - rect.top) / rect.height) * 100;
+
+    resizeStartRef.current = {
+      x: overlay.x,
+      y: overlay.y,
+      width: overlay.width,
+      height: overlay.height,
+      clickX,
+      clickY,
+      aspectRatio: overlay.width / (overlay.height || 1),
+    };
+
+    setActiveResizeId(overlay.id);
+    setActiveHandle(handle);
+  };
+
+  useEffect(() => {
+    if (!activeDragId) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const container = containerRef.current;
+      if (!container) return;
+
+      const rect = container.getBoundingClientRect();
+      const currentX = ((e.clientX - rect.left) / rect.width) * 100;
+      const currentY = ((e.clientY - rect.top) / rect.height) * 100;
+
+      const start = dragStartRef.current;
+      let newX = currentX - start.offsetX;
+      let newY = currentY - start.offsetY;
+
+      // Clamp coordinates to keep overlay inside canvas container boundaries
+      newX = Math.max(0, Math.min(100 - start.width, newX));
+      newY = Math.max(0, Math.min(100 - start.height, newY));
+
+      // Round coordinates to nearest 0.1
+      newX = Math.round(newX * 10) / 10;
+      newY = Math.round(newY * 10) / 10;
+
+      setOverlays((prev) =>
+        prev.map((o) => (o.id === activeDragId ? { ...o, x: newX, y: newY } : o)),
+      );
+    };
+
+    const handleMouseUp = () => {
+      setActiveDragId(null);
+    };
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [activeDragId]);
+
+  useEffect(() => {
+    if (!activeResizeId || !activeHandle) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const container = containerRef.current;
+      if (!container) return;
+
+      const rect = container.getBoundingClientRect();
+      const currentX = ((e.clientX - rect.left) / rect.width) * 100;
+      const currentY = ((e.clientY - rect.top) / rect.height) * 100;
+
+      const start = resizeStartRef.current;
+      const dx = currentX - start.clickX;
+      const dy = currentY - start.clickY;
+
+      let newX = start.x;
+      let newY = start.y;
+      let newWidth = start.width;
+      let newHeight = start.height;
+      const R = start.aspectRatio;
+
+      const maintainAspect = e.ctrlKey;
+
+      switch (activeHandle) {
+        case "r":
+          newWidth = start.width + dx;
+          if (maintainAspect) {
+            newHeight = newWidth / R;
+          }
+          break;
+        case "l":
+          newWidth = start.width - dx;
+          if (maintainAspect) {
+            newHeight = newWidth / R;
+          }
+          newX = start.x + (start.width - newWidth);
+          break;
+        case "b":
+          newHeight = start.height + dy;
+          if (maintainAspect) {
+            newWidth = newHeight * R;
+          }
+          break;
+        case "t":
+          newHeight = start.height - dy;
+          if (maintainAspect) {
+            newWidth = newHeight * R;
+          }
+          newY = start.y + (start.height - newHeight);
+          break;
+        case "br":
+          newWidth = start.width + dx;
+          newHeight = start.height + dy;
+          if (maintainAspect) {
+            if (Math.abs(dx) > Math.abs(dy)) {
+              newHeight = newWidth / R;
+            } else {
+              newWidth = newHeight * R;
+            }
+          }
+          break;
+        case "bl":
+          newWidth = start.width - dx;
+          newHeight = start.height + dy;
+          if (maintainAspect) {
+            if (Math.abs(dx) > Math.abs(dy)) {
+              newHeight = newWidth / R;
+            } else {
+              newWidth = newHeight * R;
+            }
+          }
+          newX = start.x + (start.width - newWidth);
+          break;
+        case "tr":
+          newWidth = start.width + dx;
+          newHeight = start.height - dy;
+          if (maintainAspect) {
+            if (Math.abs(dx) > Math.abs(dy)) {
+              newHeight = newWidth / R;
+            } else {
+              newWidth = newHeight * R;
+            }
+          }
+          newY = start.y + (start.height - newHeight);
+          break;
+        case "tl":
+          newWidth = start.width - dx;
+          newHeight = start.height - dy;
+          if (maintainAspect) {
+            if (Math.abs(dx) > Math.abs(dy)) {
+              newHeight = newWidth / R;
+            } else {
+              newWidth = newHeight * R;
+            }
+          }
+          newX = start.x + (start.width - newWidth);
+          newY = start.y + (start.height - newHeight);
+          break;
+      }
+
+      // Constrain minimum size
+      const minSize = 2;
+      if (newWidth < minSize) {
+        if (activeHandle === "l" || activeHandle === "bl" || activeHandle === "tl") {
+          newX = start.x + start.width - minSize;
+        }
+        newWidth = minSize;
+        if (maintainAspect) newHeight = minSize / R;
+      }
+      if (newHeight < minSize) {
+        if (activeHandle === "t" || activeHandle === "tr" || activeHandle === "tl") {
+          newY = start.y + start.height - minSize;
+        }
+        newHeight = minSize;
+        if (maintainAspect) newWidth = minSize * R;
+      }
+
+      // Constrain inside bounds [0, 100]
+      if (newX < 0) {
+        newWidth = newWidth + newX;
+        newX = 0;
+        if (maintainAspect) newHeight = newWidth / R;
+      }
+      if (newY < 0) {
+        newHeight = newHeight + newY;
+        newY = 0;
+        if (maintainAspect) newWidth = newHeight * R;
+      }
+      if (newX + newWidth > 100) {
+        newWidth = 100 - newX;
+        if (maintainAspect) newHeight = newWidth / R;
+      }
+      if (newY + newHeight > 100) {
+        newHeight = 100 - newY;
+        if (maintainAspect) newWidth = newHeight * R;
+      }
+
+      // Round to nearest 0.1
+      newX = Math.round(newX * 10) / 10;
+      newY = Math.round(newY * 10) / 10;
+      newWidth = Math.round(newWidth * 10) / 10;
+      newHeight = Math.round(newHeight * 10) / 10;
+
+      setOverlays((prev) =>
+        prev.map((o) =>
+          o.id === activeResizeId
+            ? { ...o, x: newX, y: newY, width: newWidth, height: newHeight }
+            : o,
+        ),
+      );
+    };
+
+    const handleMouseUp = () => {
+      setActiveResizeId(null);
+      setActiveHandle(null);
+    };
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [activeResizeId, activeHandle]);
+
+  const toggleLocked = () => {
+    if (!isLocked) {
+      // Locking the layout -> send a single setOverlays update via IPC
+      window.electron.setOverlays(overlays);
+    }
+    setIsLocked((prev) => !prev);
+  };
 
   // Recording states
   const [isRecording, setIsRecording] = useState(false);
@@ -169,6 +493,31 @@ function PreviewComponent() {
     };
   }, []);
 
+  // Load and inject theme styles from ASAR/directory container
+  useEffect(() => {
+    window.electron
+      .getAvailableThemes()
+      .then((themes) => {
+        const defaultTheme = themes.find((t) => t.id === "default") || themes[0];
+        if (defaultTheme) {
+          window.electron
+            .loadThemeStyles(defaultTheme.id)
+            .then((styles) => {
+              let styleTag = document.getElementById("preview-theme-styles");
+              if (!styleTag) {
+                styleTag = document.createElement("style");
+                styleTag.id = "preview-theme-styles";
+                document.head.appendChild(styleTag);
+              }
+              styleTag.textContent = styles;
+              console.log(`[PreviewWindow] Loaded theme styles: ${defaultTheme.name}`);
+            })
+            .catch((err) => console.error("[PreviewWindow] Failed to load theme CSS:", err));
+        }
+      })
+      .catch((err) => console.error("[PreviewWindow] Failed to fetch available themes:", err));
+  }, []);
+
   // Subscribe to real-time audio data from the main window compositor
   useEffect(() => {
     window.electron.onAudioDataUpdated((visualizerId, dataArray) => {
@@ -178,6 +527,24 @@ function PreviewComponent() {
       window.electron.removeOnAudioDataUpdated();
     };
   }, []);
+
+  // Keep track of audio node playback times in a ref to avoid triggering component re-renders
+  const audioTimesRef = useRef<Record<string, { currentTime: number; duration: number }>>({});
+
+  // Subscribe to real-time audio playback time updates
+  useEffect(() => {
+    const handleTimeUpdated = (nodeId: string, currentTime: number) => {
+      // Find duration of this audio node from active overlays
+      const overlay = overlays.find((o) => o.audioNodeId === nodeId && o.type === "nowPlaying");
+      const duration = overlay?.duration !== undefined ? Number(overlay.duration) : 0;
+      audioTimesRef.current[nodeId] = { currentTime, duration };
+    };
+
+    window.electron.onAudioTimeUpdated(handleTimeUpdated);
+    return () => {
+      window.electron.removeOnAudioTimeUpdated();
+    };
+  }, [overlays]);
 
   // Compositor render loop
   const renderCompositor = useCallback(() => {
@@ -381,6 +748,115 @@ function PreviewComponent() {
             }
           }
         }
+      } else if (overlay.type === "nowPlaying") {
+        // Draw Now Playing Overlay
+        const tracking = overlay.audioNodeId ? audioTimesRef.current[overlay.audioNodeId] : null;
+        const curTime = tracking ? tracking.currentTime : 0;
+        const totalDur = tracking ? tracking.duration : 0;
+        const pct = totalDur > 0 ? curTime / totalDur : 0;
+
+        const pad = hVal * 0.12;
+        const artSize = hVal - pad * 2;
+        const artX = xVal + pad;
+        const artY = yVal + pad;
+
+        // Card Background
+        drawRoundedRect(ctx, xVal, yVal, wVal, hVal, hVal * 0.15);
+        ctx.fillStyle = "rgba(12, 12, 12, 0.85)";
+        ctx.fill();
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.08)";
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        // Cover Art
+        ctx.save();
+        drawRoundedRect(ctx, artX, artY, artSize, artSize, artSize * 0.12);
+        ctx.clip();
+        
+        let img = overlay.albumArt ? imageCacheRef.current[overlay.albumArt] : null;
+        if (overlay.albumArt && !img) {
+          img = new Image();
+          img.src = overlay.albumArt;
+          imageCacheRef.current[overlay.albumArt] = img;
+        }
+        
+        if (img && img.complete && img.naturalWidth > 0) {
+          ctx.drawImage(img, artX, artY, artSize, artSize);
+        } else {
+          // Fallback placeholder gradient
+          const grad = ctx.createLinearGradient(artX, artY, artX + artSize, artY + artSize);
+          grad.addColorStop(0, "#4f46e5");
+          grad.addColorStop(1, "#06b6d4");
+          ctx.fillStyle = grad;
+          ctx.fill();
+          // Draw music symbol
+          ctx.fillStyle = "#ffffff";
+          ctx.font = `${artSize * 0.4}px sans-serif`;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText("🎵", artX + artSize / 2, artY + artSize / 2);
+        }
+        ctx.restore();
+
+        // Text Information
+        const textX = artX + artSize + pad;
+        const titleY = yVal + pad + artSize * 0.12;
+        const artistY = yVal + pad + artSize * 0.48;
+
+        ctx.fillStyle = "#ffffff";
+        ctx.textAlign = "left";
+        ctx.textBaseline = "top";
+        ctx.font = `bold ${artSize * 0.22}px Inter, sans-serif`;
+        
+        // Truncate title if too long
+        const maxTextWidth = wVal - (pad * 3 + artSize) - pad;
+        let displayTitle = overlay.title || "No Track Connected";
+        if (ctx.measureText(displayTitle).width > maxTextWidth) {
+          while (displayTitle.length > 0 && ctx.measureText(displayTitle + "...").width > maxTextWidth) {
+            displayTitle = displayTitle.slice(0, -1);
+          }
+          displayTitle += "...";
+        }
+        ctx.fillText(displayTitle, textX, titleY);
+
+        // Artist
+        ctx.fillStyle = "#a1a1aa";
+        ctx.font = `500 ${artSize * 0.16}px Inter, sans-serif`;
+        let displayArtist = overlay.artist || "Connect Audio Source";
+        if (ctx.measureText(displayArtist).width > maxTextWidth) {
+          while (displayArtist.length > 0 && ctx.measureText(displayArtist + "...").width > maxTextWidth) {
+            displayArtist = displayArtist.slice(0, -1);
+          }
+          displayArtist += "...";
+        }
+        ctx.fillText(displayArtist, textX, artistY);
+
+        // Progress Line & Timer
+        const progressY = yVal + hVal - pad * 1.6;
+        const timerSpace = artSize * 0.75; // Approx width of MM:SS / MM:SS
+        const barW = Math.max(10, wVal - (pad * 3 + artSize) - timerSpace - pad * 2);
+        
+        // Progress background
+        ctx.fillStyle = "rgba(255, 255, 255, 0.1)";
+        ctx.beginPath();
+        drawRoundedRect(ctx, textX, progressY, barW, hVal * 0.04, hVal * 0.02);
+        ctx.fill();
+
+        // Progress active
+        if (pct > 0) {
+          ctx.fillStyle = "#6366f1"; // Indigo accent
+          ctx.beginPath();
+          drawRoundedRect(ctx, textX, progressY, barW * pct, hVal * 0.04, hVal * 0.02);
+          ctx.fill();
+        }
+
+        // Timestamps
+        ctx.fillStyle = "#a1a1aa";
+        ctx.font = `500 ${artSize * 0.14}px monospace, sans-serif`;
+        ctx.textAlign = "right";
+        ctx.textBaseline = "middle";
+        const timeStr = `${formatTime(curTime)} / ${formatTime(totalDur)}`;
+        ctx.fillText(timeStr, xVal + wVal - pad, progressY + (hVal * 0.02));
       }
 
       ctx.restore();
@@ -418,12 +894,22 @@ function PreviewComponent() {
       });
     }
 
-    let options = { mimeType: "video/webm;codecs=h264" };
+    const recordBitrate = (settings.recordingBitrateKbps || 12000) * 1000;
+    let options = {
+      mimeType: "video/webm;codecs=h264",
+      videoBitsPerSecond: recordBitrate,
+    };
     if (!MediaRecorder.isTypeSupported(options.mimeType)) {
-      options = { mimeType: "video/webm;codecs=vp9" };
+      options = {
+        mimeType: "video/webm;codecs=vp9",
+        videoBitsPerSecond: recordBitrate,
+      };
     }
     if (!MediaRecorder.isTypeSupported(options.mimeType)) {
-      options = { mimeType: "video/webm" };
+      options = {
+        mimeType: "video/webm",
+        videoBitsPerSecond: recordBitrate,
+      };
     }
 
     console.log(
@@ -487,7 +973,10 @@ function PreviewComponent() {
     }
 
     try {
-      const initRes = await window.electron.startStream(rtmpUrl);
+      const initRes = await window.electron.startStream(rtmpUrl, {
+        encoder: settings.streamEncoder || "copy",
+        bitrateKbps: settings.streamBitrateKbps || 6000,
+      });
       if (!initRes.success) {
         console.error("Failed to initialize main process stream.");
         return;
@@ -497,12 +986,22 @@ function PreviewComponent() {
       return;
     }
 
-    let options = { mimeType: "video/webm;codecs=h264,opus" };
+    const videoBitrate = (settings.streamBitrateKbps || 6000) * 1000;
+    let options = {
+      mimeType: "video/webm;codecs=h264,opus",
+      videoBitsPerSecond: videoBitrate,
+    };
     if (!MediaRecorder.isTypeSupported(options.mimeType)) {
-      options = { mimeType: "video/webm;codecs=vp8,opus" };
+      options = {
+        mimeType: "video/webm;codecs=vp8,opus",
+        videoBitsPerSecond: videoBitrate,
+      };
     }
     if (!MediaRecorder.isTypeSupported(options.mimeType)) {
-      options = { mimeType: "video/webm" };
+      options = {
+        mimeType: "video/webm",
+        videoBitsPerSecond: videoBitrate,
+      };
     }
 
     console.log(
@@ -538,11 +1037,86 @@ function PreviewComponent() {
   return (
     <div className="relative w-screen h-screen bg-black flex flex-col items-center justify-center overflow-hidden select-none group">
       {stream ? (
-        <canvas
-          ref={canvasRef}
-          className="max-w-full max-h-full object-contain"
+        <div
+          ref={containerRef}
+          className="relative max-w-full max-h-full flex items-center justify-center animate-fade-in"
           style={{ aspectRatio: aspectValue }}
-        />
+        >
+          <canvas
+            ref={canvasRef}
+            className="w-full h-full object-contain block"
+          />
+
+          {/* Draggable Layer when Unlocked */}
+          {!isLocked && (
+            <div className="absolute inset-0 z-50 pointer-events-none">
+              {overlays.map((overlay) => (
+                <div
+                  key={overlay.id}
+                  onMouseDown={(e) => handleMouseDown(e, overlay)}
+                  className="absolute pointer-events-auto border-2 border-dashed border-indigo-500 bg-indigo-500/10 cursor-move rounded flex flex-col justify-between p-1.5 select-none hover:bg-indigo-500/20 hover:border-indigo-400 transition-colors"
+                  style={{
+                    left: `${overlay.x}%`,
+                    top: `${overlay.y}%`,
+                    width: `${overlay.width}%`,
+                    height: `${overlay.height}%`,
+                  }}
+                >
+                  <div className="bg-indigo-600/90 backdrop-blur-sm text-[9px] font-bold text-white px-1.5 py-0.5 rounded shadow self-start uppercase tracking-wider font-mono">
+                    {overlay.type?.replace("OverlayNode", "").replace("Node", "") || overlay.type}
+                  </div>
+                  <div className="text-[9px] text-indigo-200 bg-zinc-950/80 px-1 py-0.5 rounded self-end font-mono">
+                    {overlay.x}%, {overlay.y}%
+                  </div>
+
+                  {/* Corner Handles */}
+                  <div
+                    onMouseDown={(e) => handleResizeMouseDown(e, overlay, "tl")}
+                    className="absolute w-2.5 h-2.5 bg-white border-2 border-indigo-600 rounded-full shadow z-50 hover:bg-indigo-400 cursor-nwse-resize"
+                    style={{ top: "-5px", left: "-5px" }}
+                  />
+                  <div
+                    onMouseDown={(e) => handleResizeMouseDown(e, overlay, "tr")}
+                    className="absolute w-2.5 h-2.5 bg-white border-2 border-indigo-600 rounded-full shadow z-50 hover:bg-indigo-400 cursor-nesw-resize"
+                    style={{ top: "-5px", right: "-5px" }}
+                  />
+                  <div
+                    onMouseDown={(e) => handleResizeMouseDown(e, overlay, "bl")}
+                    className="absolute w-2.5 h-2.5 bg-white border-2 border-indigo-600 rounded-full shadow z-50 hover:bg-indigo-400 cursor-nesw-resize"
+                    style={{ bottom: "-5px", left: "-5px" }}
+                  />
+                  <div
+                    onMouseDown={(e) => handleResizeMouseDown(e, overlay, "br")}
+                    className="absolute w-2.5 h-2.5 bg-white border-2 border-indigo-600 rounded-full shadow z-50 hover:bg-indigo-400 cursor-nwse-resize"
+                    style={{ bottom: "-5px", right: "-5px" }}
+                  />
+
+                  {/* Side Handles */}
+                  <div
+                    onMouseDown={(e) => handleResizeMouseDown(e, overlay, "t")}
+                    className="absolute w-2.5 h-2.5 bg-white border-2 border-indigo-600 rounded-full shadow z-50 hover:bg-indigo-400 cursor-ns-resize"
+                    style={{ top: "-5px", left: "50%", transform: "translateX(-50%)" }}
+                  />
+                  <div
+                    onMouseDown={(e) => handleResizeMouseDown(e, overlay, "b")}
+                    className="absolute w-2.5 h-2.5 bg-white border-2 border-indigo-600 rounded-full shadow z-50 hover:bg-indigo-400 cursor-ns-resize"
+                    style={{ bottom: "-5px", left: "50%", transform: "translateX(-50%)" }}
+                  />
+                  <div
+                    onMouseDown={(e) => handleResizeMouseDown(e, overlay, "l")}
+                    className="absolute w-2.5 h-2.5 bg-white border-2 border-indigo-600 rounded-full shadow z-50 hover:bg-indigo-400 cursor-ew-resize"
+                    style={{ top: "50%", left: "-5px", transform: "translateY(-50%)" }}
+                  />
+                  <div
+                    onMouseDown={(e) => handleResizeMouseDown(e, overlay, "r")}
+                    className="absolute w-2.5 h-2.5 bg-white border-2 border-indigo-600 rounded-full shadow z-50 hover:bg-indigo-400 cursor-ew-resize"
+                    style={{ top: "50%", right: "-5px", transform: "translateY(-50%)" }}
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       ) : (
         <div className="flex flex-col items-center gap-3 text-zinc-400 text-center">
           <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
@@ -557,7 +1131,34 @@ function PreviewComponent() {
 
       {/* Floating Translucent Control Bar */}
       {stream && (
-        <div className="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-3 bg-zinc-950/80 backdrop-blur-md px-4 py-2.5 rounded-full border border-zinc-800 shadow-2xl opacity-0 hover:opacity-100 group-hover:opacity-100 transition-all duration-300">
+        <div 
+          style={{ zIndex: 10000 }}
+          className={`absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-3 bg-zinc-950/80 backdrop-blur-md px-4 py-2.5 rounded-full border border-zinc-800 shadow-2xl transition-all duration-300 ${
+            !isLocked ? "opacity-100 border-indigo-500/50 shadow-[0_0_20px_rgba(99,102,241,0.2)]" : "opacity-0 hover:opacity-100 group-hover:opacity-100"
+          }`}
+        >
+          {/* Lock/Unlock layout positioning toggle button */}
+          <button
+            onClick={toggleLocked}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold uppercase tracking-wider cursor-pointer border transition-all ${
+              !isLocked
+                ? "bg-indigo-600 text-white border-indigo-500 shadow-[0_0_10px_rgba(99,102,241,0.5)] hover:bg-indigo-500"
+                : "bg-zinc-900 text-zinc-300 border-zinc-800 hover:bg-zinc-800 hover:text-white"
+            }`}
+          >
+            {!isLocked ? (
+              <>
+                <Unlock className="w-3.5 h-3.5" /> Lock Layout
+              </>
+            ) : (
+              <>
+                <Lock className="w-3.5 h-3.5" /> Move Overlays
+              </>
+            )}
+          </button>
+
+          <div className="h-4 w-[1px] bg-zinc-800" />
+
           {/* Disk Capture Button */}
           <button
             onClick={isRecording ? stopRecording : startRecording}
@@ -620,10 +1221,15 @@ function PreviewComponent() {
           <input
             type="text"
             value={rtmpUrl}
-            onChange={(e) => setRtmpUrl(e.target.value)}
+            onChange={(e) => setRtmpUrl(cleanStreamUrl(e.target.value))}
             className="w-full bg-zinc-900 border border-zinc-800 rounded px-2.5 py-1.5 text-xs text-zinc-200 focus:border-indigo-500 focus:outline-none"
             placeholder="rtmp://..."
           />
+          {rtmpUrl && !rtmpUrl.startsWith("rtmp://") && !rtmpUrl.startsWith("rtmps://") && (
+            <span className="text-[10px] text-amber-500 font-semibold mt-0.5">
+              Warning: Stream URL should start with rtmp:// or rtmps://
+            </span>
+          )}
           <div className="flex gap-2 justify-end">
             <button
               onClick={() => setShowStreamInput(false)}

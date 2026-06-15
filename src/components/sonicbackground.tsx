@@ -128,7 +128,7 @@ function Background() {
           height: "100%",
           top: 0,
           left: 0,
-          background: "var(--sidebar)",
+          background: "radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.02) 0%, transparent 80%), var(--background)",
         }}
         ref={ref}
         data-testid="rf__background"

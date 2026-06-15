@@ -16,6 +16,7 @@ import { useCallback, useEffect } from "react";
 
 import {
   getOrCreateFlowAudio,
+  getFlowAudio,
   removeFlowAudio,
 } from "@/utils/flowAudioRegistry";
 
@@ -81,6 +82,37 @@ export function AudioNode(NodeRef: NodeProps<FlowNodeType>) {
       }
     }
   }, [node.id, mediaPath, isPlayingVal, volumeVal, isMutedVal, setVal]);
+
+  // Send play position to other windows over IPC periodically
+  useEffect(() => {
+    if (!mediaPath) return;
+
+    // Send initial/immediate state
+    const flowAudio = getFlowAudio(node.id);
+    if (flowAudio) {
+      window.electron.sendAudioTime(node.id, flowAudio.audio.currentTime, flowAudio.audio.paused);
+    }
+
+    if (!isPlayingVal) return;
+
+    let animFrame: number;
+    const updateTime = () => {
+      const audioInstance = getFlowAudio(node.id);
+      if (audioInstance) {
+        window.electron.sendAudioTime(
+          node.id,
+          audioInstance.audio.currentTime,
+          audioInstance.audio.paused,
+        );
+      }
+      animFrame = requestAnimationFrame(updateTime);
+    };
+
+    animFrame = requestAnimationFrame(updateTime);
+    return () => {
+      cancelAnimationFrame(animFrame);
+    };
+  }, [node.id, mediaPath, isPlayingVal]);
 
   // Clean up audio resources on unmount
   useEffect(() => {

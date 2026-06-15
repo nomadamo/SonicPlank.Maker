@@ -1,10 +1,32 @@
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { ChevronDown, ChevronUp } from "lucide-react";
-import { useSetAtom } from "jotai";
-import { updateNodeDataAtom } from "@/store/flowStore";
+import { useSetAtom, useAtomValue } from "jotai";
+import { updateNodeDataAtom, flowNodesAtom, flowDataAtom, flowEdgesAtom } from "@/store/flowStore";
+import { useStateMachine } from "@/store/stateMachine";
+import { toast } from "sonner";
 import * as React from "react";
+import { useState, useMemo, useCallback } from "react";
 import type { ComponentProps } from "react";
+import { NodePropertiesDialog } from "./node-properties-dialog";
+import { FlowNodeType } from "@/types/flow-node";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "@/components/ui/dropdown-menu";
+import {
+  TableProperties as TablePropertiesIcon,
+  Copy as CopyIcon,
+  Trash2 as Trash2Icon,
+} from "lucide-react";
 
 export function BaseNode({ className, ...props }: ComponentProps<"div">) {
   return (
@@ -132,6 +154,16 @@ export function BaseNodeCard({
   className,
 }: BaseNodeCardProps) {
   const updateNodeData = useSetAtom(updateNodeDataAtom);
+  const nodes = useAtomValue(flowNodesAtom);
+  const setNodes = useSetAtom(flowNodesAtom);
+  const setEdges = useSetAtom(flowEdgesAtom);
+  const { setHasUnsavedChanges, setPersistRequested } = useStateMachine();
+
+  const [propertiesOpen, setPropertiesOpen] = useState(false);
+
+  // Find the node object to get its type
+  const nodeObj = useMemo(() => nodes.find((n) => n.id === id), [nodes, id]);
+  const nodeType = nodeObj?.type;
 
   const toggleMinimize = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -142,50 +174,173 @@ export function BaseNodeCard({
     });
   };
 
+  const deleteNode = useCallback(() => {
+    setNodes((currentNodes) => currentNodes.filter((n) => n.id !== id));
+    setEdges((currentEdges) =>
+      currentEdges.filter((e) => e.source !== id && e.target !== id),
+    );
+    setPersistRequested(true);
+    setHasUnsavedChanges(true);
+    toast("Node deleted");
+  }, [id, setNodes, setEdges, setPersistRequested, setHasUnsavedChanges]);
+
+  const isDuplicateDisabled = nodeType === "targetOutputNode";
+
+  const duplicateNode = useCallback(() => {
+    if (isDuplicateDisabled) return;
+    setNodes((currentNodes) => {
+      const nodeToDuplicate = currentNodes.find((n) => n.id === id);
+      if (!nodeToDuplicate) return currentNodes;
+      const newNode: FlowNodeType = {
+        ...nodeToDuplicate,
+        id: crypto.randomUUID(),
+        position: {
+          x: nodeToDuplicate.position.x + 50,
+          y: nodeToDuplicate.position.y + 50,
+        },
+        selected: false,
+      };
+      return [...currentNodes, newNode];
+    });
+    setPersistRequested(true);
+    setHasUnsavedChanges(true);
+    toast("Node duplicated");
+  }, [id, isDuplicateDisabled, setNodes, setPersistRequested, setHasUnsavedChanges]);
+
+  const showProperties = [
+    "audioFlowNode",
+    "captureSourceNode",
+    "targetOutputNode",
+    "textOverlayNode",
+    "colorOverlayNode",
+    "imageOverlayNode",
+    "visualizerOverlayNode",
+  ].includes(nodeType || "");
+
   const borderClass = borderColors[borderColor] || borderColors.zinc;
   const iconClass = iconColors[iconColor] || iconColors.zinc;
 
   return (
-    <Card
-      className={cn(
-        "w-80 panel flex flex-col select-none bg-zinc-950/95 backdrop-blur-md border text-white rounded-xl shadow-2xl transition-all duration-200",
-        isMinimized ? "p-3.5 gap-0" : "p-4 gap-4",
-        selected ? borderClass : "border-zinc-800",
-        className
-      )}
-      id={`flow-node-${id}`}
-      style={{ anchorName } as React.CSSProperties}
-    >
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className={cn("p-2 rounded-lg border", iconClass)}>
-            <IconComponent className="w-5 h-5 shrink-0" />
-          </div>
-          <div>
-            <h4 className="text-sm font-semibold text-zinc-100">{title}</h4>
-            {subtitle && <p className="text-[11px] text-zinc-400">{subtitle}</p>}
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2 nodrag nopan nowheel">
-          {headerActions}
-          <button
-            onClick={toggleMinimize}
-            className="p-1.5 rounded hover:bg-zinc-800 text-zinc-400 hover:text-zinc-100 transition-colors cursor-pointer"
-            title={isMinimized ? "Expand" : "Collapse"}
-          >
-            {isMinimized ? (
-              <ChevronDown className="w-4 h-4" />
-            ) : (
-              <ChevronUp className="w-4 h-4" />
+    <ContextMenu>
+      <ContextMenuTrigger
+        render={
+          <Card
+            className={cn(
+              "w-80 panel flex flex-col select-none bg-zinc-950/95 backdrop-blur-md border text-white rounded-xl shadow-2xl transition-all duration-200",
+              isMinimized ? "p-3.5 gap-0" : "p-4 gap-4",
+              selected ? borderClass : "border-zinc-800",
+              className
             )}
-          </button>
-        </div>
-      </div>
+            id={`flow-node-${id}`}
+            style={{ anchorName } as React.CSSProperties}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    render={
+                      <button className={cn("p-2 rounded-lg border outline-none focus:ring-1 focus:ring-zinc-400 nodrag nopan nowheel cursor-pointer", iconClass)}>
+                        <IconComponent className="w-5 h-5 shrink-0" />
+                      </button>
+                    }
+                  />
+                  <DropdownMenuContent align="start" className="bg-zinc-950/95 border border-zinc-800 text-zinc-100 backdrop-blur-md rounded-lg shadow-xl min-w-40 p-1 nodrag nopan nowheel z-[9999]">
+                    {showProperties && (
+                      <DropdownMenuItem
+                        onClick={() => setPropertiesOpen(true)}
+                        className="flex items-center gap-2 px-2.5 py-1.5 text-xs text-zinc-200 hover:bg-zinc-800 hover:text-white rounded cursor-pointer"
+                      >
+                        <TablePropertiesIcon className="w-4 h-4 text-zinc-400" />
+                        Properties
+                      </DropdownMenuItem>
+                    )}
+                    <DropdownMenuItem
+                      disabled={isDuplicateDisabled}
+                      onClick={duplicateNode}
+                      className={cn(
+                        "flex items-center gap-2 px-2.5 py-1.5 text-xs rounded cursor-pointer",
+                        isDuplicateDisabled
+                          ? "text-zinc-600 cursor-not-allowed opacity-50"
+                          : "text-zinc-200 hover:bg-zinc-800 hover:text-white"
+                      )}
+                    >
+                      <CopyIcon className="w-4 h-4 text-zinc-400" />
+                      Duplicate {isDuplicateDisabled && "(Limit 1)"}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={deleteNode}
+                      className="flex items-center gap-2 px-2.5 py-1.5 text-xs text-rose-400 hover:bg-rose-950/30 hover:text-rose-300 rounded cursor-pointer"
+                    >
+                      <Trash2Icon className="w-4 h-4 text-rose-400" />
+                      Delete
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+                <div>
+                  <h4 className="text-sm font-semibold text-zinc-100">{title}</h4>
+                  {subtitle && <p className="text-[11px] text-zinc-400">{subtitle}</p>}
+                </div>
+              </div>
 
-      {/* Body Content */}
-      {!isMinimized && children}
-    </Card>
+              <div className="flex items-center gap-2 nodrag nopan nowheel">
+                {headerActions}
+                <button
+                  onClick={toggleMinimize}
+                  className="p-1.5 rounded hover:bg-zinc-800 text-zinc-400 hover:text-zinc-100 transition-colors cursor-pointer"
+                  title={isMinimized ? "Expand" : "Collapse"}
+                >
+                  {isMinimized ? (
+                    <ChevronDown className="w-4 h-4" />
+                  ) : (
+                    <ChevronUp className="w-4 h-4" />
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* Body Content */}
+            {!isMinimized && children}
+          </Card>
+        }
+      />
+      <ContextMenuContent className="bg-zinc-950/95 border border-zinc-800 text-zinc-100 backdrop-blur-md rounded-lg shadow-xl min-w-40 p-1 nodrag nopan nowheel z-[9999]">
+        {showProperties && (
+          <ContextMenuItem
+            onClick={() => setPropertiesOpen(true)}
+            className="flex items-center gap-2 px-2.5 py-1.5 text-xs text-zinc-200 hover:bg-zinc-800 hover:text-white rounded cursor-pointer"
+          >
+            <TablePropertiesIcon className="w-4 h-4 text-zinc-400" />
+            Properties
+          </ContextMenuItem>
+        )}
+        <ContextMenuItem
+          disabled={isDuplicateDisabled}
+          onClick={duplicateNode}
+          className={cn(
+            "flex items-center gap-2 px-2.5 py-1.5 text-xs rounded cursor-pointer",
+            isDuplicateDisabled
+              ? "text-zinc-600 cursor-not-allowed opacity-50"
+              : "text-zinc-200 hover:bg-zinc-800 hover:text-white"
+          )}
+        >
+          <CopyIcon className="w-4 h-4 text-zinc-400" />
+          Duplicate {isDuplicateDisabled && "(Limit 1)"}
+        </ContextMenuItem>
+        <ContextMenuItem
+          onClick={deleteNode}
+          className="flex items-center gap-2 px-2.5 py-1.5 text-xs text-rose-400 hover:bg-rose-950/30 hover:text-rose-300 rounded cursor-pointer"
+        >
+          <Trash2Icon className="w-4 h-4 text-rose-400" />
+          Delete
+        </ContextMenuItem>
+      </ContextMenuContent>
+
+      <NodePropertiesDialog
+        node={nodeObj ?? null}
+        open={propertiesOpen}
+        onOpenChange={setPropertiesOpen}
+      />
+    </ContextMenu>
   );
 }
