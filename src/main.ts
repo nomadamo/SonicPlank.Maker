@@ -610,91 +610,74 @@ const registerIpcHandlers = () => {
         ffmpegProcess = null;
       }
 
-      const encoder = options?.encoder || "copy";
+      const encoder = options?.encoder || "libx264";
       const bitrateKbps = options?.bitrateKbps || 6000;
+      const fps = options?.fps || 30;
+      const bufsizeKbps = bitrateKbps * 2; // 2x bitrate for stable rate control
 
       console.log(
-        `Starting FFmpeg RTMP stream to ${rtmpUrl} using encoder: ${encoder}, bitrate: ${bitrateKbps}k`,
+        `Starting FFmpeg RTMP stream to ${rtmpUrl} | encoder: ${encoder} | bitrate: ${bitrateKbps}k | ${fps}fps`,
       );
 
-      const ffmpegArgs = ["-y", "-threads", "0", "-i", "pipe:0"];
+      // Input: JPEG frames piped from canvas compositor via stdin.
+      // image2pipe + mjpeg codec reads one JPEG per frame — no container overhead,
+      // no intermediate WebM encode (eliminates the previous double-encode bottleneck).
+      const ffmpegArgs = [
+        "-y",
+        "-f", "image2pipe",
+        "-framerate", `${fps}`,
+        "-vcodec", "mjpeg",
+        "-i", "pipe:0",
+      ];
 
-      // Video encoding configuration
-      if (encoder === "copy") {
-        ffmpegArgs.push("-c:v", "copy");
-      } else if (encoder === "libx264") {
+      // Video encoding — single encode pass from raw JPEG frames to target codec.
+      // 'copy' is not valid here (JPEG → FLV requires a transcode), so we default
+      // to libx264 ultrafast when no GPU encoder is selected.
+      if (encoder === "h264_nvenc") {
         ffmpegArgs.push(
-          "-c:v",
-          "libx264",
-          "-preset",
-          "ultrafast",
-          "-threads",
-          "0",
-          "-pix_fmt",
-          "yuv420p",
-          "-b:v",
-          `${bitrateKbps}k`,
-          "-maxrate:v",
-          `${bitrateKbps}k`,
-          "-bufsize:v",
-          `${bitrateKbps}k`,
-          "-g",
-          "60", // 2-second keyframes at 30fps
-        );
-      } else if (encoder === "h264_nvenc") {
-        ffmpegArgs.push(
-          "-c:v",
-          "h264_nvenc",
-          "-preset",
-          "fast",
-          // "-tune", "zerolatency",
-          "-pix_fmt",
-          "yuv420p",
-          "-b:v",
-          `${bitrateKbps}k`,
-          "-maxrate:v",
-          `${bitrateKbps}k`,
-          "-bufsize:v",
-          `${bitrateKbps}k`,
-          "-g",
-          "60",
+          "-c:v", "h264_nvenc",
+          "-preset", "p4",           // balanced quality/speed (NVENC SDK preset)
+          "-pix_fmt", "yuv420p",
+          "-b:v", `${bitrateKbps}k`,
+          "-maxrate:v", `${bitrateKbps}k`,
+          "-bufsize:v", `${bufsizeKbps}k`,
+          "-g", `${fps * 2}`,        // keyframe every 2 seconds
         );
       } else if (encoder === "h264_amf") {
         ffmpegArgs.push(
-          "-c:v",
-          "h264_amf",
-          "-pix_fmt",
-          "yuv420p",
-          "-b:v",
-          `${bitrateKbps}k`,
-          "-maxrate:v",
-          `${bitrateKbps}k`,
-          "-bufsize:v",
-          `${bitrateKbps}k`,
-          "-g",
-          "60",
+          "-c:v", "h264_amf",
+          "-pix_fmt", "yuv420p",
+          "-b:v", `${bitrateKbps}k`,
+          "-maxrate:v", `${bitrateKbps}k`,
+          "-bufsize:v", `${bufsizeKbps}k`,
+          "-g", `${fps * 2}`,
         );
       } else if (encoder === "h264_qsv") {
         ffmpegArgs.push(
-          "-c:v",
-          "h264_qsv",
-          "-pix_fmt",
-          "yuv420p",
-          "-b:v",
-          `${bitrateKbps}k`,
-          "-maxrate:v",
-          `${bitrateKbps}k`,
-          "-bufsize:v",
-          `${bitrateKbps}k`,
-          "-g",
-          "60",
+          "-c:v", "h264_qsv",
+          "-pix_fmt", "yuv420p",
+          "-b:v", `${bitrateKbps}k`,
+          "-maxrate:v", `${bitrateKbps}k`,
+          "-bufsize:v", `${bufsizeKbps}k`,
+          "-g", `${fps * 2}`,
         );
       } else {
-        ffmpegArgs.push("-c:v", "copy");
+        // Default / libx264 fallback — ultrafast preset for minimal CPU overhead
+        ffmpegArgs.push(
+          "-c:v", "libx264",
+          "-preset", "ultrafast",
+          "-threads", "0",
+          "-pix_fmt", "yuv420p",
+          "-b:v", `${bitrateKbps}k`,
+          "-maxrate:v", `${bitrateKbps}k`,
+          "-bufsize:v", `${bufsizeKbps}k`,
+          "-g", `${fps * 2}`,
+        );
       }
 
-      // Audio encoding configuration (AAC is required for standard RTMP ingest)
-      ffmpegArgs.push("-c:a", "aac", "-b:a", "128k", "-f", "flv", rtmpUrl);
+      // Audio: no audio tracks in the current canvas pipeline.
+      // -an suppresses the "Output file does not contain any stream" warning.
+      ffmpegArgs.push("-an", "-f", "flv", rtmpUrl);
 
       ffmpegProcess = spawn("ffmpeg", ffmpegArgs);
 

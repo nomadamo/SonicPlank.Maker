@@ -134,7 +134,8 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
       );
     }
   }, [settings.streamUrl, settings.streamToken]);
-  const streamRecorderRef = useRef<MediaRecorder | null>(null);
+  // Frame capture interval for direct JPEG → FFmpeg pipeline (Option A)
+  const frameIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   // Tracks whether streaming auto-started the capture (so it can be auto-stopped)
   const streamOwnsCaptureRef = useRef<boolean>(false);
 
@@ -989,7 +990,10 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
     }
   }, []);
 
-  // RTMP Streaming
+  // RTMP Streaming — Option A: Canvas JPEG frames → FFmpeg direct encode
+  // Replaces the previous MediaRecorder pipeline which double-encoded the stream.
+  // canvas.toBlob() compresses each frame to JPEG (~50-150KB) and pipes it to
+  // FFmpeg via IPC. FFmpeg performs a single GPU/CPU encode to RTMP FLV.
   const startStreaming = useCallback(async () => {
     if (!rtmpUrl || !captureSourceId) return;
     const canvas = canvasRef.current;
@@ -1008,77 +1012,67 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
         maxHeight: activePreset.height,
       });
       if (!activeStream) {
-        console.error(
-          "[TargetOutputNode] Failed to start capture for streaming.",
-        );
+        console.error("[TargetOutputNode] Failed to start capture for streaming.");
         return;
       }
       streamOwnsCaptureRef.current = true;
     }
 
-    // Brief delay to allow the video element to receive the stream and the canvas
-    // render loop to produce its first frame before we start capturing from it.
-    await new Promise((resolve) => setTimeout(resolve, 300));
-
-    const streamToStream = (canvas as any).captureStream
-      ? (canvas as any).captureStream(60)
-      : null;
-    if (!streamToStream) {
-      console.error("Canvas captureStream is not supported.");
-      return;
+    // Kick the compositor loop manually so frames are available immediately.
+    // The loop also activates via the isStreaming effect, but doing it here
+    // ensures the canvas has rendered at least one frame before we start capturing.
+    if (!cardRequestRef.current) {
+      cardRequestRef.current = requestAnimationFrame(renderCardCompositor);
     }
 
-    activeStream.getAudioTracks().forEach((track) => {
-      streamToStream.addTrack(track);
-    });
+    // Give the compositor time to render the first complete frame
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    const streamFps = 30;
+    const streamWidth = canvas.width || (activePreset.width as number) || 1280;
+    const streamHeight = canvas.height || (activePreset.height as number) || 720;
 
     try {
       const initRes = await window.electron.startStream(rtmpUrl, {
-        encoder: settings.streamEncoder || "copy",
+        encoder: settings.streamEncoder || "libx264",
         bitrateKbps: settings.streamBitrateKbps || 6000,
+        fps: streamFps,
+        width: streamWidth,
+        height: streamHeight,
       });
       if (!initRes.success) {
-        console.error("Failed to initialize main process stream.");
+        console.error("[TargetOutputNode] Failed to initialize FFmpeg stream.");
         return;
       }
     } catch (err) {
-      console.error("Failed to start stream:", err);
+      console.error("[TargetOutputNode] Failed to start stream:", err);
       return;
     }
 
-    const videoBitrate = (settings.streamBitrateKbps || 6000) * 1000;
-    let options = {
-      mimeType: "video/webm;codecs=h264,opus",
-      videoBitsPerSecond: videoBitrate,
-    };
-    if (!MediaRecorder.isTypeSupported(options.mimeType)) {
-      options = {
-        mimeType: "video/webm;codecs=vp8,opus",
-        videoBitsPerSecond: videoBitrate,
-      };
-    }
-    if (!MediaRecorder.isTypeSupported(options.mimeType)) {
-      options = {
-        mimeType: "video/webm",
-        videoBitsPerSecond: videoBitrate,
-      };
-    }
-
     console.log(
-      "[TargetOutputNode] Starting Streaming MediaRecorder with mimeType:",
-      options.mimeType,
+      `[TargetOutputNode] Starting JPEG frame capture at ${streamFps}fps (${streamWidth}x${streamHeight})`,
     );
 
-    const recorder = new MediaRecorder(streamToStream, options);
-    recorder.ondataavailable = async (event) => {
-      if (event.data && event.data.size > 0) {
-        const arrayBuffer = await event.data.arrayBuffer();
-        window.electron.pushStreamData(arrayBuffer);
-      }
-    };
+    let capturing = false; // prevent overlapping blob calls if encode is slow
+    frameIntervalRef.current = setInterval(() => {
+      if (capturing) return; // skip frame if previous one hasn't been sent yet
+      capturing = true;
+      canvas.toBlob(
+        async (blob) => {
+          try {
+            if (blob && blob.size > 0) {
+              const buffer = await blob.arrayBuffer();
+              window.electron.pushStreamData(buffer);
+            }
+          } finally {
+            capturing = false;
+          }
+        },
+        "image/jpeg",
+        0.85, // Quality: visually lossless for video encoding, ~50-150KB per frame
+      );
+    }, 1000 / streamFps);
 
-    recorder.start(100);
-    streamRecorderRef.current = recorder;
     setIsStreaming(true);
     setShowStreamInput(false);
   }, [
@@ -1088,12 +1082,16 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
     captureAudio,
     activePreset,
     startCapture,
+    renderCardCompositor,
+    settings.streamEncoder,
+    settings.streamBitrateKbps,
   ]);
 
   const stopStreaming = useCallback(async () => {
-    if (streamRecorderRef.current) {
-      streamRecorderRef.current.stop();
-      streamRecorderRef.current = null;
+    // Stop the JPEG frame capture interval first
+    if (frameIntervalRef.current !== null) {
+      clearInterval(frameIntervalRef.current);
+      frameIntervalRef.current = null;
     }
     await window.electron.stopStream();
     setIsStreaming(false);
@@ -1125,6 +1123,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
       if (isRecording) stopRecording();
     }
   }, [isPreviewActive, stream, isRecording, stopRecording]);
+
 
   return (
     <>
