@@ -1114,10 +1114,15 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
       console.log(
         "[TargetOutputNode] No active stream — auto-starting capture for streaming.",
       );
-      activeStream = await startCapture(captureSourceId, captureAudio, captureFrameRate, {
-        maxWidth: nativeCaptureDims.width,
-        maxHeight: nativeCaptureDims.height,
-      });
+      activeStream = await startCapture(
+        captureSourceId,
+        captureAudio,
+        captureFrameRate,
+        {
+          maxWidth: nativeCaptureDims.width,
+          maxHeight: nativeCaptureDims.height,
+        },
+      );
       if (!activeStream) {
         console.error(
           "[TargetOutputNode] Failed to start capture for streaming.",

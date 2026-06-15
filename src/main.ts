@@ -625,7 +625,7 @@ const registerIpcHandlers = () => {
       const speedMatch = line.match(/speed=\s*([\d.]+x)/);
       const dropMatch = line.match(/drop=\s*(\d+)/);
 
-      if (fpsMatch || bitrateMatch) {
+      if (fpsMatch || bitrateMatch || frameMatch || timeMatch) {
         const stats = {
           frame: frameMatch ? parseInt(frameMatch[1]) : null,
           fps: fpsMatch ? parseFloat(fpsMatch[1]) : null,
@@ -673,6 +673,8 @@ const registerIpcHandlers = () => {
         );
         const ffmpegArgs = [
           "-y",
+          "-progress",
+          "pipe:2",     // Force progress stats to stderr even in copy mode
           "-f",
           "h264",
           "-r",
@@ -701,6 +703,8 @@ const registerIpcHandlers = () => {
       // no intermediate WebM encode (eliminates the previous double-encode bottleneck).
       const ffmpegArgs = [
         "-y",
+        "-progress",
+        "pipe:2",     // Force progress stats to stderr unconditionally
         "-f",
         "image2pipe",
         "-framerate",
