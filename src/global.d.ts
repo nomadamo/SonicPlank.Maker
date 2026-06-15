@@ -44,7 +44,7 @@ declare global {
       getOverlays: () => Promise<any[]>;
       startStream: (rtmpUrl: string, options?: any) => Promise<{ success: boolean }>;
       stopStream: () => Promise<{ success: boolean }>;
-      pushStreamData: (arrayBuffer: ArrayBuffer) => Promise<{ success: boolean }>;
+      pushStreamData: (arrayBuffer: ArrayBuffer) => void;
       onOverlaysUpdated: (callback: (overlays: any[]) => void) => void;
       removeOnOverlaysUpdated: (callback: (overlays: any[]) => void) => void;
       onLog: (callback: (event: any, data: string) => void) => void;

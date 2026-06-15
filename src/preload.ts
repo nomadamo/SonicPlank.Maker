@@ -85,11 +85,9 @@ contextBridge.exposeInMainWorld("electron", {
     const res = await ipcRenderer.invoke("stopStream");
     return res;
   },
-  pushStreamData: async (
-    arrayBuffer: ArrayBuffer,
-  ): Promise<{ success: boolean }> => {
-    const res = await ipcRenderer.invoke("pushStreamData", arrayBuffer);
-    return res;
+  pushStreamData: (arrayBuffer: ArrayBuffer): void => {
+    // Fire-and-forget: no round-trip wait — critical for per-frame streaming throughput.
+    ipcRenderer.send("pushStreamData", arrayBuffer);
   },
   initPreviewWindow: async (width: number, height: number): Promise<number> => {
     const windowHandle = ipcRenderer.invoke(

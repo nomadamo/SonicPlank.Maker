@@ -134,8 +134,10 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
       );
     }
   }, [settings.streamUrl, settings.streamToken]);
-  // Frame capture interval for direct JPEG → FFmpeg pipeline (Option A)
+  // Frame capture loop handle (rAF id while streaming)
   const frameIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Intermediate canvas at stream resolution — toBlob encodes this instead of the full compositor canvas
+  const scaleCanvasRef = useRef<HTMLCanvasElement | null>(null);
   // Tracks whether streaming auto-started the capture (so it can be auto-stopped)
   const streamOwnsCaptureRef = useRef<boolean>(false);
 
@@ -1053,25 +1055,50 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
       `[TargetOutputNode] Starting JPEG frame capture at ${streamFps}fps (${streamWidth}x${streamHeight})`,
     );
 
-    let capturing = false; // prevent overlapping blob calls if encode is slow
-    frameIntervalRef.current = setInterval(() => {
-      if (capturing) return; // skip frame if previous one hasn't been sent yet
+    // Create a small intermediate canvas at STREAM resolution.
+    // toBlob() encodes this scaled-down canvas instead of the source-resolution compositor canvas,
+    // dramatically reducing CPU JPEG encoding time (e.g. 1280×720 vs 1778×1000).
+    const scaleCanvas = document.createElement("canvas");
+    scaleCanvas.width = streamWidth;
+    scaleCanvas.height = streamHeight;
+    const scaleCtx = scaleCanvas.getContext("2d", { alpha: false })!;
+    scaleCanvasRef.current = scaleCanvas;
+
+    const frameDurationMs = 1000 / streamFps;
+    let lastFrameTime = 0;
+    let capturing = false;
+
+    const captureLoop = (now: number) => {
+      // Only check the loop ref — stop if streaming was cancelled
+      if (!frameIntervalRef.current) return;
+
+      frameIntervalRef.current = requestAnimationFrame(captureLoop) as any;
+
+      // Rate-limit to target fps using rAF timestamp (more precise than setInterval on Windows)
+      if (now - lastFrameTime < frameDurationMs) return;
+      lastFrameTime = now;
+
+      if (capturing) return; // skip frame if previous encode hasn't finished
       capturing = true;
-      canvas.toBlob(
-        async (blob) => {
-          try {
-            if (blob && blob.size > 0) {
-              const buffer = await blob.arrayBuffer();
+
+      // Blit the compositor canvas → stream-resolution canvas, then JPEG-encode that
+      scaleCtx.drawImage(canvas, 0, 0, streamWidth, streamHeight);
+      scaleCanvas.toBlob(
+        (blob) => {
+          capturing = false;
+          if (blob && blob.size > 0) {
+            blob.arrayBuffer().then((buffer) => {
               window.electron.pushStreamData(buffer);
-            }
-          } finally {
-            capturing = false;
+            });
           }
         },
         "image/jpeg",
-        0.85, // Quality: visually lossless for video encoding, ~50-150KB per frame
+        0.85,
       );
-    }, 1000 / streamFps);
+    };
+
+    // Use a sentinel value to signal the loop is active (non-null = running)
+    frameIntervalRef.current = requestAnimationFrame(captureLoop) as any;
 
     setIsStreaming(true);
     setShowStreamInput(false);
@@ -1088,10 +1115,14 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
   ]);
 
   const stopStreaming = useCallback(async () => {
-    // Stop the JPEG frame capture interval first
+    // Stop the rAF capture loop
     if (frameIntervalRef.current !== null) {
-      clearInterval(frameIntervalRef.current);
+      cancelAnimationFrame(frameIntervalRef.current as unknown as number);
       frameIntervalRef.current = null;
+    }
+    // Release the intermediate scale canvas
+    if (scaleCanvasRef.current) {
+      scaleCanvasRef.current = null;
     }
     await window.electron.stopStream();
     setIsStreaming(false);
