@@ -134,10 +134,8 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
       );
     }
   }, [settings.streamUrl, settings.streamToken]);
-  // Frame capture loop handle (rAF id while streaming)
+  // rAF handle for the JPEG frame capture loop (non-null = streaming active)
   const frameIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  // Intermediate canvas at stream resolution — toBlob encodes this instead of the full compositor canvas
-  const scaleCanvasRef = useRef<HTMLCanvasElement | null>(null);
   // Tracks whether streaming auto-started the capture (so it can be auto-stopped)
   const streamOwnsCaptureRef = useRef<boolean>(false);
 
@@ -1031,16 +1029,12 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
     await new Promise((resolve) => setTimeout(resolve, 300));
 
     const streamFps = 30;
-    const streamWidth = canvas.width || (activePreset.width as number) || 1280;
-    const streamHeight = canvas.height || (activePreset.height as number) || 720;
 
     try {
       const initRes = await window.electron.startStream(rtmpUrl, {
         encoder: settings.streamEncoder || "libx264",
         bitrateKbps: settings.streamBitrateKbps || 6000,
         fps: streamFps,
-        width: streamWidth,
-        height: streamHeight,
       });
       if (!initRes.success) {
         console.error("[TargetOutputNode] Failed to initialize FFmpeg stream.");
@@ -1052,38 +1046,28 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
     }
 
     console.log(
-      `[TargetOutputNode] Starting JPEG frame capture at ${streamFps}fps (${streamWidth}x${streamHeight})`,
+      `[TargetOutputNode] Starting JPEG frame capture at ${streamFps}fps directly from compositor canvas`,
     );
-
-    // Create a small intermediate canvas at STREAM resolution.
-    // toBlob() encodes this scaled-down canvas instead of the source-resolution compositor canvas,
-    // dramatically reducing CPU JPEG encoding time (e.g. 1280×720 vs 1778×1000).
-    const scaleCanvas = document.createElement("canvas");
-    scaleCanvas.width = streamWidth;
-    scaleCanvas.height = streamHeight;
-    const scaleCtx = scaleCanvas.getContext("2d", { alpha: false })!;
-    scaleCanvasRef.current = scaleCanvas;
 
     const frameDurationMs = 1000 / streamFps;
     let lastFrameTime = 0;
     let capturing = false;
 
     const captureLoop = (now: number) => {
-      // Only check the loop ref — stop if streaming was cancelled
       if (!frameIntervalRef.current) return;
 
       frameIntervalRef.current = requestAnimationFrame(captureLoop) as any;
 
-      // Rate-limit to target fps using rAF timestamp (more precise than setInterval on Windows)
+      // Rate-limit to target fps (more precise than setInterval on Windows)
       if (now - lastFrameTime < frameDurationMs) return;
       lastFrameTime = now;
 
-      if (capturing) return; // skip frame if previous encode hasn't finished
+      if (capturing) return; // skip if previous encode still in flight
       capturing = true;
 
-      // Blit the compositor canvas → stream-resolution canvas, then JPEG-encode that
-      scaleCtx.drawImage(canvas, 0, 0, streamWidth, streamHeight);
-      scaleCanvas.toBlob(
+      // Encode the compositor canvas directly — its dimensions are set by
+      // handleVideoLoadedMetadata to match the actual capture source resolution.
+      canvas.toBlob(
         (blob) => {
           capturing = false;
           if (blob && blob.size > 0) {
@@ -1093,11 +1077,10 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
           }
         },
         "image/jpeg",
-        0.85,
+        0.92, // Higher quality reduces generation loss when FFmpeg re-encodes
       );
     };
 
-    // Use a sentinel value to signal the loop is active (non-null = running)
     frameIntervalRef.current = requestAnimationFrame(captureLoop) as any;
 
     setIsStreaming(true);
@@ -1119,10 +1102,6 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
     if (frameIntervalRef.current !== null) {
       cancelAnimationFrame(frameIntervalRef.current as unknown as number);
       frameIntervalRef.current = null;
-    }
-    // Release the intermediate scale canvas
-    if (scaleCanvasRef.current) {
-      scaleCanvasRef.current = null;
     }
     await window.electron.stopStream();
     setIsStreaming(false);
