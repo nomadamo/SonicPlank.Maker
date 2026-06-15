@@ -147,6 +147,11 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
   const isStreamingRef = useRef<boolean>(false);
   const streamFpsRef = useRef<number>(30);
   const streamFrameIndexRef = useRef<number>(0);
+  // Locked canvas dimensions for the active stream. Set at stream-start from the
+  // encoder-configured size and held constant so the canvas never resizes while
+  // streaming (a resize would give the encoder frames of a different size than it
+  // was configured for, causing encoder errors and stopping the stream).
+  const streamDimsRef = useRef<{ width: number; height: number } | null>(null);
   // Throttle gate for the per-frame visualizer audio-data IPC broadcast.
   const lastAudioBroadcastRef = useRef<number>(0);
   // Timestamp of the last composited frame, for capping the compositor's draw rate.
@@ -576,9 +581,18 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
     }
     lastCompositeTimeRef.current = now;
 
+    // While streaming, lock the canvas to the encoder-configured dimensions so
+    // a window resize (or any other change to videoWidth/Height) cannot give the
+    // encoder frames of a different size — that would cause encoder errors and
+    // stop the stream. For preview only, size dynamically from the video.
+    const streamLocked = isStreamingRef.current && streamDimsRef.current;
+    const rawWidth = streamLocked
+      ? streamDimsRef.current!.width
+      : activePreset.width || video.videoWidth || 1280;
+    const rawHeight = streamLocked
+      ? streamDimsRef.current!.height
+      : activePreset.height || video.videoHeight || 720;
     // Force even dimensions — H.264 (yuv420p) requires width/height divisible by 2.
-    const rawWidth = activePreset.width || video.videoWidth || 1280;
-    const rawHeight = activePreset.height || video.videoHeight || 720;
     const targetWidth = rawWidth - (rawWidth % 2);
     const targetHeight = rawHeight - (rawHeight % 2);
     if (canvas.width !== targetWidth || canvas.height !== targetHeight) {
@@ -600,15 +614,20 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
     const vw = video.videoWidth;
     const vh = video.videoHeight;
     if (vw > 0 && vh > 0) {
-      // Default to "cover": fill the canvas entirely, cropping the overflow.
-      // This produces no black bars regardless of source/target aspect ratio.
-      // "contain" (letterbox) can be added later as a user preference stored in node data.
-      const scale = Math.max(canvas.width / vw, canvas.height / vh);
-      const dw = vw * scale;
-      const dh = vh * scale;
-      const dx = (canvas.width - dw) / 2;
-      const dy = (canvas.height - dh) / 2;
-      ctx.drawImage(video, dx, dy, dw, dh);
+      const fm = fitMode || "cover";
+      if (fm === "stretch") {
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      } else {
+        const scale =
+          fm === "contain"
+            ? Math.min(canvas.width / vw, canvas.height / vh)
+            : Math.max(canvas.width / vw, canvas.height / vh);
+        const dw = vw * scale;
+        const dh = vh * scale;
+        const dx = (canvas.width - dw) / 2;
+        const dy = (canvas.height - dh) / 2;
+        ctx.drawImage(video, dx, dy, dw, dh);
+      }
     }
 
     // Throttle the visualizer audio-data IPC broadcast to ~25fps — sending a
@@ -1212,6 +1231,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
       h264EncoderRef.current = encoderHandle;
       streamFpsRef.current = streamFps;
       streamFrameIndexRef.current = 0;
+      streamDimsRef.current = { width: canvas.width, height: canvas.height };
       isStreamingRef.current = true;
 
       setIsStreaming(true);
@@ -1227,6 +1247,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
     // Cap the compositor to the stream fps too (encode block stays inert here
     // since h264EncoderRef is null — the JPEG captureLoop does the work).
     streamFpsRef.current = streamFps;
+    streamDimsRef.current = { width: canvas.width, height: canvas.height };
     isStreamingRef.current = true;
 
     const presetW =
@@ -1305,6 +1326,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
   const stopStreaming = useCallback(async () => {
     // Stop the compositor from feeding new frames to the encoder
     isStreamingRef.current = false;
+    streamDimsRef.current = null;
     // Stop the JPEG fallback rAF loop, if it was running
     if (frameIntervalRef.current !== null) {
       cancelAnimationFrame(frameIntervalRef.current as unknown as number);

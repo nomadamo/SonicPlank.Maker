@@ -426,24 +426,39 @@ function PreviewComponent() {
   const analyserRef = useRef<AnalyserNode | null>(null);
   const audioDataMapRef = useRef<Record<string, number[]>>({});
 
-  const { stream, startCapture, stopCapture } = useScreenCapture();
+  const { stream, startCapture, stopCapture, refreshSources, error } =
+    useScreenCapture();
 
-  // Load physical display capture
+  // Load physical display capture.
+  // refreshSources() must be called first so the child Electron process registers
+  // available source IDs with Chromium via desktopCapturer.getSources() — without
+  // this, getUserMedia with chromeMediaSource:"desktop" silently fails in the
+  // child process because it has never enumerated sources.
   useEffect(() => {
-    if (sourceId) {
-      console.log(
-        `[PreviewWindow] Starting capture for sourceId: ${sourceId}, audio: ${captureAudio}, bounds: ${maxWidth}x${maxHeight}`,
-      );
-      startCapture(sourceId, captureAudio, maxCaptureFrameRate, {
-        maxWidth,
-        maxHeight,
+    if (!sourceId) return;
+    let cancelled = false;
+    refreshSources()
+      .catch(() => {}) // enumeration failure is non-fatal; try capture anyway
+      .then(() => {
+        if (!cancelled) {
+          console.log(
+            `[PreviewWindow] Starting capture for sourceId: ${sourceId}, audio: ${captureAudio}, bounds: ${maxWidth}x${maxHeight}`,
+          );
+          startCapture(sourceId, captureAudio, maxCaptureFrameRate, {
+            maxWidth,
+            maxHeight,
+          });
+        }
       });
-    }
     return () => {
+      cancelled = true;
       console.log("[PreviewWindow] Stopping capture tracks.");
       stopCapture();
     };
-  }, [sourceId, captureAudio, startCapture, stopCapture, maxWidth, maxHeight]);
+    // refreshSources/startCapture/stopCapture are stable useCallback refs —
+    // re-run only when the capture parameters change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sourceId, captureAudio, maxWidth, maxHeight]);
 
   // Handle stream injection to offscreen video tag
   useEffect(() => {
@@ -1220,12 +1235,16 @@ function PreviewComponent() {
         </div>
       ) : (
         <div className="flex flex-col items-center gap-3 text-zinc-400 text-center">
-          <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+          {error ? (
+            <Monitor className="w-8 h-8 text-red-500" />
+          ) : (
+            <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+          )}
           <span className="text-sm font-medium tracking-wide">
-            Connecting to Screen Capture...
+            {error ? "Capture Failed" : "Connecting to Screen Capture..."}
           </span>
-          <span className="text-xs text-zinc-600">
-            Initialising desktop audio and video pipeline
+          <span className="text-xs text-zinc-600 max-w-xs">
+            {error || "Initialising desktop audio and video pipeline"}
           </span>
         </div>
       )}
