@@ -21,177 +21,16 @@ import fs from "node:fs";
 import started from "electron-squirrel-startup";
 import { inDevelopment } from "./constants";
 import { spawn } from "node:child_process";
-import contextMenu from "electron-context-menu";
-import os from "node:os";
-import net from "node:net";
 
 // Force GPU rasterization and video decoding for the app
 app.commandLine.appendSwitch("enable-gpu-rasterization");
 app.commandLine.appendSwitch("enable-native-gpu-memory-buffers");
-app.commandLine.appendSwitch("enable-accelerated-video-decode"); // Hardware-accelerated decoding
+app.commandLine.appendSwitch("enable-accelerated-video-decode");
 app.commandLine.appendSwitch("webrtc-max-cpu-consumption-percentage", "90");
 
 let ffmpegProcess: any = null;
 let activeOverlays: any[] = [];
-
-// Parse custom arguments passed to the child process
-function getArgValue(prefix: string): string | null {
-  const arg = process.argv.find((a) => a.startsWith(prefix));
-  return arg ? arg.slice(prefix.length) : null;
-}
-
-const isPreviewMode = process.argv.includes("--preview-mode");
-
-const previewCacheDir = path.join(app.getPath("userData"), "PreviewCache");
-
-function cleanPreviewCache() {
-  if (fs.existsSync(previewCacheDir)) {
-    try {
-      fs.rmSync(previewCacheDir, { recursive: true, force: true });
-      console.log("[Main] Cleaned up PreviewCache directory successfully.");
-    } catch (err) {
-      console.error("[Main] Failed to clean up PreviewCache directory:", err);
-    }
-  }
-  try {
-    fs.mkdirSync(previewCacheDir, { recursive: true });
-  } catch (err) {
-    console.error("[Main] Failed to create PreviewCache directory:", err);
-  }
-}
-
-if (isPreviewMode) {
-  // Use a separate userData folder for the preview child process to prevent file lock deadlocks
-  app.setPath("userData", previewCacheDir);
-} else {
-  // Clear the preview cache directory on editor startup to prevent cache bloating and stale locks
-  cleanPreviewCache();
-}
-
-// IPC pipe/socket setup
-const PIPE_PATH =
-  process.platform === "win32"
-    ? "\\\\.\\pipe\\sonicplank-preview-ipc"
-    : path.join(os.tmpdir(), "sonicplank-preview-ipc.sock");
-
-let previewChildProcess: any = null;
-let activeSocket: net.Socket | null = null;
-
-// Helper to send messages to the child process
-function sendToChild(msg: { type: string; [key: string]: any }) {
-  if (activeSocket && !activeSocket.destroyed) {
-    try {
-      activeSocket.write(JSON.stringify(msg) + "\n");
-    } catch (err) {
-      console.error("[Main IPC] Failed to write to socket:", err);
-    }
-  }
-}
-
-// 1. If we are in the main editor process, start the IPC server
-if (!isPreviewMode) {
-  if (process.platform !== "win32" && fs.existsSync(PIPE_PATH)) {
-    try {
-      fs.unlinkSync(PIPE_PATH);
-    } catch (e) {
-      // Ignore
-    }
-  }
-
-  const ipcServer = net.createServer((socket) => {
-    console.log("[IPC Server] Preview child process connected.");
-    activeSocket = socket;
-
-    // Send current overlays state instantly
-    sendToChild({ type: "overlays", data: activeOverlays });
-
-    let buffer = "";
-    socket.on("data", (data) => {
-      buffer += data.toString();
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
-
-      for (const line of lines) {
-        if (!line) continue;
-        try {
-          const msg = JSON.parse(line);
-          if (msg.type === "setOverlays") {
-            activeOverlays = msg.data;
-            // Broadcast the updated overlays configuration to all editor renderer windows
-            BrowserWindow.getAllWindows().forEach((win) => {
-              win.webContents.send("onOverlaysUpdated", activeOverlays);
-            });
-          }
-        } catch (err) {
-          console.error("[IPC Server] Error parsing line from child:", err);
-        }
-      }
-    });
-
-    socket.on("close", () => {
-      console.log("[IPC Server] Preview child process disconnected.");
-      if (activeSocket === socket) activeSocket = null;
-    });
-
-    socket.on("error", (err) => {
-      console.error("[IPC Server] Socket error:", err);
-    });
-  });
-
-  ipcServer.listen(PIPE_PATH, () => {
-    console.log("[IPC Server] Listening on", PIPE_PATH);
-  });
-}
-
-// 2. Child process IPC client setup
-let childSocket: net.Socket | null = null;
-
-function connectToIpcServer(win: BrowserWindow) {
-  childSocket = net.createConnection(PIPE_PATH, () => {
-    console.log("[Child IPC Client] Connected to main editor process!");
-  });
-
-  let buffer = "";
-  childSocket.on("data", (data) => {
-    buffer += data.toString();
-    const lines = buffer.split("\n");
-    buffer = lines.pop() || "";
-
-    for (const line of lines) {
-      if (!line) continue;
-      try {
-        const msg = JSON.parse(line);
-        if (msg.type === "overlays") {
-          activeOverlays = msg.data;
-          win.webContents.send("onOverlaysUpdated", activeOverlays);
-        } else if (msg.type === "audioData") {
-          win.webContents.send("onAudioDataUpdated", msg.id, msg.data);
-        } else if (msg.type === "audioTime") {
-          win.webContents.send(
-            "onAudioTimeUpdated",
-            msg.id,
-            msg.currentTime,
-            msg.paused,
-          );
-        }
-      } catch (err) {
-        console.error("[Child IPC Client] Error parsing line:", err);
-      }
-    }
-  });
-
-  childSocket.on("error", (err) => {
-    console.error("[Child IPC Client] Socket error:", err);
-    // Retry connection after 1 second
-    setTimeout(() => {
-      if (!win.isDestroyed()) connectToIpcServer(win);
-    }, 1000);
-  });
-
-  childSocket.on("close", () => {
-    console.log("[Child IPC Client] Socket closed.");
-  });
-}
+let previewWin: BrowserWindow | null = null;
 
 // Themes directory settings
 const themesDir = path.join(
@@ -205,7 +44,6 @@ function ensureThemesDir() {
     fs.mkdirSync(themesDir, { recursive: true });
   }
 
-  // Create default theme if none exists
   const defaultThemeDir = path.join(themesDir, "default");
   if (!fs.existsSync(defaultThemeDir)) {
     try {
@@ -233,108 +71,6 @@ function ensureThemesDir() {
     }
   }
 }
-
-// Child process preview spawn utility
-function spawnPreviewProcess(args: {
-  sourceId: string;
-  audio: boolean;
-  width: number;
-  height: number;
-  aspect: string;
-}) {
-  if (previewChildProcess) {
-    try {
-      previewChildProcess.kill();
-    } catch (e) {
-      // Ignore
-    }
-    previewChildProcess = null;
-  }
-
-  const execArgs = [
-    ...process.argv
-      .slice(1)
-      .filter(
-        (arg) =>
-          !arg.startsWith("--preview-mode") &&
-          !arg.startsWith("--source-id") &&
-          !arg.startsWith("--remote-debugging-port"),
-      ),
-    "--preview-mode",
-    `--source-id=${args.sourceId}`,
-    `--audio=${args.audio}`,
-    `--max-width=${args.width}`,
-    `--max-height=${args.height}`,
-    `--aspect=${args.aspect}`,
-    // WGC (Windows Graphics Capture) refuses to open the same HWND from two
-    // different OS processes simultaneously. The editor already holds a WGC
-    // session on the source; the child process must use the GDI fallback path.
-    "--disable-features=DesktopCaptureWgcCapturer",
-  ];
-
-  console.log(
-    "[Main] Spawning preview child process:",
-    process.execPath,
-    execArgs.join(" "),
-  );
-
-  previewChildProcess = spawn(process.execPath, execArgs, {
-    env: { ...process.env },
-    detached: true,
-  });
-
-  previewChildProcess.stdout?.on("data", (data: any) => {
-    console.log(`[Preview Process stdout] ${data}`);
-  });
-
-  previewChildProcess.stderr?.on("data", (data: any) => {
-    console.error(`[Preview Process stderr] ${data}`);
-  });
-
-  previewChildProcess.on("close", (code: number) => {
-    console.log(`[Preview Process] Exited with code ${code}`);
-    previewChildProcess = null;
-    cleanPreviewCache();
-  });
-}
-
-// Child process preview window creator
-const createPreviewWindow = async () => {
-  const previewSourceId = getArgValue("--source-id=") || "";
-  const previewAudio = getArgValue("--audio=") === "true";
-  const previewMaxWidth = getArgValue("--max-width=") || "";
-  const previewMaxHeight = getArgValue("--max-height=") || "";
-  const previewAspect = getArgValue("--aspect=") || "auto";
-
-  const startUrl = MAIN_WINDOW_VITE_DEV_SERVER_URL
-    ? `${MAIN_WINDOW_VITE_DEV_SERVER_URL}#/preview?sourceId=${previewSourceId}&audio=${previewAudio}&maxWidth=${previewMaxWidth}&maxHeight=${previewMaxHeight}&aspect=${previewAspect}`
-    : `file://${path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`)}#/preview?sourceId=${previewSourceId}&audio=${previewAudio}&maxWidth=${previewMaxWidth}&maxHeight=${previewMaxHeight}&aspect=${previewAspect}`;
-
-  console.log("[Preview Child Process] Launching window with URL:", startUrl);
-
-  const previewWindow = new BrowserWindow({
-    autoHideMenuBar: true,
-    minWidth: 800,
-    minHeight: 450,
-    width: 1280,
-    height: 720,
-    webPreferences: {
-      devTools: inDevelopment,
-      preload: path.join(__dirname, "preload.js"),
-      webSecurity: false,
-    },
-  });
-
-  previewWindow.removeMenu();
-  await previewWindow.loadURL(startUrl);
-
-  if (inDevelopment) {
-    previewWindow.webContents.openDevTools();
-  }
-
-  // Connect client socket
-  connectToIpcServer(previewWindow);
-};
 
 // Handle squirrel startup checks
 if (started) {
@@ -550,21 +286,10 @@ const registerIpcHandlers = () => {
   ipcMain.handle("setOverlays", (_event, overlays) => {
     try {
       activeOverlays = overlays || [];
-      // Broadcast the updated overlays configuration to all renderer windows
+      // Broadcast to all renderer windows (editor + preview)
       BrowserWindow.getAllWindows().forEach((win) => {
         win.webContents.send("onOverlaysUpdated", activeOverlays);
       });
-      // Synchronise overlays with child process preview or back to editor parent
-      if (isPreviewMode) {
-        if (childSocket && !childSocket.destroyed) {
-          childSocket.write(
-            JSON.stringify({ type: "setOverlays", data: activeOverlays }) +
-              "\n",
-          );
-        }
-      } else {
-        sendToChild({ type: "overlays", data: activeOverlays });
-      }
     } catch (error) {
       console.error("Failed to propagate overlays:", error);
       throw error;
@@ -575,21 +300,12 @@ const registerIpcHandlers = () => {
     return activeOverlays;
   });
 
-  const lastSentMap = new Map<string, number>();
-
   ipcMain.on("sendAudioData", (event, visualizerId, dataArray) => {
     BrowserWindow.getAllWindows().forEach((win) => {
       if (win.webContents !== event.sender) {
         win.webContents.send("onAudioDataUpdated", visualizerId, dataArray);
       }
     });
-    // Send to child process (throttled to max ~50fps)
-    const now = Date.now();
-    const lastSent = lastSentMap.get(visualizerId) || 0;
-    if (now - lastSent >= 20) {
-      lastSentMap.set(visualizerId, now);
-      sendToChild({ type: "audioData", id: visualizerId, data: dataArray });
-    }
   });
 
   ipcMain.on("sendAudioTime", (event, nodeId, currentTime, paused) => {
@@ -598,13 +314,6 @@ const registerIpcHandlers = () => {
         win.webContents.send("onAudioTimeUpdated", nodeId, currentTime, paused);
       }
     });
-    // Send to child process (throttled to max ~30fps)
-    const now = Date.now();
-    const lastSent = lastSentMap.get(nodeId + "_time") || 0;
-    if (now - lastSent >= 33) {
-      lastSentMap.set(nodeId + "_time", now);
-      sendToChild({ type: "audioTime", id: nodeId, currentTime, paused });
-    }
   });
 
   // Spawn FFmpeg with the given args and wire up the shared stdin-error /
@@ -664,7 +373,7 @@ const registerIpcHandlers = () => {
       const fps = options?.fps || 30;
       const width: number | null = options?.width || null;
       const height: number | null = options?.height || null;
-      const bufsizeKbps = bitrateKbps * 2; // 2x bitrate for stable rate control
+      const bufsizeKbps = bitrateKbps * 2;
 
       // ── Mode: h264 ──────────────────────────────────────────────────────────
       // Frames are already encoded to H.264 on the GPU by the renderer's
@@ -678,7 +387,7 @@ const registerIpcHandlers = () => {
         const ffmpegArgs = [
           "-y",
           "-progress",
-          "pipe:2",     // Force progress stats to stderr even in copy mode
+          "pipe:2",
           "-f",
           "h264",
           "-r",
@@ -702,13 +411,10 @@ const registerIpcHandlers = () => {
         `Starting FFmpeg RTMP stream to ${rtmpUrl} | encoder: ${encoder} | bitrate: ${bitrateKbps}k | ${fps}fps${resLabel}`,
       );
 
-      // Input: JPEG frames piped from canvas compositor via stdin.
-      // image2pipe + mjpeg codec reads one JPEG per frame — no container overhead,
-      // no intermediate WebM encode (eliminates the previous double-encode bottleneck).
       const ffmpegArgs = [
         "-y",
         "-progress",
-        "pipe:2",     // Force progress stats to stderr unconditionally
+        "pipe:2",
         "-f",
         "image2pipe",
         "-framerate",
@@ -719,15 +425,12 @@ const registerIpcHandlers = () => {
         "pipe:0",
       ];
 
-      // Video encoding — single encode pass from raw JPEG frames to target codec.
-      // 'copy' is not valid here (JPEG → FLV requires a transcode), so we default
-      // to libx264 ultrafast when no GPU encoder is selected.
       if (encoder === "h264_nvenc") {
         ffmpegArgs.push(
           "-c:v",
           "h264_nvenc",
           "-preset",
-          "p4", // balanced quality/speed (NVENC SDK preset)
+          "p4",
           "-pix_fmt",
           "yuv420p",
           "-b:v",
@@ -737,7 +440,7 @@ const registerIpcHandlers = () => {
           "-bufsize:v",
           `${bufsizeKbps}k`,
           "-g",
-          `${fps * 2}`, // keyframe every 2 seconds
+          `${fps * 2}`,
         );
       } else if (encoder === "h264_amf") {
         ffmpegArgs.push(
@@ -770,7 +473,6 @@ const registerIpcHandlers = () => {
           `${fps * 2}`,
         );
       } else {
-        // Default / libx264 fallback — ultrafast preset for minimal CPU overhead
         ffmpegArgs.push(
           "-c:v",
           "libx264",
@@ -791,17 +493,12 @@ const registerIpcHandlers = () => {
         );
       }
 
-      // Output resolution scaling (GPU-side, no CPU cost).
-      // Dimensions are forced to even numbers as required by H.264 encoders.
-      // If no width/height is provided, FFmpeg outputs at the source canvas resolution.
       if (width && height && width > 0 && height > 0) {
         const w = Math.round(width / 2) * 2;
         const h = Math.round(height / 2) * 2;
         ffmpegArgs.push("-vf", `scale=${w}:${h}:flags=lanczos`);
       }
 
-      // Audio: no audio tracks in the current canvas pipeline.
-      // -an suppresses the "Output file does not contain any stream" warning.
       ffmpegArgs.push("-an", "-f", "flv", rtmpUrl);
 
       spawnFfmpegStream(ffmpegArgs);
@@ -829,7 +526,6 @@ const registerIpcHandlers = () => {
   });
 
   // Fire-and-forget: renderer doesn't wait for ack, eliminating per-frame round-trip latency.
-  // Using ipcMain.on + ipcRenderer.send instead of handle/invoke saves 1-5ms per frame.
   ipcMain.on("pushStreamData", (_event, arrayBuffer) => {
     try {
       if (ffmpegProcess && ffmpegProcess.stdin.writable) {
@@ -888,7 +584,7 @@ const registerIpcHandlers = () => {
   });
 
   ipcMain.handle("loadThemeStyles", async (_event, themeId: string) => {
-    const cleanId = path.basename(themeId); // Sanitize path traversal
+    const cleanId = path.basename(themeId);
     const cssPath = path.join(themesDir, cleanId, "theme.css");
     try {
       if (fs.existsSync(cssPath)) {
@@ -900,13 +596,83 @@ const registerIpcHandlers = () => {
     return "";
   });
 
-  ipcMain.handle("openPopOutPreview", (_event, args) => {
-    spawnPreviewProcess(args);
+  // Open the Edit Overlay window as an in-process BrowserWindow.
+  // The preview receives compositor frames from the editor via BroadcastChannel
+  // ('sonicplank-preview-frames') — no second capture, no WGC session conflict.
+  ipcMain.handle("openEditOverlay", (_event, args: { aspect?: string } | undefined) => {
+    if (previewWin && !previewWin.isDestroyed()) {
+      previewWin.focus();
+      return;
+    }
+
+    const aspect: string = args?.aspect ?? "16/9";
+    const startUrl = MAIN_WINDOW_VITE_DEV_SERVER_URL
+      ? `${MAIN_WINDOW_VITE_DEV_SERVER_URL}#/preview?aspect=${encodeURIComponent(aspect)}`
+      : `file://${path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`)}#/preview?aspect=${encodeURIComponent(aspect)}`;
+
+    console.log("[Main] Opening Edit Overlay window:", startUrl);
+
+    previewWin = new BrowserWindow({
+      autoHideMenuBar: true,
+      minWidth: 800,
+      minHeight: 450,
+      width: 1280,
+      height: 720,
+      title: "Edit Overlay",
+      webPreferences: {
+        devTools: inDevelopment,
+        preload: path.join(__dirname, "preload.js"),
+        webSecurity: false,
+      },
+    });
+
+    previewWin.removeMenu();
+    void previewWin.loadURL(startUrl);
+
+    if (inDevelopment) {
+      previewWin.webContents.openDevTools();
+    }
+
+    // Send current overlays to the preview as soon as its renderer is ready
+    previewWin.webContents.once("did-finish-load", () => {
+      if (previewWin && !previewWin.isDestroyed()) {
+        previewWin.webContents.send("onOverlaysUpdated", activeOverlays);
+      }
+    });
+
+    previewWin.on("closed", () => {
+      console.log("[Main] Edit Overlay window closed.");
+      previewWin = null;
+      // Notify editor windows so they can stop broadcasting frames
+      BrowserWindow.getAllWindows().forEach((win) => {
+        if (!win.isDestroyed()) {
+          win.webContents.send("editOverlayClosed");
+        }
+      });
+    });
+  });
+
+  // Editor sends JPEG-encoded compositor frames here; main relays directly to the
+  // preview window. BroadcastChannel does not cross renderer-process boundaries in
+  // Electron, so IPC relay is the only reliable transport for frame data.
+  ipcMain.on("sendPreviewFrame", (_event, buf: ArrayBuffer, width: number, height: number) => {
+    if (previewWin && !previewWin.isDestroyed()) {
+      previewWin.webContents.send("onPreviewFrame", buf, width, height);
+    }
+  });
+
+  // Preview window notifies main when it receives its first compositor frame.
+  // Main relays to all other windows (the editor) so it can update its status dialog.
+  ipcMain.on("editOverlayConnected", (event) => {
+    BrowserWindow.getAllWindows().forEach((win) => {
+      if (!win.isDestroyed() && win.webContents !== event.sender) {
+        win.webContents.send("editOverlayConnected");
+      }
+    });
   });
 };
 
 const createWindow = async () => {
-  // Create the browser window.
   const mainWindow = new BrowserWindow({
     width: 1400,
     height: 1000,
@@ -919,7 +685,7 @@ const createWindow = async () => {
     webPreferences: {
       devTools: inDevelopment,
       preload: path.join(__dirname, "preload.js"),
-      webSecurity: false, // Disables the "Not allowed to load" check
+      webSecurity: false,
     },
   });
 
@@ -942,7 +708,6 @@ const createWindow = async () => {
     };
   });
 
-  // and load the index.html of the app.
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
     await mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
   } else {
@@ -956,7 +721,6 @@ const createWindow = async () => {
     "Extensions\\fmkadmapgofadopljbjfkapdkoienihi\\7.0.1_0",
   );
 
-  // Open the DevTools.
   if (inDevelopment) {
     mainWindow.webContents.openDevTools();
   }
@@ -969,8 +733,6 @@ const createWindow = async () => {
     copyright: "2026",
   });
 
-  // Commented out React DevTools loading temporarily as it is a known cause of deadlocks/freezes
-  // when native file dialogs are triggered in Electron on Windows.
   if (fs.existsSync(reactDevToolsPath)) {
     try {
       await session.defaultSession.extensions.loadExtension(reactDevToolsPath);
@@ -986,69 +748,19 @@ const createWindow = async () => {
   }
 };
 
-// contextMenu({
-//   prepend: (defaultActions, params, browserWindow) => [
-//     {
-//       label: "Shut the fuck up",
-//       visible: true,
-//       click: () => {
-//         browserWindow.webContents.executeJavaScript(
-//           `alert('Shut the fuck up')`,
-//         );
-//       },
-//     },
-//   ],
-//   showInspectElement: false,
-//   showSelectAll: false,
-// });
-
-// This method will be called when Electron has finished
-// initialization and is ready to create browser windows.
-// Some APIs can only be used after this event occurs.
 app.on("ready", () => {
   registerIpcHandlers();
-  if (isPreviewMode) {
-    createPreviewWindow();
-  } else {
-    createWindow();
-  }
+  void createWindow();
 });
 
-// Quit when all windows are closed, except on macOS. There, it's common
-// for applications and their menu bar to stay active until the user quits
-// explicitly with Cmd + Q.
 app.on("window-all-closed", () => {
-  if (previewChildProcess) {
-    try {
-      previewChildProcess.kill();
-    } catch (e) {
-      // Ignore
-    }
-  }
-  cleanPreviewCache();
   if (process.platform !== "darwin") {
     app.quit();
   }
 });
 
-app.on("quit", () => {
-  if (previewChildProcess) {
-    try {
-      previewChildProcess.kill();
-    } catch (e) {
-      // Ignore
-    }
-  }
-  cleanPreviewCache();
-});
-
 app.on("activate", () => {
-  // On OS X it's common to re-create a window in the app when the
-  // dock icon is clicked and there are no other windows open.
   if (BrowserWindow.getAllWindows().length === 0) {
     void createWindow();
   }
 });
-
-// In this file you can include the rest of your app's specific main process
-// code. You can also put them in separate files and import them here.

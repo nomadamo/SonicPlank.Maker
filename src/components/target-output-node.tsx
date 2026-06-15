@@ -1,11 +1,12 @@
 import { BaseNodeCard } from "./base-node";
+import { StatusDialog } from "@/components/ui/status-dialog";
 import { cn } from "@/lib/utils";
 import { Handle, NodeProps, Position, useEdges, useNodes } from "@xyflow/react";
 import {
   Monitor as MonitorIcon,
   Play as PlayIcon,
   Square as SquareIcon,
-  Maximize2 as MaximizeIcon,
+  Layers as LayersIcon,
   Disc as DiscIcon,
   Radio as RadioIcon,
 } from "lucide-react";
@@ -99,6 +100,23 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
   // Recording states
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
+
+  // Edit Overlay window state
+  const [editOverlayOpen, setEditOverlayOpenState] = useState(false);
+  const editOverlayOpenRef = useRef(false);
+  const setEditOverlayOpen = (val: boolean) => {
+    editOverlayOpenRef.current = val;
+    setEditOverlayOpenState(val);
+  };
+  const editOverlayOwnsCaptureRef = useRef(false);
+  // Timestamp of last frame sent to preview — rate-limits to ~30fps
+  const lastPreviewBroadcastRef = useRef<number>(0);
+  // Whether a canvas.toBlob encode is already in flight (avoid stacking)
+  const previewCapturePendingRef = useRef(false);
+  // Connection status shown in StatusDialog while Edit Overlay is opening
+  type EditOverlayDialogStatus = "idle" | "running" | "success" | "error";
+  const [editOverlayDialogStatus, setEditOverlayDialogStatus] = useState<EditOverlayDialogStatus>("idle");
+  const [editOverlayDialogProgress, setEditOverlayDialogProgress] = useState(0);
 
   // Streaming states
   const [rtmpUrl, setRtmpUrl] = useState(() => {
@@ -470,7 +488,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
   } | null>(null);
 
   useEffect(() => {
-    if (isPreviewActive && captureSourceId) {
+    if ((isPreviewActive || editOverlayOpen) && captureSourceId) {
       const currentParams = {
         sourceId: captureSourceId,
         audio: captureAudio,
@@ -490,6 +508,9 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
           `[TargetOutputNode] Starting/restarting stream with target: ${captureSourceId}`,
         );
         lastCaptureParamsRef.current = currentParams;
+        if (editOverlayOpen && !isPreviewActive) {
+          editOverlayOwnsCaptureRef.current = true;
+        }
         startCapture(captureSourceId, captureAudio, captureFrameRate, {
           maxWidth: nativeCaptureDims.width,
           maxHeight: nativeCaptureDims.height,
@@ -497,10 +518,11 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
           if (!activeStream) {
             setIsPreviewActive(false);
             lastCaptureParamsRef.current = null;
+            editOverlayOwnsCaptureRef.current = false;
           }
         });
       }
-    } else if (!isPreviewActive) {
+    } else if (!isPreviewActive && !editOverlayOpen) {
       lastCaptureParamsRef.current = null;
     }
   }, [
@@ -510,6 +532,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
     nativeCaptureDims.width,
     nativeCaptureDims.height,
     isPreviewActive,
+    editOverlayOpen,
     startCapture,
     setIsPreviewActive,
   ]);
@@ -964,7 +987,29 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
       ctx.restore();
     });
 
-    // 3. Encode this freshly-composited frame for the WebCodecs stream.
+    // 3. Send composited frame to Edit Overlay window at ~30fps via IPC relay.
+    // BroadcastChannel does not cross renderer-process boundaries in Electron.
+    // canvas.toBlob encodes as JPEG off the main thread; the ArrayBuffer travels
+    // editor → main process → preview window via ipcRenderer.send / webContents.send.
+    if (editOverlayOpenRef.current && !previewCapturePendingRef.current) {
+      if (now - lastPreviewBroadcastRef.current >= 33) {
+        lastPreviewBroadcastRef.current = now;
+        previewCapturePendingRef.current = true;
+        const frameWidth = canvas.width;
+        const frameHeight = canvas.height;
+        canvas.toBlob((blob) => {
+          previewCapturePendingRef.current = false;
+          if (!blob || !editOverlayOpenRef.current) return;
+          blob.arrayBuffer().then((buf) => {
+            if (editOverlayOpenRef.current) {
+              window.electron.sendPreviewFrame(buf, frameWidth, frameHeight);
+            }
+          }).catch(() => { /* blob → arrayBuffer failed, skip frame */ });
+        }, "image/jpeg", 0.5);
+      }
+    }
+
+    // 4. Encode this freshly-composited frame for the WebCodecs stream.
     // The whole pass is already gated to the target fps above, so every
     // composited frame maps 1:1 to an encoded frame.
     if (isStreamingRef.current && h264EncoderRef.current) {
@@ -977,9 +1022,9 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
     cardRequestRef.current = requestAnimationFrame(renderCardCompositor);
   }, [overlays, activePreset, fitMode]);
 
-  // Handle compositor loop activation — runs when preview is active OR streaming is active
+  // Handle compositor loop activation — runs when preview, streaming, or edit overlay is active
   useEffect(() => {
-    if ((isPreviewActive || isStreaming) && stream) {
+    if ((isPreviewActive || isStreaming || editOverlayOpen) && stream) {
       compositorActiveRef.current = true;
       if (cardRequestRef.current === null) {
         cardRequestRef.current = requestAnimationFrame(renderCardCompositor);
@@ -992,25 +1037,48 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
         cardRequestRef.current = null;
       }
     };
-  }, [isPreviewActive, isStreaming, stream, renderCardCompositor]);
+  }, [isPreviewActive, isStreaming, editOverlayOpen, stream, renderCardCompositor]);
 
-  const handlePopOut = useCallback(() => {
+  const handleEditOverlay = useCallback(async () => {
     if (!captureSourceId) return;
-    window.electron
-      .openPopOutPreview({
-        sourceId: captureSourceId,
-        audio: captureAudio,
-        width: activePreset.width || 0,
-        height: activePreset.height || 0,
-        aspect: activePreset.aspect,
-      })
-      .catch((err) => {
-        console.error(
-          "[TargetOutputNode] Failed to launch pop-out preview child process:",
-          err,
-        );
-      });
-  }, [captureSourceId, captureAudio, activePreset]);
+    setEditOverlayDialogStatus("running");
+    setEditOverlayDialogProgress(33);
+    setEditOverlayOpen(true);
+    await window.electron.openEditOverlay({ aspect: activePreset.aspect });
+  }, [captureSourceId, activePreset.aspect]);
+
+  // When the Edit Overlay window is closed externally, clean up
+  useEffect(() => {
+    window.electron.onEditOverlayClosed(() => {
+      setEditOverlayOpen(false);
+      setEditOverlayDialogStatus("idle");
+      setEditOverlayDialogProgress(0);
+      previewCapturePendingRef.current = false;
+      if (editOverlayOwnsCaptureRef.current && !isStreamingRef.current) {
+        stopCapture();
+        editOverlayOwnsCaptureRef.current = false;
+      }
+    });
+    return () => {
+      window.electron.removeOnEditOverlayClosed();
+    };
+  }, [stopCapture]);
+
+  // Advance dialog to 66% when stream becomes ready, then listen for first frame confirmation
+  useEffect(() => {
+    if (editOverlayOpen && stream) {
+      setEditOverlayDialogProgress(66);
+    }
+  }, [editOverlayOpen, stream]);
+
+  useEffect(() => {
+    window.electron.onEditOverlayConnected(() => {
+      setEditOverlayDialogStatus("success");
+      setEditOverlayDialogProgress(100);
+      setTimeout(() => setEditOverlayDialogStatus("idle"), 1500);
+    });
+    return () => { window.electron.removeOnEditOverlayConnected(); };
+  }, []);
 
   const handleTogglePreview = useCallback(() => {
     if (isPreviewActive) {
@@ -1417,15 +1485,18 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
                   )}
                 </button>
 
-                {isPreviewActive && (
-                  <button
-                    onClick={handlePopOut}
-                    className="p-1 rounded bg-zinc-800 border border-zinc-700 hover:bg-zinc-700 text-zinc-300 hover:text-white transition-colors cursor-pointer"
-                    title="Pop out preview"
-                  >
-                    <MaximizeIcon className="w-3.5 h-3.5" />
-                  </button>
-                )}
+                <button
+                  onClick={() => { void handleEditOverlay(); }}
+                  className={cn(
+                    "flex items-center gap-1 text-[10px] px-2 py-0.5 rounded transition-all font-semibold uppercase tracking-wider cursor-pointer",
+                    editOverlayOpen
+                      ? "bg-indigo-500/20 text-indigo-300 border border-indigo-500/30"
+                      : "bg-zinc-800 border border-zinc-700 hover:bg-zinc-700 text-zinc-300 hover:text-white",
+                  )}
+                  title="Open overlay editor in a separate window"
+                >
+                  <LayersIcon className="w-3 h-3" /> Edit Overlay
+                </button>
               </div>
             )}
           </div>
@@ -1762,6 +1833,12 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
         isValidConnection={isValidOverlayConnection}
         style={{ top: "27%" }}
         className="hover:!border-red-400 hover:!shadow-[0_0_10px_rgba(248,113,113,0.5)] hover:!scale-125"
+      />
+
+      <StatusDialog
+        status={editOverlayDialogStatus}
+        progress={editOverlayDialogProgress}
+        title="Opening Edit Overlay"
       />
     </>
   );

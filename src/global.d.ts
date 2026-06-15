@@ -52,7 +52,15 @@ declare global {
       sendAudioData: (visualizerId: string, dataArray: number[]) => void;
       onAudioDataUpdated: (callback: (visualizerId: string, dataArray: number[]) => void) => void;
       removeOnAudioDataUpdated: () => void;
-      openPopOutPreview: (args: { sourceId: string; audio: boolean; width: number; height: number; aspect: string }) => Promise<void>;
+      openEditOverlay: (args: { aspect: string }) => Promise<void>;
+      onEditOverlayClosed: (callback: () => void) => void;
+      removeOnEditOverlayClosed: () => void;
+      notifyEditOverlayConnected: () => void;
+      onEditOverlayConnected: (callback: () => void) => void;
+      removeOnEditOverlayConnected: () => void;
+      sendPreviewFrame: (buf: ArrayBuffer, width: number, height: number) => void;
+      onPreviewFrame: (callback: (buf: ArrayBuffer, width: number, height: number) => void) => void;
+      removeOnPreviewFrame: () => void;
       getAvailableThemes: () => Promise<any[]>;
       loadThemeStyles: (themeName: string) => Promise<string>;
       sendAudioTime: (nodeId: string, currentTime: number, paused: boolean) => void;

@@ -12,3 +12,5 @@ Extensions
 .agent
 .gemini
 ./src/.tanstack
+.agents
+.agents/rules/code-style-guide.md

@@ -89,20 +89,12 @@ contextBridge.exposeInMainWorld("electron", {
     // Fire-and-forget: no round-trip wait — critical for per-frame streaming throughput.
     ipcRenderer.send("pushStreamData", arrayBuffer);
   },
-  initPreviewWindow: async (width: number, height: number): Promise<number> => {
-    const windowHandle = ipcRenderer.invoke(
-      "initPreviewWindow",
-      width,
-      height,
-    ) as Promise<number>;
-    return windowHandle;
-  },
   onOverlaysUpdated: (callback: (overlays: any[]) => void) => {
     ipcRenderer.on("onOverlaysUpdated", (_event, overlays) =>
       callback(overlays),
     );
   },
-  removeOnOverlaysUpdated: (callback: (overlays: any[]) => void) => {
+  removeOnOverlaysUpdated: (_callback: (overlays: any[]) => void) => {
     ipcRenderer.removeAllListeners("onOverlaysUpdated");
   },
   onLog: (callback: (event: any, data: any) => void) => {
@@ -124,14 +116,32 @@ contextBridge.exposeInMainWorld("electron", {
   removeOnAudioDataUpdated: () => {
     ipcRenderer.removeAllListeners("onAudioDataUpdated");
   },
-  openPopOutPreview: async (args: {
-    sourceId: string;
-    audio: boolean;
-    width: number;
-    height: number;
-    aspect: string;
-  }): Promise<void> => {
-    await ipcRenderer.invoke("openPopOutPreview", args);
+  openEditOverlay: async (args: { aspect: string }): Promise<void> => {
+    await ipcRenderer.invoke("openEditOverlay", args);
+  },
+  onEditOverlayClosed: (callback: () => void) => {
+    ipcRenderer.on("editOverlayClosed", callback);
+  },
+  removeOnEditOverlayClosed: () => {
+    ipcRenderer.removeAllListeners("editOverlayClosed");
+  },
+  notifyEditOverlayConnected: () => {
+    ipcRenderer.send("editOverlayConnected");
+  },
+  onEditOverlayConnected: (callback: () => void) => {
+    ipcRenderer.on("editOverlayConnected", callback);
+  },
+  removeOnEditOverlayConnected: () => {
+    ipcRenderer.removeAllListeners("editOverlayConnected");
+  },
+  sendPreviewFrame: (buf: ArrayBuffer, width: number, height: number) => {
+    ipcRenderer.send("sendPreviewFrame", buf, width, height);
+  },
+  onPreviewFrame: (callback: (buf: ArrayBuffer, width: number, height: number) => void) => {
+    ipcRenderer.on("onPreviewFrame", (_event, buf, width, height) => callback(buf, width, height));
+  },
+  removeOnPreviewFrame: () => {
+    ipcRenderer.removeAllListeners("onPreviewFrame");
   },
   getAvailableThemes: async (): Promise<any[]> => {
     return await ipcRenderer.invoke("getAvailableThemes");
