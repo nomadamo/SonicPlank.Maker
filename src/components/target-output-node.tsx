@@ -1030,11 +1030,19 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
 
     const streamFps = 30;
 
+    // Resolve output resolution from the active preset.
+    // If the preset has valid width/height (not "auto"), pass them to FFmpeg for -vf scale.
+    const presetW = typeof activePreset.width === "number" && activePreset.width > 0
+      ? activePreset.width : null;
+    const presetH = typeof activePreset.height === "number" && activePreset.height > 0
+      ? activePreset.height : null;
+
     try {
       const initRes = await window.electron.startStream(rtmpUrl, {
         encoder: settings.streamEncoder || "libx264",
         bitrateKbps: settings.streamBitrateKbps || 6000,
         fps: streamFps,
+        ...(presetW && presetH ? { width: presetW, height: presetH } : {}),
       });
       if (!initRes.success) {
         console.error("[TargetOutputNode] Failed to initialize FFmpeg stream.");

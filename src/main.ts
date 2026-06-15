@@ -613,10 +613,13 @@ const registerIpcHandlers = () => {
       const encoder = options?.encoder || "libx264";
       const bitrateKbps = options?.bitrateKbps || 6000;
       const fps = options?.fps || 30;
+      const width: number | null = options?.width || null;
+      const height: number | null = options?.height || null;
       const bufsizeKbps = bitrateKbps * 2; // 2x bitrate for stable rate control
 
+      const resLabel = width && height ? ` | output: ${width}x${height}` : "";
       console.log(
-        `Starting FFmpeg RTMP stream to ${rtmpUrl} | encoder: ${encoder} | bitrate: ${bitrateKbps}k | ${fps}fps`,
+        `Starting FFmpeg RTMP stream to ${rtmpUrl} | encoder: ${encoder} | bitrate: ${bitrateKbps}k | ${fps}fps${resLabel}`,
       );
 
       // Input: JPEG frames piped from canvas compositor via stdin.
@@ -624,10 +627,14 @@ const registerIpcHandlers = () => {
       // no intermediate WebM encode (eliminates the previous double-encode bottleneck).
       const ffmpegArgs = [
         "-y",
-        "-f", "image2pipe",
-        "-framerate", `${fps}`,
-        "-vcodec", "mjpeg",
-        "-i", "pipe:0",
+        "-f",
+        "image2pipe",
+        "-framerate",
+        `${fps}`,
+        "-vcodec",
+        "mjpeg",
+        "-i",
+        "pipe:0",
       ];
 
       // Video encoding — single encode pass from raw JPEG frames to target codec.
@@ -635,44 +642,80 @@ const registerIpcHandlers = () => {
       // to libx264 ultrafast when no GPU encoder is selected.
       if (encoder === "h264_nvenc") {
         ffmpegArgs.push(
-          "-c:v", "h264_nvenc",
-          "-preset", "p4",           // balanced quality/speed (NVENC SDK preset)
-          "-pix_fmt", "yuv420p",
-          "-b:v", `${bitrateKbps}k`,
-          "-maxrate:v", `${bitrateKbps}k`,
-          "-bufsize:v", `${bufsizeKbps}k`,
-          "-g", `${fps * 2}`,        // keyframe every 2 seconds
+          "-c:v",
+          "h264_nvenc",
+          "-preset",
+          "p4", // balanced quality/speed (NVENC SDK preset)
+          "-pix_fmt",
+          "yuv420p",
+          "-b:v",
+          `${bitrateKbps}k`,
+          "-maxrate:v",
+          `${bitrateKbps}k`,
+          "-bufsize:v",
+          `${bufsizeKbps}k`,
+          "-g",
+          `${fps * 2}`, // keyframe every 2 seconds
         );
       } else if (encoder === "h264_amf") {
         ffmpegArgs.push(
-          "-c:v", "h264_amf",
-          "-pix_fmt", "yuv420p",
-          "-b:v", `${bitrateKbps}k`,
-          "-maxrate:v", `${bitrateKbps}k`,
-          "-bufsize:v", `${bufsizeKbps}k`,
-          "-g", `${fps * 2}`,
+          "-c:v",
+          "h264_amf",
+          "-pix_fmt",
+          "yuv420p",
+          "-b:v",
+          `${bitrateKbps}k`,
+          "-maxrate:v",
+          `${bitrateKbps}k`,
+          "-bufsize:v",
+          `${bufsizeKbps}k`,
+          "-g",
+          `${fps * 2}`,
         );
       } else if (encoder === "h264_qsv") {
         ffmpegArgs.push(
-          "-c:v", "h264_qsv",
-          "-pix_fmt", "yuv420p",
-          "-b:v", `${bitrateKbps}k`,
-          "-maxrate:v", `${bitrateKbps}k`,
-          "-bufsize:v", `${bufsizeKbps}k`,
-          "-g", `${fps * 2}`,
+          "-c:v",
+          "h264_qsv",
+          "-pix_fmt",
+          "yuv420p",
+          "-b:v",
+          `${bitrateKbps}k`,
+          "-maxrate:v",
+          `${bitrateKbps}k`,
+          "-bufsize:v",
+          `${bufsizeKbps}k`,
+          "-g",
+          `${fps * 2}`,
         );
       } else {
         // Default / libx264 fallback — ultrafast preset for minimal CPU overhead
         ffmpegArgs.push(
-          "-c:v", "libx264",
-          "-preset", "ultrafast",
-          "-threads", "0",
-          "-pix_fmt", "yuv420p",
-          "-b:v", `${bitrateKbps}k`,
-          "-maxrate:v", `${bitrateKbps}k`,
-          "-bufsize:v", `${bufsizeKbps}k`,
-          "-g", `${fps * 2}`,
+          "-c:v",
+          "libx264",
+          "-preset",
+          "ultrafast",
+          "-threads",
+          "0",
+          "-pix_fmt",
+          "yuv420p",
+          "-b:v",
+          `${bitrateKbps}k`,
+          "-maxrate:v",
+          `${bitrateKbps}k`,
+          "-bufsize:v",
+          `${bufsizeKbps}k`,
+          "-g",
+          `${fps * 2}`,
         );
+      }
+
+      // Output resolution scaling (GPU-side, no CPU cost).
+      // Dimensions are forced to even numbers as required by H.264 encoders.
+      // If no width/height is provided, FFmpeg outputs at the source canvas resolution.
+      if (width && height && width > 0 && height > 0) {
+        const w = Math.round(width / 2) * 2;
+        const h = Math.round(height / 2) * 2;
+        ffmpegArgs.push("-vf", `scale=${w}:${h}:flags=lanczos`);
       }
 
       // Audio: no audio tracks in the current canvas pipeline.
@@ -709,7 +752,8 @@ const registerIpcHandlers = () => {
             dropped: dropMatch ? parseInt(dropMatch[1]) : null,
           };
           BrowserWindow.getAllWindows().forEach((win) => {
-            if (!win.isDestroyed()) win.webContents.send("onStreamStatus", stats);
+            if (!win.isDestroyed())
+              win.webContents.send("onStreamStatus", stats);
           });
         }
       });
