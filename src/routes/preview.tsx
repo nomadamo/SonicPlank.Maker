@@ -1,15 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useRef, useState, useCallback } from "react";
-import {
-  Loader2,
-  Radio,
-  Disc,
-  Square,
-  Lock,
-  Unlock,
-} from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Loader2, Lock, Unlock } from "lucide-react";
 import { OverlayElement } from "@/types/flow-node";
-import { useSettings } from "@/store/settingsStore";
 
 export const Route = createFileRoute("/preview")({
   validateSearch: (search: Record<string, unknown>): { aspect: string } => ({
@@ -20,8 +12,6 @@ export const Route = createFileRoute("/preview")({
 
 function PreviewComponent() {
   const { aspect } = Route.useSearch() as unknown as { aspect: string };
-  const { settings } = useSettings();
-
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
@@ -183,32 +173,6 @@ function PreviewComponent() {
     setIsLocked((prev) => !prev);
   };
 
-  // Recording
-  const [isRecording, setIsRecording] = useState(false);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const recordedChunksRef = useRef<Blob[]>([]);
-
-  // Streaming
-  const [isStreaming, setIsStreaming] = useState(false);
-  const [rtmpUrl, setRtmpUrl] = useState(() => {
-    const base = settings.streamUrl?.trim() ?? "";
-    const token = settings.streamToken?.trim() ?? "";
-    if (base) return token ? (base.endsWith("/") ? `${base}${token}` : `${base}/${token}`) : base;
-    return localStorage.getItem("rtmpUrl") ?? "rtmp://a.rtmp.youtube.com/live2/YOUR_KEY";
-  });
-  const [showStreamInput, setShowStreamInput] = useState(false);
-  const streamRecorderRef = useRef<MediaRecorder | null>(null);
-
-  useEffect(() => {
-    const base = settings.streamUrl?.trim() ?? "";
-    const token = settings.streamToken?.trim() ?? "";
-    if (base) {
-      setRtmpUrl(token ? (base.endsWith("/") ? `${base}${token}` : `${base}/${token}`) : base);
-    } else {
-      setRtmpUrl(localStorage.getItem("rtmpUrl") ?? "rtmp://a.rtmp.youtube.com/live2/YOUR_KEY");
-    }
-  }, [settings.streamUrl, settings.streamToken]);
-
   // Audio analyser data from editor (via IPC broadcast)
   const audioDataMapRef = useRef<Record<string, number[]>>({});
   const audioTimesRef = useRef<Record<string, { currentTime: number; duration: number }>>({});
@@ -260,15 +224,19 @@ function PreviewComponent() {
   useEffect(() => {
     (window.electron.onPreviewFrame as (cb: (buf: ArrayBuffer, w: number, h: number) => void) => void)(
       (buf: ArrayBuffer, width: number, height: number) => {
-        const canvas = canvasRef.current;
-        if (!canvas) return;
-
+        // First frame: mount the canvas by setting hasFrame, then return.
+        // The canvas element is only in the DOM when hasFrame=true, so we can't
+        // draw on this frame — but the next frame will find canvasRef populated.
         if (!hasFrameRef.current) {
           hasFrameRef.current = true;
-          setHasFrame(true);
           if (width > 0 && height > 0) setDynamicAspect(`${width}/${height}`);
           (window.electron.notifyEditOverlayConnected as () => void)();
+          setHasFrame(true);
+          return;
         }
+
+        const canvas = canvasRef.current;
+        if (!canvas) return;
 
         const blob = new Blob([buf], { type: "image/jpeg" });
         const url = URL.createObjectURL(blob);
@@ -283,75 +251,6 @@ function PreviewComponent() {
       }
     );
     return () => { (window.electron.removeOnPreviewFrame as () => void)(); };
-  }, []);
-
-  // Recording from canvas (records compositor frames as they arrive)
-  const startRecording = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const streamToRecord = (canvas as any).captureStream?.((60)) as MediaStream | null;
-    if (!streamToRecord) { console.error("Canvas captureStream not supported."); return; }
-
-    const bitrate = (settings.recordingBitrateKbps ?? 12000) * 1000;
-    let opts = { mimeType: "video/webm;codecs=h264", videoBitsPerSecond: bitrate };
-    if (!MediaRecorder.isTypeSupported(opts.mimeType)) opts = { mimeType: "video/webm;codecs=vp9", videoBitsPerSecond: bitrate };
-    if (!MediaRecorder.isTypeSupported(opts.mimeType)) opts = { mimeType: "video/webm", videoBitsPerSecond: bitrate };
-
-    const recorder = new MediaRecorder(streamToRecord, opts);
-    recordedChunksRef.current = [];
-    recorder.ondataavailable = (ev) => { if (ev.data?.size > 0) recordedChunksRef.current.push(ev.data); };
-    recorder.onstop = async () => {
-      const blob = new Blob(recordedChunksRef.current, { type: "video/webm" });
-      const buf = await blob.arrayBuffer();
-      const ts = new Date().toISOString().replace(/[:.]/g, "-");
-      await window.electron.saveRecording(`sonicplank-overlay-${ts}.webm`, buf, settings.recordingPath).catch(() => {});
-    };
-    recorder.start(100);
-    mediaRecorderRef.current = recorder;
-    setIsRecording(true);
-  }, [settings.recordingBitrateKbps, settings.recordingPath]);
-
-  const stopRecording = useCallback(() => {
-    mediaRecorderRef.current?.stop();
-    setIsRecording(false);
-  }, []);
-
-  // Streaming from canvas
-  const startStreaming = useCallback(async () => {
-    if (!rtmpUrl) return;
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    localStorage.setItem("rtmpUrl", rtmpUrl);
-    const streamToStream = (canvas as any).captureStream?.((60)) as MediaStream | null;
-    if (!streamToStream) { console.error("Canvas captureStream not supported."); return; }
-    try {
-      const res = await window.electron.startStream(rtmpUrl, {
-        encoder: settings.streamEncoder ?? "copy",
-        bitrateKbps: settings.streamBitrateKbps ?? 6000,
-      });
-      if (!res.success) { console.error("Failed to initialize stream."); return; }
-    } catch (err) { console.error("Failed to start stream:", err); return; }
-
-    const bitrate = (settings.streamBitrateKbps ?? 6000) * 1000;
-    let opts = { mimeType: "video/webm;codecs=h264,opus", videoBitsPerSecond: bitrate };
-    if (!MediaRecorder.isTypeSupported(opts.mimeType)) opts = { mimeType: "video/webm;codecs=vp8,opus", videoBitsPerSecond: bitrate };
-    if (!MediaRecorder.isTypeSupported(opts.mimeType)) opts = { mimeType: "video/webm", videoBitsPerSecond: bitrate };
-
-    const recorder = new MediaRecorder(streamToStream, opts);
-    recorder.ondataavailable = async (ev) => {
-      if (ev.data?.size > 0) window.electron.pushStreamData(await ev.data.arrayBuffer());
-    };
-    recorder.start(100);
-    streamRecorderRef.current = recorder;
-    setIsStreaming(true);
-    setShowStreamInput(false);
-  }, [rtmpUrl, settings.streamEncoder, settings.streamBitrateKbps]);
-
-  const stopStreaming = useCallback(async () => {
-    streamRecorderRef.current?.stop();
-    streamRecorderRef.current = null;
-    await window.electron.stopStream();
-    setIsStreaming(false);
   }, []);
 
   const aspectValue = aspect === "auto" ? dynamicAspect : aspect;
@@ -422,7 +321,7 @@ function PreviewComponent() {
         </div>
       )}
 
-      {/* Floating control bar */}
+      {/* Floating control bar — overlay editing only */}
       {hasFrame && (
         <div
           style={{ zIndex: 10000 }}
@@ -442,58 +341,6 @@ function PreviewComponent() {
           >
             {!isLocked ? <><Unlock className="w-3.5 h-3.5" /> Lock Layout</> : <><Lock className="w-3.5 h-3.5" /> Move Overlays</>}
           </button>
-
-          <div className="h-4 w-[1px] bg-zinc-800" />
-
-          <button
-            onClick={isRecording ? stopRecording : startRecording}
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold uppercase tracking-wider cursor-pointer border transition-all ${
-              isRecording
-                ? "bg-red-500/10 text-red-400 border-red-500/30 animate-pulse hover:bg-red-500/20"
-                : "bg-zinc-900 text-zinc-300 border-zinc-800 hover:bg-zinc-800 hover:text-white"
-            }`}
-          >
-            {isRecording ? <><Square className="w-3.5 h-3.5 fill-current" /> Stop REC</> : <><Disc className="w-3.5 h-3.5" /> Record</>}
-          </button>
-
-          <div className="h-4 w-[1px] bg-zinc-800" />
-
-          <button
-            onClick={isStreaming ? stopStreaming : () => setShowStreamInput(!showStreamInput)}
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold uppercase tracking-wider cursor-pointer border transition-all ${
-              isStreaming
-                ? "bg-purple-500/10 text-purple-400 border-purple-500/30 animate-pulse hover:bg-purple-500/20"
-                : "bg-zinc-900 text-zinc-300 border-zinc-800 hover:bg-zinc-800 hover:text-white"
-            }`}
-          >
-            {isStreaming ? <><Square className="w-3.5 h-3.5 fill-current" /> Stop Stream</> : <><Radio className="w-3.5 h-3.5" /> Go Live</>}
-          </button>
-        </div>
-      )}
-
-      {/* Stream settings popover */}
-      {showStreamInput && (
-        <div className="absolute bottom-20 left-1/2 -translate-x-1/2 w-80 p-4 bg-zinc-950 border border-zinc-800 rounded-xl shadow-2xl flex flex-col gap-3">
-          <div className="flex flex-col gap-1">
-            <span className="text-xs font-medium text-zinc-200">RTMP Target URL</span>
-            <span className="text-[10px] text-zinc-500">Provide server endpoint + stream key</span>
-          </div>
-          <input
-            type="text"
-            value={rtmpUrl}
-            onChange={(e) => setRtmpUrl(e.target.value.trim())}
-            className="w-full bg-zinc-900 border border-zinc-800 rounded px-2.5 py-1.5 text-xs text-zinc-200 focus:border-indigo-500 focus:outline-none"
-            placeholder="rtmp://..."
-          />
-          {rtmpUrl && !rtmpUrl.startsWith("rtmp://") && !rtmpUrl.startsWith("rtmps://") && (
-            <span className="text-[10px] text-amber-500 font-semibold mt-0.5">
-              Warning: URL should start with rtmp:// or rtmps://
-            </span>
-          )}
-          <div className="flex gap-2 justify-end">
-            <button onClick={() => setShowStreamInput(false)} className="text-xs px-2.5 py-1 text-zinc-400 hover:text-zinc-200 cursor-pointer">Cancel</button>
-            <button onClick={() => { void startStreaming(); }} className="text-xs px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded font-medium cursor-pointer">Start Stream</button>
-          </div>
         </div>
       )}
     </div>

@@ -81,6 +81,7 @@ export function AnimatedSvgEdge({
     selectable,
     deletable,
     style,
+    pathOptions: _pathOptions,
     ...restEdgeProps
   } = delegated;
 

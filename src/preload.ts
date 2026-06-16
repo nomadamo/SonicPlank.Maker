@@ -86,8 +86,10 @@ contextBridge.exposeInMainWorld("electron", {
     return res;
   },
   pushStreamData: (arrayBuffer: ArrayBuffer): void => {
-    // Fire-and-forget: no round-trip wait — critical for per-frame streaming throughput.
-    ipcRenderer.send("pushStreamData", arrayBuffer);
+    // Transfer (not clone) the ArrayBuffer to main process. Without the transfer
+    // list the renderer retains a copy of every frame's data (~25KB × 30fps =
+    // 750KB/s of garbage), causing progressive GC pressure and FPS decline.
+    ipcRenderer.send("pushStreamData", arrayBuffer, [arrayBuffer]);
   },
   onOverlaysUpdated: (callback: (overlays: any[]) => void) => {
     ipcRenderer.on("onOverlaysUpdated", (_event, overlays) =>

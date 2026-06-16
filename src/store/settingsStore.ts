@@ -16,8 +16,10 @@ export type AppSettings = {
   streamUrl?: string;
   streamToken?: string;
   streamBitrateKbps?: number;
+  streamFps?: 30 | 60;
   recordingBitrateKbps?: number;
   streamEncoder?: "copy" | "libx264" | "h264_nvenc" | "h264_amf" | "h264_qsv";
+  streamDelayMs?: number;
 };
 
 export const defaultSettings: AppSettings = {
@@ -35,8 +37,10 @@ export const defaultSettings: AppSettings = {
   streamUrl: "",
   streamToken: "",
   streamBitrateKbps: 6000,
+  streamFps: 30,
   recordingBitrateKbps: 12000,
   streamEncoder: "copy",
+  streamDelayMs: 0,
 };
 
 export const settingsAtom = atomWithStorage<AppSettings>(

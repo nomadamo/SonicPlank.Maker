@@ -22,15 +22,92 @@ import started from "electron-squirrel-startup";
 import { inDevelopment } from "./constants";
 import { spawn } from "node:child_process";
 
-// Force GPU rasterization and video decoding for the app
+// ── GPU / capture acceleration ───────────────────────────────────────────────
+// All enable-features flags MUST be in a single appendSwitch call.
+// Multiple calls don't accumulate — each replaces the previous value.
 app.commandLine.appendSwitch("enable-gpu-rasterization");
 app.commandLine.appendSwitch("enable-native-gpu-memory-buffers");
 app.commandLine.appendSwitch("enable-accelerated-video-decode");
-app.commandLine.appendSwitch("webrtc-max-cpu-consumption-percentage", "90");
+app.commandLine.appendSwitch("enable-accelerated-video-encode");
+// Override Chromium's GPU driver blocklist — many common driver versions are
+// blocklisted as a precaution and cause WebCodecs/canvas GPU paths to silently
+// fall back to software even when the hardware is perfectly capable.
+app.commandLine.appendSwitch("ignore-gpu-blocklist");
+app.commandLine.appendSwitch("disable-gpu-driver-bug-workarounds");
+app.commandLine.appendSwitch(
+  "enable-features",
+  [
+    // Move canvas 2D rasterization to a GPU worker so VideoFrame(canvas)
+    // becomes a GPU-to-GPU texture copy instead of a CPU upload.
+    "CanvasOopRasterization",
+    // Zero-copy Windows Graphics Capture: the captured D3D11 texture is shared
+    // directly to the video element — eliminates one CPU copy per captured frame.
+    "D3D11ZeroCopyVideoCapture",
+    // Use the D3D11 hardware video decoder for the captured stream.
+    "D3D11VideoDecoder",
+  ].join(","),
+);
+// Explicit D3D11 backend — more reliable than "default" on Windows.
+app.commandLine.appendSwitch("use-angle", "d3d11");
+// Don't throttle the renderer when the window loses focus (needed for streaming
+// while the user is looking at another app).
+app.commandLine.appendSwitch("disable-renderer-backgrounding");
+// Allow the capture subsystem to use up to 75% of a core when needed.
+app.commandLine.appendSwitch("webrtc-max-cpu-consumption-percentage", "75");
 
 let ffmpegProcess: any = null;
 let activeOverlays: any[] = [];
 let previewWin: BrowserWindow | null = null;
+
+// Stream delay buffer. When streamDelayMs > 0, encoded H.264 chunks are held
+// here before being written to FFmpeg stdin. Each entry records wall-clock
+// receipt time so frames are released at the right moment.
+let streamDelayMs = 0;
+const streamDelayBuffer: { data: Buffer; receivedAt: number }[] = [];
+let streamDelayTimer: ReturnType<typeof setInterval> | null = null;
+
+function startDelayFlush() {
+  if (streamDelayTimer) return;
+  streamDelayTimer = setInterval(() => {
+    const now = Date.now();
+    const stdin = getStdin();
+    while (streamDelayBuffer.length > 0 && now - streamDelayBuffer[0].receivedAt >= streamDelayMs) {
+      const frame = streamDelayBuffer.shift();
+      if (frame && stdin) {
+        try {
+          stdin.write(frame.data);
+        } catch (writeErr) {
+          console.error("Delay buffer write error:", writeErr);
+        }
+      }
+    }
+  }, 16); // tick every ~1 frame at 60fps
+}
+
+function stopDelayFlush(flushRemaining = true) {
+  if (streamDelayTimer) {
+    clearInterval(streamDelayTimer);
+    streamDelayTimer = null;
+  }
+  if (flushRemaining) {
+    const stdin = getStdin();
+    for (const frame of streamDelayBuffer) {
+      if (stdin) {
+        try {
+          stdin.write(frame.data);
+        } catch (flushErr) {
+          console.error("Delay buffer flush error:", flushErr);
+        }
+      }
+    }
+  }
+  streamDelayBuffer.length = 0;
+}
+
+function getStdin(): NodeJS.WritableStream | null {
+  const proc = ffmpegProcess as { stdin?: NodeJS.WritableStream } | null;
+  return proc?.stdin?.writable ? proc.stdin : null;
+}
 
 // Themes directory settings
 const themesDir = path.join(
@@ -309,10 +386,11 @@ const registerIpcHandlers = () => {
   });
 
   ipcMain.on("sendAudioTime", (event, nodeId, currentTime, paused) => {
+    // Broadcast to ALL windows including the sender — audio-node, now-playing-node,
+    // and target-output-node all live in the same renderer window, so excluding
+    // the sender would silently drop every update before it reaches the compositor.
     BrowserWindow.getAllWindows().forEach((win) => {
-      if (win.webContents !== event.sender) {
-        win.webContents.send("onAudioTimeUpdated", nodeId, currentTime, paused);
-      }
+      win.webContents.send("onAudioTimeUpdated", nodeId, currentTime, paused);
     });
   });
 
@@ -370,10 +448,18 @@ const registerIpcHandlers = () => {
       const mode = options?.mode || "mjpeg";
       const encoder = options?.encoder || "libx264";
       const bitrateKbps = options?.bitrateKbps || 6000;
-      const fps = options?.fps || 30;
+      const fps: number =
+        Number((options as Record<string, unknown>)?.fps) || 30;
       const width: number | null = options?.width || null;
       const height: number | null = options?.height || null;
       const bufsizeKbps = bitrateKbps * 2;
+
+      // Configure stream delay — frames are held in the delay buffer for this
+      // many milliseconds before being written to FFmpeg stdin.
+      streamDelayMs = Number((options as Record<string, unknown>)?.streamDelayMs) || 0;
+      if (streamDelayMs > 0) {
+        startDelayFlush();
+      }
 
       // ── Mode: h264 ──────────────────────────────────────────────────────────
       // Frames are already encoded to H.264 on the GPU by the renderer's
@@ -388,10 +474,22 @@ const registerIpcHandlers = () => {
           "-y",
           "-progress",
           "pipe:2",
-          "-f",
-          "h264",
+          // +genpts: generate PTS from the frame-count DTS assigned by -r. Without
+          // this, raw H.264 demuxer passes AV_NOPTS_VALUE PTS through -c:v copy and
+          // the FLV muxer reconstructs timing itself, causing time=N/A in progress
+          // output and jitter in the RTMP stream.
+          "-fflags",
+          "+genpts",
+          // Tell FFmpeg the input frame rate so it assigns monotonic DTS by frame
+          // count (0, 1/fps, 2/fps, …) rather than by wall-clock arrival time.
+          // Wall-clock timestamps cause non-monotonic DTS when the IPC between
+          // the renderer and main process delivers chunks in bursts (which happens
+          // under heavy compositing load like the visualizer) — the FLV muxer then
+          // sees DTS go backward and emits continuous non-monotonic warnings.
           "-r",
           `${fps}`,
+          "-f",
+          "h264",
           "-i",
           "pipe:0",
           "-c:v",
@@ -512,6 +610,10 @@ const registerIpcHandlers = () => {
 
   ipcMain.handle("stopStream", () => {
     try {
+      // Flush any buffered frames before closing — preserves content queued
+      // in the delay buffer so the last N seconds reach the RTMP server.
+      stopDelayFlush(true);
+      streamDelayMs = 0;
       if (ffmpegProcess) {
         ffmpegProcess.stdin.end();
         ffmpegProcess.kill();
@@ -525,14 +627,21 @@ const registerIpcHandlers = () => {
     }
   });
 
-  // Fire-and-forget: renderer doesn't wait for ack, eliminating per-frame round-trip latency.
+  // Fire-and-forget write: ArrayBuffer was transferred from renderer (no GC copy).
+  // With -r ${fps} on the FFmpeg input, DTS is assigned by frame count so
+  // wall-clock arrival timing is irrelevant. When a delay is configured the
+  // frame is queued and released by startDelayFlush's interval timer.
   ipcMain.on("pushStreamData", (_event, arrayBuffer) => {
-    try {
-      if (ffmpegProcess && ffmpegProcess.stdin.writable) {
-        ffmpegProcess.stdin.write(Buffer.from(arrayBuffer));
+    const buf = Buffer.from(arrayBuffer as ArrayBuffer);
+    if (streamDelayMs > 0) {
+      streamDelayBuffer.push({ data: buf, receivedAt: Date.now() });
+    } else {
+      try {
+        const stdin = getStdin();
+        if (stdin) stdin.write(buf);
+      } catch (error) {
+        console.error("Failed to push streaming buffer to FFmpeg:", error);
       }
-    } catch (error: any) {
-      console.error("Failed to push streaming buffer to FFmpeg:", error);
     }
   });
 
@@ -599,67 +708,73 @@ const registerIpcHandlers = () => {
   // Open the Edit Overlay window as an in-process BrowserWindow.
   // The preview receives compositor frames from the editor via BroadcastChannel
   // ('sonicplank-preview-frames') — no second capture, no WGC session conflict.
-  ipcMain.handle("openEditOverlay", (_event, args: { aspect?: string } | undefined) => {
-    if (previewWin && !previewWin.isDestroyed()) {
-      previewWin.focus();
-      return;
-    }
-
-    const aspect: string = args?.aspect ?? "16/9";
-    const startUrl = MAIN_WINDOW_VITE_DEV_SERVER_URL
-      ? `${MAIN_WINDOW_VITE_DEV_SERVER_URL}#/preview?aspect=${encodeURIComponent(aspect)}`
-      : `file://${path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`)}#/preview?aspect=${encodeURIComponent(aspect)}`;
-
-    console.log("[Main] Opening Edit Overlay window:", startUrl);
-
-    previewWin = new BrowserWindow({
-      autoHideMenuBar: true,
-      minWidth: 800,
-      minHeight: 450,
-      width: 1280,
-      height: 720,
-      title: "Edit Overlay",
-      webPreferences: {
-        devTools: inDevelopment,
-        preload: path.join(__dirname, "preload.js"),
-        webSecurity: false,
-      },
-    });
-
-    previewWin.removeMenu();
-    void previewWin.loadURL(startUrl);
-
-    if (inDevelopment) {
-      previewWin.webContents.openDevTools();
-    }
-
-    // Send current overlays to the preview as soon as its renderer is ready
-    previewWin.webContents.once("did-finish-load", () => {
+  ipcMain.handle(
+    "openEditOverlay",
+    (_event, args: { aspect?: string } | undefined) => {
       if (previewWin && !previewWin.isDestroyed()) {
-        previewWin.webContents.send("onOverlaysUpdated", activeOverlays);
+        previewWin.focus();
+        return;
       }
-    });
 
-    previewWin.on("closed", () => {
-      console.log("[Main] Edit Overlay window closed.");
-      previewWin = null;
-      // Notify editor windows so they can stop broadcasting frames
-      BrowserWindow.getAllWindows().forEach((win) => {
-        if (!win.isDestroyed()) {
-          win.webContents.send("editOverlayClosed");
+      const aspect: string = args?.aspect ?? "16/9";
+      const startUrl = MAIN_WINDOW_VITE_DEV_SERVER_URL
+        ? `${MAIN_WINDOW_VITE_DEV_SERVER_URL}#/preview?aspect=${encodeURIComponent(aspect)}`
+        : `file://${path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`)}#/preview?aspect=${encodeURIComponent(aspect)}`;
+
+      console.log("[Main] Opening Edit Overlay window:", startUrl);
+
+      previewWin = new BrowserWindow({
+        autoHideMenuBar: true,
+        minWidth: 800,
+        minHeight: 450,
+        width: 1280,
+        height: 720,
+        title: "Overlay Editor",
+        webPreferences: {
+          devTools: inDevelopment,
+          preload: path.join(__dirname, "preload.js"),
+          webSecurity: false,
+        },
+      });
+
+      previewWin.removeMenu();
+      void previewWin.loadURL(startUrl);
+
+      if (inDevelopment) {
+        previewWin.webContents.openDevTools();
+      }
+
+      // Send current overlays to the preview as soon as its renderer is ready
+      previewWin.webContents.once("did-finish-load", () => {
+        if (previewWin && !previewWin.isDestroyed()) {
+          previewWin.webContents.send("onOverlaysUpdated", activeOverlays);
         }
       });
-    });
-  });
+
+      previewWin.on("closed", () => {
+        console.log("[Main] Edit Overlay window closed.");
+        previewWin = null;
+        // Notify editor windows so they can stop broadcasting frames
+        BrowserWindow.getAllWindows().forEach((win) => {
+          if (!win.isDestroyed()) {
+            win.webContents.send("editOverlayClosed");
+          }
+        });
+      });
+    },
+  );
 
   // Editor sends JPEG-encoded compositor frames here; main relays directly to the
   // preview window. BroadcastChannel does not cross renderer-process boundaries in
   // Electron, so IPC relay is the only reliable transport for frame data.
-  ipcMain.on("sendPreviewFrame", (_event, buf: ArrayBuffer, width: number, height: number) => {
-    if (previewWin && !previewWin.isDestroyed()) {
-      previewWin.webContents.send("onPreviewFrame", buf, width, height);
-    }
-  });
+  ipcMain.on(
+    "sendPreviewFrame",
+    (_event, buf: ArrayBuffer, width: number, height: number) => {
+      if (previewWin && !previewWin.isDestroyed()) {
+        previewWin.webContents.send("onPreviewFrame", buf, width, height);
+      }
+    },
+  );
 
   // Preview window notifies main when it receives its first compositor frame.
   // Main relays to all other windows (the editor) so it can update its status dialog.

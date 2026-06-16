@@ -9,6 +9,8 @@ import {
   Layers as LayersIcon,
   Disc as DiscIcon,
   Radio as RadioIcon,
+  SquareDashedMousePointer,
+  ScanEyeIcon,
 } from "lucide-react";
 import { FlowNodeType, OverlayElement } from "@/types/flow-node";
 import { useCallback, useEffect, useRef, useState, useMemo } from "react";
@@ -26,7 +28,7 @@ import {
 import type { StreamStats } from "../global";
 
 function drawRoundedRect(
-  ctx: CanvasRenderingContext2D,
+  ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
   x: number,
   y: number,
   w: number,
@@ -109,53 +111,75 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
     setEditOverlayOpenState(val);
   };
   const editOverlayOwnsCaptureRef = useRef(false);
-  // Timestamp of last frame sent to preview — rate-limits to ~30fps
+  // Timestamp of last frame sent to preview — rate-limits to ~10fps to avoid eating compositor budget
   const lastPreviewBroadcastRef = useRef<number>(0);
   // Whether a canvas.toBlob encode is already in flight (avoid stacking)
   const previewCapturePendingRef = useRef(false);
+  // Small offscreen canvas used for downscaling before JPEG encode — keeps encoding fast
+  const previewScaleCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  // Per-overlay OffscreenCanvas cache for visualizer overlays. Visualizers redraw at
+  // 30fps max and composite the cached image at full compositor rate, avoiding the
+  // per-frame cost of 80+ ctx.stroke() calls (circle) and 128 createLinearGradient()
+  // calls (bars) that were starving the main thread during audio playback.
+  const visualizerCachesRef = useRef<
+    Map<string, {
+      canvas: OffscreenCanvas;
+      ctx2d: OffscreenCanvasRenderingContext2D;
+      lastDrawn: number;
+      dataArray: Uint8Array<ArrayBuffer>;
+      broadcastArray: number[];
+      barsGrad: CanvasGradient | null;
+      barsGradH: number;
+    }>
+  >(new Map());
+  // Per-overlay font string cache for text overlays. The font string is rebuilt
+  // only when font properties or canvas height change, avoiding a new string
+  // allocation every compositor frame per text overlay.
+  const textFontCacheRef = useRef<
+    Map<string, { key: string; fontStr: string }>
+  >(new Map());
+  // Per-overlay OffscreenCanvas cache for nowPlaying overlays. The entire card
+  // is rendered to an OffscreenCanvas and only re-drawn when content actually
+  // changes (title/artist/art/time). On every compositor frame the cached canvas
+  // is blitted with a single drawImage call, eliminating per-frame allocations
+  // (createLinearGradient, font strings, measureText loops, clip paths).
+  const nowPlayingCacheRef = useRef<
+    Map<string, { canvas: OffscreenCanvas; contentKey: string }>
+  >(new Map());
+  // Set to true when overlay topology changes so the next encoded frame is forced
+  // to be a keyframe. Sudden overlay additions/removals cause a large inter-frame
+  // difference; producing a planned keyframe is cheaper than an oversized P-frame.
+  const forceKeyframeRef = useRef(false);
   // Connection status shown in StatusDialog while Edit Overlay is opening
   type EditOverlayDialogStatus = "idle" | "running" | "success" | "error";
-  const [editOverlayDialogStatus, setEditOverlayDialogStatus] = useState<EditOverlayDialogStatus>("idle");
+  const [editOverlayDialogStatus, setEditOverlayDialogStatus] =
+    useState<EditOverlayDialogStatus>("idle");
   const [editOverlayDialogProgress, setEditOverlayDialogProgress] = useState(0);
 
-  // Streaming states
-  const [rtmpUrl, setRtmpUrl] = useState(() => {
-    if (settings.streamUrl) {
-      const baseUrl = settings.streamUrl.trim();
-      const token = settings.streamToken?.trim() || "";
-      if (token) {
-        return baseUrl.endsWith("/")
-          ? `${baseUrl}${token}`
-          : `${baseUrl}/${token}`;
+  // One-time migration: old code stored the RTMP URL in localStorage only.
+  // Promote it to settings on first mount so the URL field isn't blank.
+  useEffect(() => {
+    if (!settings.streamUrl) {
+      const legacy = localStorage.getItem("rtmpUrl");
+      if (legacy && !legacy.includes("YOUR_KEY")) {
+        updateSettings({ streamUrl: legacy });
       }
-      return baseUrl;
     }
-    return (
-      localStorage.getItem("rtmpUrl") ||
-      "rtmp://a.rtmp.youtube.com/live2/YOUR_KEY"
-    );
-  });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Streaming states
+  // Derived from settings so changes to URL or token are always reflected
+  // without a separate sync effect (which could overwrite what the user typed).
+  const rtmpUrl = useMemo(() => {
+    const base = settings.streamUrl?.trim() || "";
+    const token = settings.streamToken?.trim() || "";
+    if (!base) return "";
+    if (!token) return base;
+    return base.endsWith("/") ? `${base}${token}` : `${base}/${token}`;
+  }, [settings.streamUrl, settings.streamToken]);
   const [showStreamInput, setShowStreamInput] = useState(false);
   const [streamStats, setStreamStats] = useState<StreamStats | null>(null);
-
-  // Sync default stream settings to state when settings change
-  useEffect(() => {
-    if (settings.streamUrl) {
-      const baseUrl = settings.streamUrl.trim();
-      const token = settings.streamToken?.trim() || "";
-      const fullUrl = token
-        ? baseUrl.endsWith("/")
-          ? `${baseUrl}${token}`
-          : `${baseUrl}/${token}`
-        : baseUrl;
-      setRtmpUrl(fullUrl);
-    } else {
-      setRtmpUrl(
-        localStorage.getItem("rtmpUrl") ||
-          "rtmp://a.rtmp.youtube.com/live2/YOUR_KEY",
-      );
-    }
-  }, [settings.streamUrl, settings.streamToken]);
   // rAF handle for the JPEG fallback capture loop (non-null = fallback streaming active)
   const frameIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   // Active WebCodecs encoder handle (null when falling back to the JPEG path)
@@ -350,6 +374,10 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
 
   // How the source is fit into the (possibly differently-shaped) output canvas.
   const fitMode = node.data.fitMode || "contain";
+  // Ref so the running compositor rAF loop always sees the current fitMode
+  // without needing to restart (async useEffect chain is too slow / fragile).
+  const fitModeRef = useRef(fitMode);
+  fitModeRef.current = fitMode;
   const setFitMode = useCallback(
     (mode: "contain" | "cover" | "stretch") => {
       updateNodeData({ id: node.id, patch: { fitMode: mode } });
@@ -469,13 +497,35 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
     return list;
   }, [edges, nodes, connectedOverlayGroupNode]);
 
+  // Refs so the compositor rAF loop always reads the latest overlays/edges without
+  // being a dep of renderCardCompositor. Without this, any node update anywhere in
+  // the graph (audio time, selection, etc.) causes overlays useMemo to recompute
+  // a new array reference → renderCardCompositor useCallback recreates → useEffect
+  // fires → main-thread churn that delays rAF timing → encoder queue backs up →
+  // stall-then-catchup even with static image/text overlays.
+  const overlaysRef = useRef(overlays);
+  overlaysRef.current = overlays;
+  const edgesRef = useRef(edges);
+  edgesRef.current = edges;
+
   // Synchronise overlays to main process whenever they change
   const prevOverlaysRef = useRef<string>("");
+  const prevOverlayTopologyRef = useRef<string>("");
   useEffect(() => {
     const overlaysJson = JSON.stringify(overlays);
     if (prevOverlaysRef.current !== overlaysJson) {
       prevOverlaysRef.current = overlaysJson;
       window.electron.setOverlays(overlays);
+
+      // Only force a keyframe on topology changes (overlay added or removed).
+      // Property edits (position, text, colour) cause normal P-frame size
+      // increases the encoder handles naturally — forcing a keyframe on every
+      // Apply click compounds encoder queue pressure and grows stream delay.
+      const topology = overlays.map((o) => o.id).join(",");
+      if (topology !== prevOverlayTopologyRef.current) {
+        prevOverlayTopologyRef.current = topology;
+        forceKeyframeRef.current = true;
+      }
     }
   }, [overlays]);
 
@@ -537,10 +587,16 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
     setIsPreviewActive,
   ]);
 
-  // Handle stream assignment to HTMLVideoElement
+  // Handle stream assignment to HTMLVideoElement.
+  // Guard against double-assignment: startStreaming sets srcObject directly so
+  // the video is ready before the canvas-ready poll starts. Without the guard
+  // a second assignment (with the same MediaStream object) would tear down the
+  // WGC texture handle and break capture.
   useEffect(() => {
     if (videoRef.current && stream) {
-      videoRef.current.srcObject = stream;
+      if (videoRef.current.srcObject !== stream) {
+        videoRef.current.srcObject = stream;
+      }
       videoRef.current.play().catch((err) => {
         console.error("[TargetOutputNode] Video playback failed:", err);
       });
@@ -637,7 +693,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
     const vw = video.videoWidth;
     const vh = video.videoHeight;
     if (vw > 0 && vh > 0) {
-      const fm = fitMode || "cover";
+      const fm = fitModeRef.current || "contain";
       if (fm === "stretch") {
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       } else {
@@ -659,7 +715,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
     if (broadcastAudio) lastAudioBroadcastRef.current = now;
 
     // 2. Draw overlays sequentially
-    overlays.forEach((overlay) => {
+    overlaysRef.current.forEach((overlay) => {
       ctx.save();
       ctx.globalAlpha = overlay.opacity ?? 1;
 
@@ -676,7 +732,16 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
         const sizePx = Math.round(
           (overlay.fontSize || 4) * (canvas.height / 100),
         );
-        ctx.font = `${overlay.fontStyle || "normal"} ${overlay.fontWeight || "normal"} ${sizePx}px ${overlay.fontFamily || "Inter, sans-serif"}`;
+        const fontKey = `${sizePx}|${overlay.fontStyle ?? "normal"}|${overlay.fontWeight ?? "normal"}|${overlay.fontFamily ?? "Inter, sans-serif"}`;
+        let fontEntry = textFontCacheRef.current.get(overlay.id);
+        if (!fontEntry || fontEntry.key !== fontKey) {
+          fontEntry = {
+            key: fontKey,
+            fontStr: `${overlay.fontStyle || "normal"} ${overlay.fontWeight || "normal"} ${sizePx}px ${overlay.fontFamily || "Inter, sans-serif"}`,
+          };
+          textFontCacheRef.current.set(overlay.id, fontEntry);
+        }
+        ctx.font = fontEntry.fontStr;
         ctx.fillStyle = overlay.textColor || "#ffffff";
         ctx.textBaseline = "top";
         ctx.fillText(overlay.textContent, xVal, yVal);
@@ -696,7 +761,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
         }
       } else if (overlay.type === "visualizer") {
         // Find if this visualizer node has a connected audio node
-        const edgeToVisualizer = edges.find((e) => e.target === overlay.id);
+        const edgeToVisualizer = edgesRef.current.find((e) => e.target === overlay.id);
         let analyser: AnalyserNode | null = null;
         if (edgeToVisualizer) {
           analyser = getFlowAudioAnalyser(edgeToVisualizer.source);
@@ -706,150 +771,186 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
         }
 
         if (analyser) {
-          ctx.fillStyle = overlay.backgroundColor || "rgba(0, 0, 0, 0.3)";
-          ctx.fillRect(xVal, yVal, wVal, hVal);
-
           const vType = overlay.visualizerType || "bars";
           const bufferLength = analyser.frequencyBinCount;
-          const dataArray = new Uint8Array(bufferLength);
 
-          // Populate data array based on type
-          if (vType === "wave") {
-            analyser.getByteTimeDomainData(dataArray);
-          } else {
-            analyser.getByteFrequencyData(dataArray);
+          // ── OffscreenCanvas + dataArray cache ────────────────────────────
+          // Redraw the visualizer at 30fps max; composite at full compositor
+          // rate via drawImage (a cheap GPU blit). dataArray is reused each
+          // frame to avoid per-frame Uint8Array allocations and GC pressure.
+          const W = Math.max(1, Math.round(wVal));
+          const H = Math.max(1, Math.round(hVal));
+          let cache = visualizerCachesRef.current.get(overlay.id);
+          const needsResize =
+            !cache || cache.canvas.width !== W || cache.canvas.height !== H;
+          const needsNewBuffer =
+            !cache || cache.dataArray.length !== bufferLength;
+          if (needsResize || needsNewBuffer) {
+            const newCanvas = new OffscreenCanvas(W, H);
+            const newCtx = newCanvas.getContext("2d");
+            if (!newCtx) return;
+            cache = {
+              canvas: newCanvas,
+              ctx2d: newCtx,
+              lastDrawn: -Infinity,
+              dataArray: new Uint8Array(new ArrayBuffer(bufferLength)),
+              broadcastArray: new Array<number>(bufferLength).fill(0),
+              barsGrad: null,
+              barsGradH: -1,
+            };
+            visualizerCachesRef.current.set(overlay.id, cache);
+          }
+          if (!cache) return;
+
+          // Only sample audio data when we're about to redraw or broadcast.
+          const needsRedraw = now - cache.lastDrawn >= 33 || needsResize;
+          if (needsRedraw || broadcastAudio) {
+            if (vType === "wave") {
+              analyser.getByteTimeDomainData(cache.dataArray);
+            } else {
+              analyser.getByteFrequencyData(cache.dataArray);
+            }
+
+            if (broadcastAudio) {
+              // Reuse the pre-allocated number array to avoid a new Array
+              // allocation on every broadcast tick (~25fps per visualizer).
+              for (let i = 0; i < cache.dataArray.length; i++) {
+                cache.broadcastArray[i] = cache.dataArray[i];
+              }
+              window.parent
+                ? (window.parent as any).electron?.sendAudioData?.(
+                    overlay.id,
+                    cache.broadcastArray,
+                  )
+                : window.electron?.sendAudioData?.(
+                    overlay.id,
+                    cache.broadcastArray,
+                  );
+            }
           }
 
-          // Broadcast frequency/time-domain data array to other windows (popped
-          // out preview). Throttled — see broadcastAudio gate above.
-          if (broadcastAudio) {
-            window.parent
-              ? (window.parent as any).electron?.sendAudioData?.(
-                  overlay.id,
-                  Array.from(dataArray),
-                )
-              : window.electron?.sendAudioData?.(
-                  overlay.id,
-                  Array.from(dataArray),
+          if (needsRedraw) {
+            cache.lastDrawn = now;
+            const oc = cache.ctx2d;
+            oc.clearRect(0, 0, W, H);
+            oc.fillStyle = overlay.backgroundColor || "rgba(0, 0, 0, 0.3)";
+            oc.fillRect(0, 0, W, H);
+
+            if (vType === "wave") {
+              oc.strokeStyle = "#06b6d4";
+              oc.lineWidth = 2.5;
+              oc.beginPath();
+              const sliceWidth = W / bufferLength;
+              let lx = 0;
+              for (let i = 0; i < bufferLength; i++) {
+                const ly = ((cache.dataArray[i] / 128.0) * H) / 2;
+                if (i === 0) oc.moveTo(lx, ly);
+                else oc.lineTo(lx, ly);
+                lx += sliceWidth;
+              }
+              oc.stroke();
+            } else if (vType === "circle") {
+              const cx = W / 2;
+              const cy = H / 2;
+              const baseR = Math.min(W, H) * 0.15;
+              const maxR = Math.min(W, H) * 0.45;
+              const step = Math.max(1, Math.floor(bufferLength / 80));
+              // Batch segments into 8 color bands — 8 stroke() calls instead
+              // of one per segment (was 80-128 GPU flushes per frame).
+              const NUM_BANDS = 8;
+              for (let band = 0; band < NUM_BANDS; band++) {
+                const hue = 180 + (band / NUM_BANDS) * 80;
+                oc.strokeStyle = `hsl(${hue}, 85%, 55%)`;
+                oc.lineWidth = 2.5;
+                oc.beginPath();
+                const bandStart = Math.round((band / NUM_BANDS) * bufferLength);
+                const bandEnd = Math.round(
+                  ((band + 1) / NUM_BANDS) * bufferLength,
                 );
+                for (let i = bandStart; i < bandEnd; i += step) {
+                  const angle = (i / bufferLength) * Math.PI * 2;
+                  const r = baseR + (cache.dataArray[i] / 255) * (maxR - baseR);
+                  oc.moveTo(
+                    cx + Math.cos(angle) * baseR,
+                    cy + Math.sin(angle) * baseR,
+                  );
+                  oc.lineTo(cx + Math.cos(angle) * r, cy + Math.sin(angle) * r);
+                }
+                oc.stroke();
+              }
+            } else if (vType === "blocks") {
+              const numBlocksY = 8;
+              const step = Math.max(1, Math.floor(bufferLength / 40));
+              const displayCount = Math.floor(bufferLength / step);
+              const barWidth = W / displayCount;
+              const blockHeight = H / numBlocksY - 1.5;
+              let posX = 0;
+              for (let i = 0; i < bufferLength; i += step) {
+                const blocksToDraw = Math.round(
+                  (cache.dataArray[i] / 255) * numBlocksY,
+                );
+                for (let j = 0; j < blocksToDraw; j++) {
+                  oc.fillStyle =
+                    j < numBlocksY * 0.4
+                      ? "#6366f1"
+                      : j < numBlocksY * 0.75
+                        ? "#3b82f6"
+                        : "#06b6d4";
+                  oc.fillRect(
+                    posX,
+                    H - (j + 1) * (blockHeight + 1.5),
+                    barWidth - 1.5,
+                    blockHeight,
+                  );
+                }
+                posX += barWidth;
+              }
+            } else if (vType === "dots") {
+              const dotCount = 24;
+              const dotSpacing = W / dotCount;
+              oc.fillStyle = "#06b6d4";
+              for (let i = 0; i < dotCount; i++) {
+                const amplitude =
+                  cache.dataArray[Math.floor((i / dotCount) * bufferLength)] / 255;
+                oc.beginPath();
+                oc.arc(
+                  i * dotSpacing + dotSpacing / 2,
+                  H - amplitude * H,
+                  Math.max(2.5, amplitude * 7),
+                  0,
+                  Math.PI * 2,
+                );
+                oc.fill();
+              }
+            } else {
+              // bars (default) — gradient cached per overlay; only rebuilt when
+              // canvas height changes (previously created every 33ms redraw).
+              const barWidth = (W / bufferLength) * 1.5;
+              if (!cache.barsGrad || cache.barsGradH !== H) {
+                cache.barsGrad = oc.createLinearGradient(0, H, 0, 0);
+                cache.barsGrad.addColorStop(0, "#6366f1");
+                cache.barsGrad.addColorStop(1, "#06b6d4");
+                cache.barsGradH = H;
+              }
+              oc.fillStyle = cache.barsGrad;
+              let posX = 0;
+              for (let i = 0; i < bufferLength; i++) {
+                const barHeight = (cache.dataArray[i] / 255) * H;
+                oc.fillRect(posX, H - barHeight, barWidth - 1, barHeight);
+                posX += barWidth + 1;
+                if (posX >= W) break;
+              }
+            }
           }
 
-          // Draw visualizer style
-          if (vType === "wave") {
-            ctx.strokeStyle = "#06b6d4";
-            ctx.lineWidth = 2.5;
-            ctx.beginPath();
-            const sliceWidth = wVal / bufferLength;
-            let lx = xVal;
-            for (let i = 0; i < bufferLength; i++) {
-              const v = dataArray[i] / 128.0;
-              const ly = yVal + (v * hVal) / 2;
-              if (i === 0) {
-                ctx.moveTo(lx, ly);
-              } else {
-                ctx.lineTo(lx, ly);
-              }
-              lx += sliceWidth;
-            }
-            ctx.stroke();
-          } else if (vType === "circle") {
-            const centerX = xVal + wVal / 2;
-            const centerY = yVal + hVal / 2;
-            const baseRadius = Math.min(wVal, hVal) * 0.15;
-            const maxRadius = Math.min(wVal, hVal) * 0.45;
-
-            const step = Math.max(1, Math.floor(bufferLength / 80));
-            for (let i = 0; i < bufferLength; i += step) {
-              const angle = (i / bufferLength) * Math.PI * 2;
-              const amplitude = dataArray[i] / 255;
-              const currentRadius =
-                baseRadius + amplitude * (maxRadius - baseRadius);
-
-              const startX = centerX + Math.cos(angle) * baseRadius;
-              const startY = centerY + Math.sin(angle) * baseRadius;
-              const endX = centerX + Math.cos(angle) * currentRadius;
-              const endY = centerY + Math.sin(angle) * currentRadius;
-
-              const hue = 180 + (i / bufferLength) * 80;
-              ctx.strokeStyle = `hsl(${hue}, 85%, 55%)`;
-              ctx.lineWidth = 2.5;
-              ctx.beginPath();
-              ctx.moveTo(startX, startY);
-              ctx.lineTo(endX, endY);
-              ctx.stroke();
-            }
-          } else if (vType === "blocks") {
-            const numBlocksY = 8;
-            const step = Math.max(1, Math.floor(bufferLength / 40));
-            const displayCount = Math.floor(bufferLength / step);
-            const barWidth = wVal / displayCount;
-            let posX = xVal;
-
-            for (let i = 0; i < bufferLength; i += step) {
-              const amplitude = dataArray[i] / 255;
-              const barHeight = amplitude * hVal;
-              const blocksToDraw = Math.round((barHeight / hVal) * numBlocksY);
-              const blockHeight = hVal / numBlocksY - 1.5;
-
-              for (let j = 0; j < blocksToDraw; j++) {
-                const blockY = yVal + hVal - (j + 1) * (blockHeight + 1.5);
-                ctx.fillStyle =
-                  j < numBlocksY * 0.4
-                    ? "#6366f1"
-                    : j < numBlocksY * 0.75
-                      ? "#3b82f6"
-                      : "#06b6d4";
-                ctx.fillRect(posX, blockY, barWidth - 1.5, blockHeight);
-              }
-              posX += barWidth;
-            }
-          } else if (vType === "dots") {
-            const dotCount = 24;
-            const dotSpacing = wVal / dotCount;
-            for (let i = 0; i < dotCount; i++) {
-              const idx = Math.floor((i / dotCount) * bufferLength);
-              const amplitude = dataArray[idx] / 255;
-              const dotX = xVal + i * dotSpacing + dotSpacing / 2;
-              const dotY = yVal + hVal - amplitude * hVal;
-              const dotRadius = Math.max(2.5, amplitude * 7);
-
-              ctx.fillStyle = "#06b6d4";
-              ctx.beginPath();
-              ctx.arc(dotX, dotY, dotRadius, 0, Math.PI * 2);
-              ctx.fill();
-            }
-          } else {
-            const barWidth = (wVal / bufferLength) * 1.5;
-            let barHeight;
-            let posX = xVal;
-
-            for (let i = 0; i < bufferLength; i++) {
-              barHeight = (dataArray[i] / 255) * hVal;
-
-              const gradient = ctx.createLinearGradient(
-                posX,
-                yVal + hVal,
-                posX,
-                yVal + hVal - barHeight,
-              );
-              gradient.addColorStop(0, "#6366f1");
-              gradient.addColorStop(1, "#06b6d4");
-
-              ctx.fillStyle = gradient;
-              ctx.fillRect(
-                posX,
-                yVal + hVal - barHeight,
-                barWidth - 1,
-                barHeight,
-              );
-
-              posX += barWidth + 1;
-              if (posX >= xVal + wVal) break;
-            }
-          }
+          // Composite cached visualizer onto the main compositor canvas.
+          ctx.drawImage(cache.canvas, xVal, yVal);
         }
       } else if (overlay.type === "nowPlaying") {
-        // Draw Now Playing Overlay
+        // Draw Now Playing Overlay — rendered to an OffscreenCanvas, blitted here
+        // with a single drawImage. The OffscreenCanvas is only re-drawn when
+        // content actually changes, so a static (no-audio) overlay produces zero
+        // per-frame allocations on the compositor canvas.
         const tracking = overlay.audioNodeId
           ? audioTimesRef.current[overlay.audioNodeId]
           : null;
@@ -857,155 +958,171 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
         const totalDur = tracking ? tracking.duration : 0;
         const pct = totalDur > 0 ? curTime / totalDur : 0;
 
-        const pad = hVal * 0.12;
-        const artSize = hVal - pad * 2;
-        const artX = xVal + pad;
-        const artY = yVal + pad;
+        const W = Math.round(wVal);
+        const H = Math.round(hVal);
+        // Timer updates at 1-second resolution; progress bar at 1% resolution.
+        const contentKey = `${W}|${H}|${overlay.title ?? ""}|${overlay.artist ?? ""}|${overlay.albumArt ?? ""}|${Math.floor(curTime)}|${Math.floor(pct * 100)}`;
 
-        // Card Background
-        drawRoundedRect(ctx, xVal, yVal, wVal, hVal, hVal * 0.15);
-        ctx.fillStyle = "rgba(12, 12, 12, 0.85)";
-        ctx.fill();
-        ctx.strokeStyle = "rgba(255, 255, 255, 0.08)";
-        ctx.lineWidth = 1;
-        ctx.stroke();
+        let npCache = nowPlayingCacheRef.current.get(overlay.id);
+        const needsNewCanvas = !npCache || npCache.canvas.width !== W || npCache.canvas.height !== H;
+        const needsRedraw = needsNewCanvas || !npCache || npCache.contentKey !== contentKey;
 
-        // Cover Art
-        ctx.save();
-        drawRoundedRect(ctx, artX, artY, artSize, artSize, artSize * 0.12);
-        ctx.clip();
+        if (needsRedraw) {
+          const npCanvas = needsNewCanvas ? new OffscreenCanvas(W, H) : npCache.canvas;
+          const oc = npCanvas.getContext("2d");
+          if (oc) {
+            const pad = H * 0.12;
+            const artSize = H - pad * 2;
+            const artX = pad;
+            const artY = pad;
+            const textX = artX + artSize + pad;
+            const titleY = pad + artSize * 0.12;
+            const artistY = pad + artSize * 0.48;
 
-        let img = overlay.albumArt
-          ? cardImageCacheRef.current[overlay.albumArt]
-          : null;
-        if (overlay.albumArt && !img) {
-          img = new Image();
-          img.src = overlay.albumArt;
-          cardImageCacheRef.current[overlay.albumArt] = img;
-        }
+            oc.clearRect(0, 0, W, H);
 
-        if (img && img.complete && img.naturalWidth > 0) {
-          ctx.drawImage(img, artX, artY, artSize, artSize);
-        } else {
-          // Fallback placeholder gradient
-          const grad = ctx.createLinearGradient(
-            artX,
-            artY,
-            artX + artSize,
-            artY + artSize,
-          );
-          grad.addColorStop(0, "#4f46e5");
-          grad.addColorStop(1, "#06b6d4");
-          ctx.fillStyle = grad;
-          ctx.fill();
-          // Draw music symbol
-          ctx.fillStyle = "#ffffff";
-          ctx.font = `${artSize * 0.4}px sans-serif`;
-          ctx.textAlign = "center";
-          ctx.textBaseline = "middle";
-          ctx.fillText("🎵", artX + artSize / 2, artY + artSize / 2);
-        }
-        ctx.restore();
+            // Card background
+            drawRoundedRect(oc, 0, 0, W, H, H * 0.15);
+            oc.fillStyle = "rgba(12, 12, 12, 0.85)";
+            oc.fill();
+            oc.strokeStyle = "rgba(255, 255, 255, 0.08)";
+            oc.lineWidth = 1;
+            oc.stroke();
 
-        // Text Information
-        const textX = artX + artSize + pad;
-        const titleY = yVal + pad + artSize * 0.12;
-        const artistY = yVal + pad + artSize * 0.48;
+            // Cover art with rounded clip
+            oc.save();
+            drawRoundedRect(oc, artX, artY, artSize, artSize, artSize * 0.12);
+            oc.clip();
 
-        ctx.fillStyle = "#ffffff";
-        ctx.textAlign = "left";
-        ctx.textBaseline = "top";
-        ctx.font = `bold ${artSize * 0.22}px Inter, sans-serif`;
+            let img = overlay.albumArt
+              ? cardImageCacheRef.current[overlay.albumArt]
+              : null;
+            if (overlay.albumArt && !img) {
+              img = new Image();
+              img.src = overlay.albumArt;
+              cardImageCacheRef.current[overlay.albumArt] = img;
+            }
 
-        // Truncate title if too long
-        const maxTextWidth = wVal - (pad * 3 + artSize) - pad;
-        let displayTitle = overlay.title || "No Track Connected";
-        if (ctx.measureText(displayTitle).width > maxTextWidth) {
-          while (
-            displayTitle.length > 0 &&
-            ctx.measureText(displayTitle + "...").width > maxTextWidth
-          ) {
-            displayTitle = displayTitle.slice(0, -1);
+            if (img && img.complete && img.naturalWidth > 0) {
+              oc.drawImage(img, artX, artY, artSize, artSize);
+            } else {
+              const grad = oc.createLinearGradient(artX, artY, artX + artSize, artY + artSize);
+              grad.addColorStop(0, "#4f46e5");
+              grad.addColorStop(1, "#06b6d4");
+              oc.fillStyle = grad;
+              oc.fill();
+              oc.fillStyle = "#ffffff";
+              oc.font = `${artSize * 0.4}px sans-serif`;
+              oc.textAlign = "center";
+              oc.textBaseline = "middle";
+              oc.fillText("🎵", artX + artSize / 2, artY + artSize / 2);
+            }
+            oc.restore();
+
+            // Title
+            const maxTextWidth = W - (pad * 3 + artSize) - pad;
+            oc.fillStyle = "#ffffff";
+            oc.textAlign = "left";
+            oc.textBaseline = "top";
+            oc.font = `bold ${artSize * 0.22}px Inter, sans-serif`;
+            let displayTitle = overlay.title || "No Track Connected";
+            if (oc.measureText(displayTitle).width > maxTextWidth) {
+              while (displayTitle.length > 0 && oc.measureText(displayTitle + "...").width > maxTextWidth) {
+                displayTitle = displayTitle.slice(0, -1);
+              }
+              displayTitle += "...";
+            }
+            oc.fillText(displayTitle, textX, titleY);
+
+            // Artist
+            oc.fillStyle = "#a1a1aa";
+            oc.font = `500 ${artSize * 0.16}px Inter, sans-serif`;
+            let displayArtist = overlay.artist || "Connect Audio Source";
+            if (oc.measureText(displayArtist).width > maxTextWidth) {
+              while (displayArtist.length > 0 && oc.measureText(displayArtist + "...").width > maxTextWidth) {
+                displayArtist = displayArtist.slice(0, -1);
+              }
+              displayArtist += "...";
+            }
+            oc.fillText(displayArtist, textX, artistY);
+
+            // Progress bar
+            const progressY = H - pad * 1.6;
+            const timerSpace = artSize * 0.75;
+            const barW = Math.max(10, W - (pad * 3 + artSize) - timerSpace - pad * 2);
+            oc.fillStyle = "rgba(255, 255, 255, 0.1)";
+            oc.beginPath();
+            drawRoundedRect(oc, textX, progressY, barW, H * 0.04, H * 0.02);
+            oc.fill();
+            if (pct > 0) {
+              oc.fillStyle = "#6366f1";
+              oc.beginPath();
+              drawRoundedRect(oc, textX, progressY, barW * pct, H * 0.04, H * 0.02);
+              oc.fill();
+            }
+
+            // Timer
+            oc.fillStyle = "#a1a1aa";
+            oc.font = `500 ${artSize * 0.14}px monospace, sans-serif`;
+            oc.textAlign = "right";
+            oc.textBaseline = "middle";
+            oc.fillText(
+              `${formatTime(curTime)} / ${formatTime(totalDur)}`,
+              W - pad,
+              progressY + H * 0.02,
+            );
+
+            npCache = { canvas: npCanvas, contentKey };
+            nowPlayingCacheRef.current.set(overlay.id, npCache);
           }
-          displayTitle += "...";
-        }
-        ctx.fillText(displayTitle, textX, titleY);
-
-        // Artist
-        ctx.fillStyle = "#a1a1aa";
-        ctx.font = `500 ${artSize * 0.16}px Inter, sans-serif`;
-        let displayArtist = overlay.artist || "Connect Audio Source";
-        if (ctx.measureText(displayArtist).width > maxTextWidth) {
-          while (
-            displayArtist.length > 0 &&
-            ctx.measureText(displayArtist + "...").width > maxTextWidth
-          ) {
-            displayArtist = displayArtist.slice(0, -1);
-          }
-          displayArtist += "...";
-        }
-        ctx.fillText(displayArtist, textX, artistY);
-
-        // Progress Line & Timer
-        const progressY = yVal + hVal - pad * 1.6;
-        const timerSpace = artSize * 0.75; // Approx width of MM:SS / MM:SS
-        const barW = Math.max(
-          10,
-          wVal - (pad * 3 + artSize) - timerSpace - pad * 2,
-        );
-
-        // Progress background
-        ctx.fillStyle = "rgba(255, 255, 255, 0.1)";
-        ctx.beginPath();
-        drawRoundedRect(ctx, textX, progressY, barW, hVal * 0.04, hVal * 0.02);
-        ctx.fill();
-
-        // Progress active
-        if (pct > 0) {
-          ctx.fillStyle = "#6366f1"; // Indigo accent
-          ctx.beginPath();
-          drawRoundedRect(
-            ctx,
-            textX,
-            progressY,
-            barW * pct,
-            hVal * 0.04,
-            hVal * 0.02,
-          );
-          ctx.fill();
         }
 
-        // Timestamps
-        ctx.fillStyle = "#a1a1aa";
-        ctx.font = `500 ${artSize * 0.14}px monospace, sans-serif`;
-        ctx.textAlign = "right";
-        ctx.textBaseline = "middle";
-        const timeStr = `${formatTime(curTime)} / ${formatTime(totalDur)}`;
-        ctx.fillText(timeStr, xVal + wVal - pad, progressY + hVal * 0.02);
+        if (npCache) {
+          ctx.drawImage(npCache.canvas, xVal, yVal);
+        }
       }
 
       ctx.restore();
     });
 
-    // 3. Send composited frame to Edit Overlay window at ~30fps via IPC relay.
-    // BroadcastChannel does not cross renderer-process boundaries in Electron.
-    // canvas.toBlob encodes as JPEG off the main thread; the ArrayBuffer travels
-    // editor → main process → preview window via ipcRenderer.send / webContents.send.
+    // 3. Send composited frame to Edit Overlay window at ~10fps via IPC relay.
+    // We scale down to 640×360 on an offscreen canvas before JPEG encoding —
+    // encoding the full compositor canvas (1600+ px wide) at 30fps costs too many
+    // main-thread ms and degrades the compositor itself.
     if (editOverlayOpenRef.current && !previewCapturePendingRef.current) {
-      if (now - lastPreviewBroadcastRef.current >= 33) {
+      if (now - lastPreviewBroadcastRef.current >= 100) {
         lastPreviewBroadcastRef.current = now;
         previewCapturePendingRef.current = true;
-        const frameWidth = canvas.width;
-        const frameHeight = canvas.height;
-        canvas.toBlob((blob) => {
-          previewCapturePendingRef.current = false;
-          if (!blob || !editOverlayOpenRef.current) return;
-          blob.arrayBuffer().then((buf) => {
-            if (editOverlayOpenRef.current) {
-              window.electron.sendPreviewFrame(buf, frameWidth, frameHeight);
-            }
-          }).catch(() => { /* blob → arrayBuffer failed, skip frame */ });
-        }, "image/jpeg", 0.5);
+
+        // Lazily create the scale canvas once
+        if (!previewScaleCanvasRef.current) {
+          previewScaleCanvasRef.current = document.createElement("canvas");
+        }
+        const sc = previewScaleCanvasRef.current;
+        const PW = 640,
+          PH = 360;
+        if (sc.width !== PW) sc.width = PW;
+        if (sc.height !== PH) sc.height = PH;
+        sc.getContext("2d")?.drawImage(canvas, 0, 0, PW, PH);
+
+        sc.toBlob(
+          (blob) => {
+            previewCapturePendingRef.current = false;
+            if (!blob || !editOverlayOpenRef.current) return;
+            blob
+              .arrayBuffer()
+              .then((buf) => {
+                if (editOverlayOpenRef.current) {
+                  window.electron.sendPreviewFrame(buf, PW, PH);
+                }
+              })
+              .catch(() => {
+                /* blob → arrayBuffer failed, skip frame */
+              });
+          },
+          "image/jpeg",
+          0.7,
+        );
       }
     }
 
@@ -1013,14 +1130,17 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
     // The whole pass is already gated to the target fps above, so every
     // composited frame maps 1:1 to an encoded frame.
     if (isStreamingRef.current && h264EncoderRef.current) {
+      const forceKf = forceKeyframeRef.current;
+      forceKeyframeRef.current = false;
       h264EncoderRef.current.encodeCanvas(
         canvas,
         streamFrameIndexRef.current++,
+        forceKf,
       );
     }
 
     cardRequestRef.current = requestAnimationFrame(renderCardCompositor);
-  }, [overlays, activePreset, fitMode]);
+  }, [activePreset]);
 
   // Handle compositor loop activation — runs when preview, streaming, or edit overlay is active
   useEffect(() => {
@@ -1037,7 +1157,13 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
         cardRequestRef.current = null;
       }
     };
-  }, [isPreviewActive, isStreaming, editOverlayOpen, stream, renderCardCompositor]);
+  }, [
+    isPreviewActive,
+    isStreaming,
+    editOverlayOpen,
+    stream,
+    renderCardCompositor,
+  ]);
 
   const handleEditOverlay = useCallback(async () => {
     if (!captureSourceId) return;
@@ -1077,7 +1203,9 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
       setEditOverlayDialogProgress(100);
       setTimeout(() => setEditOverlayDialogStatus("idle"), 1500);
     });
-    return () => { window.electron.removeOnEditOverlayConnected(); };
+    return () => {
+      window.electron.removeOnEditOverlayConnected();
+    };
   }, []);
 
   const handleTogglePreview = useCallback(() => {
@@ -1193,14 +1321,9 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    localStorage.setItem("rtmpUrl", rtmpUrl);
-
     // If no capture stream is active (preview not open), start one silently
     let activeStream = stream;
     if (!activeStream) {
-      console.log(
-        "[TargetOutputNode] No active stream — auto-starting capture for streaming.",
-      );
       activeStream = await startCapture(
         captureSourceId,
         captureAudio,
@@ -1217,6 +1340,17 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
         return;
       }
       streamOwnsCaptureRef.current = true;
+      // Set srcObject directly so the video starts before the canvas-ready poll.
+      // The useEffect([stream]) guard (srcObject !== stream) prevents a second
+      // assignment when React later commits the setStream state update — that
+      // double-assignment would tear down the WGC texture handle.
+      if (videoRef.current && videoRef.current.srcObject !== activeStream) {
+        videoRef.current.srcObject = activeStream;
+        videoRef.current.play().catch(() => {});
+      }
+      // Still yield so React can commit setStream (needed for stream-dependent
+      // code elsewhere in the component, e.g. the compositor activation effect).
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
     }
 
     // Kick the compositor loop so it starts compositing and sizes the canvas to
@@ -1227,43 +1361,58 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
       cardRequestRef.current = requestAnimationFrame(renderCardCompositor);
     }
 
-    // CRITICAL: wait until the compositor has actually sized the canvas to the
-    // capture resolution before creating the encoder. An unsized <canvas> reports
-    // its default 300x150 — configuring the encoder then would lock the stream to
-    // 300x150 and force a per-frame GPU downscale of every real frame.
-    const canvasReady = await new Promise<boolean>((resolve) => {
-      const startedAt = performance.now();
-      const check = () => {
-        const video = videoRef.current;
-        const sized =
-          !!video &&
-          video.videoWidth > 0 &&
-          canvas.width > 16 &&
-          !(canvas.width === 300 && canvas.height === 150);
-        if (sized) return resolve(true);
-        if (performance.now() - startedAt > 3000) return resolve(false);
-        requestAnimationFrame(check);
-      };
-      check();
-    });
-    if (!canvasReady) {
-      console.error(
-        "[TargetOutputNode] Canvas was not sized in time — aborting stream start.",
-      );
-      return;
+    // Determine encoder dimensions. For fixed presets (1080p, 720p, etc.) we
+    // know the target immediately — no need to wait for the video element.
+    // For "original" we need the actual video dimensions: poll for up to 5s.
+    // Either way we explicitly size the canvas so the compositor loop is never
+    // given a mismatched frame (avoids the old circular dependency where the
+    // compositor refused to size the canvas until readyState>=2, while the
+    // canvas-ready poll was waiting for the compositor to size it).
+    let encW: number;
+    let encH: number;
+    if (activePreset.width > 0 && activePreset.height > 0) {
+      encW = activePreset.width;
+      encH = activePreset.height;
+    } else {
+      const dims = await new Promise<{ w: number; h: number }>((resolve) => {
+        const deadline = performance.now() + 5000;
+        const poll = () => {
+          const v = videoRef.current;
+          if (v && v.videoWidth > 0 && v.videoHeight > 0) {
+            resolve({ w: v.videoWidth, h: v.videoHeight });
+          } else if (performance.now() >= deadline) {
+            console.warn(
+              "[TargetOutputNode] Video dimensions not available — falling back to 1280x720",
+            );
+            resolve({ w: 1280, h: 720 });
+          } else {
+            requestAnimationFrame(poll);
+          }
+        };
+        poll();
+      });
+      encW = dims.w;
+      encH = dims.h;
     }
+    // H.264 (yuv420p) requires even dimensions.
+    const encWidth = encW - (encW % 2);
+    const encHeight = encH - (encH % 2);
+    // Force the canvas to encoder dims now so every frame the compositor
+    // submits is the right size from the very first encoded frame.
+    canvas.width = encWidth;
+    canvas.height = encHeight;
 
-    const streamFps = 60;
+    const streamFps = settings.streamFps ?? 30;
     const frameDurationMs = 1000 / streamFps;
     const bitrateKbps = settings.streamBitrateKbps || 6000;
 
     // ── Preferred: WebCodecs hardware H.264 → FFmpeg copy-mux ─────────────────
     console.log(
-      `[TargetOutputNode] Configuring encoder at ${canvas.width}x${canvas.height}`,
+      `[TargetOutputNode] Configuring encoder at ${encWidth}x${encHeight}`,
     );
     const encoderHandle = await createH264CanvasEncoder({
-      width: canvas.width,
-      height: canvas.height,
+      width: encWidth,
+      height: encHeight,
       fps: streamFps,
       bitrateKbps,
       onChunk: (buffer) => window.electron.pushStreamData(buffer),
@@ -1279,6 +1428,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
           mode: "h264",
           fps: streamFps,
           bitrateKbps,
+          streamDelayMs: settings.streamDelayMs ?? 0,
         });
         if (!initRes.success) {
           console.error(
@@ -1299,7 +1449,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
       h264EncoderRef.current = encoderHandle;
       streamFpsRef.current = streamFps;
       streamFrameIndexRef.current = 0;
-      streamDimsRef.current = { width: canvas.width, height: canvas.height };
+      streamDimsRef.current = { width: encWidth, height: encHeight };
       isStreamingRef.current = true;
 
       setIsStreaming(true);
@@ -1333,6 +1483,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
         encoder: settings.streamEncoder || "libx264",
         bitrateKbps,
         fps: streamFps,
+        streamDelayMs: settings.streamDelayMs ?? 0,
         ...(presetW && presetH ? { width: presetW, height: presetH } : {}),
       });
       if (!initRes.success) {
@@ -1389,6 +1540,8 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
     renderCardCompositor,
     settings.streamEncoder,
     settings.streamBitrateKbps,
+    settings.streamFps,
+    settings.streamDelayMs,
   ]);
 
   const stopStreaming = useCallback(async () => {
@@ -1461,7 +1614,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
         <div className="flex flex-col gap-1.5 nodrag nopan nowheel">
           <div className="flex items-center justify-between">
             <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">
-              Live Output Preview
+              Overlay
             </label>
             {captureSourceId && (
               <div className="flex items-center gap-1.5">
@@ -1476,17 +1629,21 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
                 >
                   {isPreviewActive ? (
                     <>
-                      <SquareIcon className="w-2.5 h-2.5 fill-current" /> Stop
+                      <ScanEyeIcon className="w-2.5 h-2.5 fill-current border-accent" />{" "}
+                      Stop
                     </>
                   ) : (
                     <>
-                      <PlayIcon className="w-2.5 h-2.5 fill-current" /> Preview
+                      <ScanEyeIcon className="w-2.5 h-2.5 fill-current" />{" "}
+                      Preview
                     </>
                   )}
                 </button>
 
                 <button
-                  onClick={() => { void handleEditOverlay(); }}
+                  onClick={() => {
+                    void handleEditOverlay();
+                  }}
                   className={cn(
                     "flex items-center gap-1 text-[10px] px-2 py-0.5 rounded transition-all font-semibold uppercase tracking-wider cursor-pointer",
                     editOverlayOpen
@@ -1495,7 +1652,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
                   )}
                   title="Open overlay editor in a separate window"
                 >
-                  <LayersIcon className="w-3 h-3" /> Edit Overlay
+                  <SquareDashedMousePointer className="w-3 h-3" /> Edit
                 </button>
               </div>
             )}
@@ -1637,12 +1794,12 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
               >
                 {isStreaming ? (
                   <>
-                    <SquareIcon className="w-2.5 h-2.5 fill-current" /> Stop
-                    Live
+                    <SquareIcon className="w-2.5 h-2.5 fill-current" /> End
+                    Stream
                   </>
                 ) : (
                   <>
-                    <RadioIcon className="w-2.5 h-2.5" /> Go Live
+                    <RadioIcon className="w-2.5 h-2.5" /> Start Stream
                   </>
                 )}
               </button>
@@ -1653,13 +1810,19 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
             <div className="flex flex-col gap-2 p-2.5 bg-zinc-950 border border-zinc-800 rounded-lg mt-1 text-[11px]">
               {/* RTMP URL */}
               <div className="flex flex-col gap-0.5">
-                <span className="font-semibold text-zinc-200">RTMP Target URL</span>
-                <span className="text-[9px] text-zinc-500">Server URL + stream key combined, or enter separately below</span>
+                <span className="font-semibold text-zinc-200">
+                  RTMP Target URL
+                </span>
+                <span className="text-[9px] text-zinc-500">
+                  Server URL + stream key combined, or enter separately below
+                </span>
               </div>
               <input
                 type="text"
-                value={rtmpUrl}
-                onChange={(e) => setRtmpUrl(cleanStreamUrl(e.target.value))}
+                value={settings.streamUrl || ""}
+                onChange={(e) =>
+                  updateSettings({ streamUrl: cleanStreamUrl(e.target.value) })
+                }
                 className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200 focus:border-indigo-500 focus:outline-none"
                 placeholder="rtmp://..."
               />
@@ -1673,26 +1836,34 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
 
               {/* Stream Key (optional — appended to base URL) */}
               <div className="flex flex-col gap-1 mt-1">
-                <span className="text-[9px] font-semibold text-zinc-400 uppercase tracking-wider">Stream Key</span>
+                <span className="text-[9px] font-semibold text-zinc-400 uppercase tracking-wider">
+                  Stream Key
+                </span>
                 <input
                   type="password"
                   value={settings.streamToken || ""}
-                  onChange={(e) => updateSettings({ streamToken: e.target.value })}
+                  onChange={(e) =>
+                    updateSettings({ streamToken: e.target.value })
+                  }
                   className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200 focus:border-indigo-500 focus:outline-none font-mono"
                   placeholder="Enter stream key (optional)..."
                 />
               </div>
 
-              {/* Bitrate + Encoder side-by-side */}
+              {/* Bitrate + FPS + Encoder */}
               <div className="flex gap-2 mt-1">
                 <div className="flex flex-col gap-1 flex-1">
-                  <span className="text-[9px] font-semibold text-zinc-400 uppercase tracking-wider">Bitrate (Kbps)</span>
+                  <span className="text-[9px] font-semibold text-zinc-400 uppercase tracking-wider">
+                    Bitrate (Kbps)
+                  </span>
                   <input
                     type="number"
                     value={settings.streamBitrateKbps ?? 6000}
                     onChange={(e) => {
                       const val = parseInt(e.target.value, 10);
-                      updateSettings({ streamBitrateKbps: isNaN(val) ? undefined : val });
+                      updateSettings({
+                        streamBitrateKbps: isNaN(val) ? undefined : val,
+                      });
                     }}
                     className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200 focus:border-indigo-500 focus:outline-none font-mono"
                     placeholder="6000"
@@ -1701,11 +1872,32 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
                     step={500}
                   />
                 </div>
+                <div className="flex flex-col gap-1 w-16 shrink-0">
+                  <span className="text-[9px] font-semibold text-zinc-400 uppercase tracking-wider">
+                    FPS
+                  </span>
+                  <select
+                    value={settings.streamFps ?? 30}
+                    onChange={(e) =>
+                      updateSettings({
+                        streamFps: Number(e.target.value) as 30 | 60,
+                      })
+                    }
+                    className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200 focus:border-indigo-500 focus:outline-none cursor-pointer"
+                  >
+                    <option value={30}>30</option>
+                    <option value={60}>60</option>
+                  </select>
+                </div>
                 <div className="flex flex-col gap-1 flex-1">
-                  <span className="text-[9px] font-semibold text-zinc-400 uppercase tracking-wider">Encoder</span>
+                  <span className="text-[9px] font-semibold text-zinc-400 uppercase tracking-wider">
+                    Encoder
+                  </span>
                   <select
                     value={settings.streamEncoder || "copy"}
-                    onChange={(e) => updateSettings({ streamEncoder: e.target.value as any })}
+                    onChange={(e) =>
+                      updateSettings({ streamEncoder: e.target.value as "copy" | "libx264" | "h264_nvenc" | "h264_amf" | "h264_qsv" })
+                    }
                     className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200 focus:border-indigo-500 focus:outline-none cursor-pointer"
                   >
                     <option value="copy">Auto (WebCodecs)</option>
@@ -1713,6 +1905,25 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
                     <option value="h264_nvenc">NVIDIA (NVENC)</option>
                     <option value="h264_amf">AMD (AMF)</option>
                     <option value="h264_qsv">Intel (QSV)</option>
+                  </select>
+                </div>
+                <div className="flex flex-col gap-1 w-16 shrink-0">
+                  <span className="text-[9px] font-semibold text-zinc-400 uppercase tracking-wider">
+                    Delay
+                  </span>
+                  <select
+                    value={settings.streamDelayMs ?? 0}
+                    onChange={(e) =>
+                      updateSettings({
+                        streamDelayMs: Number(e.target.value),
+                      })
+                    }
+                    className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200 focus:border-indigo-500 focus:outline-none cursor-pointer"
+                  >
+                    <option value={0}>None</option>
+                    <option value={5000}>5s</option>
+                    <option value={10000}>10s</option>
+                    <option value={15000}>15s</option>
                   </select>
                 </div>
               </div>
@@ -1822,7 +2033,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
         position={Position.Left}
         isConnectable={node.isConnectable}
         isValidConnection={isValidSourceConnection}
-        style={{ top: "19.5%" }}
+        style={{ top: "78px" }}
         className="hover:!border-red-400 hover:!shadow-[0_0_10px_rgba(248,113,113,0.5)] hover:!scale-125"
       />
       <Handle
@@ -1831,14 +2042,14 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
         position={Position.Left}
         isConnectable={node.isConnectable}
         isValidConnection={isValidOverlayConnection}
-        style={{ top: "27%" }}
+        style={{ top: "107px" }}
         className="hover:!border-red-400 hover:!shadow-[0_0_10px_rgba(248,113,113,0.5)] hover:!scale-125"
       />
 
       <StatusDialog
         status={editOverlayDialogStatus}
         progress={editOverlayDialogProgress}
-        title="Opening Edit Overlay"
+        title="Opening Overlay Editor"
       />
     </>
   );

@@ -1,30 +1,38 @@
 import { BaseNodeCard } from "./base-node";
-import { cn } from "@/lib/utils";
 import { Handle, NodeProps, Position } from "@xyflow/react";
 import { Image as ImageIcon } from "lucide-react";
 import { FlowNodeType } from "@/types/flow-node";
 import { useSetAtom } from "jotai";
 import { updateNodeDataAtom } from "@/store/flowStore";
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+
+const DEFAULTS = {
+  x: 10,
+  y: 10,
+  width: 30,
+  height: 20,
+  opacity: 1,
+  imagePath: "",
+};
+
+function fromNodeData(data: FlowNodeType["data"]) {
+  return {
+    x: data.x !== undefined ? Number(data.x) : DEFAULTS.x,
+    y: data.y !== undefined ? Number(data.y) : DEFAULTS.y,
+    width: data.width !== undefined ? Number(data.width) : DEFAULTS.width,
+    height: data.height !== undefined ? Number(data.height) : DEFAULTS.height,
+    opacity: data.opacity !== undefined ? Number(data.opacity) : DEFAULTS.opacity,
+    imagePath: (data.imagePath as string) ?? DEFAULTS.imagePath,
+  };
+}
 
 export function ImageOverlayNode(NodeRef: NodeProps<FlowNodeType>) {
   const node = NodeRef;
   const updateNodeData = useSetAtom(updateNodeDataAtom);
 
-  // Initialize data defaults if they don't exist
   useEffect(() => {
     if (node.data.x === undefined) {
-      updateNodeData({
-        id: node.id,
-        patch: {
-          x: 10,
-          y: 10,
-          width: 30,
-          height: 20,
-          opacity: 1,
-          imagePath: "",
-        },
-      });
+      updateNodeData({ id: node.id, patch: DEFAULTS });
     }
   }, [node.id, node.data.x, updateNodeData]);
 
@@ -34,6 +42,25 @@ export function ImageOverlayNode(NodeRef: NodeProps<FlowNodeType>) {
     },
     [node.id, updateNodeData]
   );
+
+  const [draft, setDraft] = useState(() => fromNodeData(node.data));
+  const committed = useMemo(() => fromNodeData(node.data), [node.data]);
+
+  useEffect(() => {
+    setDraft(fromNodeData(node.data));
+  }, [node.data]);
+
+  const isDirty = (Object.keys(draft) as Array<keyof typeof draft>).some(
+    (k) => draft[k] !== committed[k]
+  );
+
+  const set = useCallback(<K extends keyof typeof draft>(key: K, value: typeof draft[K]) => {
+    setDraft((prev) => ({ ...prev, [key]: value }));
+  }, []);
+
+  const handleApply = useCallback(() => {
+    handleUpdate(draft);
+  }, [draft, handleUpdate]);
 
   const handleSelectImage = useCallback(async () => {
     try {
@@ -47,19 +74,12 @@ export function ImageOverlayNode(NodeRef: NodeProps<FlowNodeType>) {
         ],
       });
       if (filePaths && filePaths.length > 0) {
-        handleUpdate({ imagePath: filePaths[0] });
+        set("imagePath", filePaths[0]);
       }
     } catch (err) {
       console.error("[ImageOverlayNode] Failed to select image:", err);
     }
-  }, [handleUpdate]);
-
-  const xVal = node.data.x !== undefined ? Number(node.data.x) : 10;
-  const yVal = node.data.y !== undefined ? Number(node.data.y) : 10;
-  const wVal = node.data.width !== undefined ? Number(node.data.width) : 30;
-  const hVal = node.data.height !== undefined ? Number(node.data.height) : 20;
-  const opacityVal = node.data.opacity !== undefined ? Number(node.data.opacity) : 1;
-  const imagePath = (node.data.imagePath as string) || "";
+  }, [set]);
 
   return (
     <>
@@ -74,10 +94,7 @@ export function ImageOverlayNode(NodeRef: NodeProps<FlowNodeType>) {
         subtitle="Layer image watermark"
         anchorName={`--imageOverlayNode_${node.id}`}
       >
-
-        {/* Image Settings Form */}
         <div className="flex flex-col gap-3 nodrag nopan nowheel">
-          {/* Coordinates Grid */}
           <div className="grid grid-cols-2 gap-2">
             <div className="flex flex-col gap-1">
               <label className="text-[9px] font-semibold text-zinc-500 uppercase tracking-wider">Position X (%)</label>
@@ -85,8 +102,8 @@ export function ImageOverlayNode(NodeRef: NodeProps<FlowNodeType>) {
                 type="number"
                 min="0"
                 max="100"
-                value={xVal}
-                onChange={(e) => handleUpdate({ x: Number(e.target.value) || 0 })}
+                value={draft.x}
+                onChange={(e) => set("x", Number(e.target.value) || 0)}
                 className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200 focus:border-indigo-500 focus:outline-none"
               />
             </div>
@@ -96,8 +113,8 @@ export function ImageOverlayNode(NodeRef: NodeProps<FlowNodeType>) {
                 type="number"
                 min="0"
                 max="100"
-                value={yVal}
-                onChange={(e) => handleUpdate({ y: Number(e.target.value) || 0 })}
+                value={draft.y}
+                onChange={(e) => set("y", Number(e.target.value) || 0)}
                 className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200 focus:border-indigo-500 focus:outline-none"
               />
             </div>
@@ -107,8 +124,8 @@ export function ImageOverlayNode(NodeRef: NodeProps<FlowNodeType>) {
                 type="number"
                 min="0"
                 max="100"
-                value={wVal}
-                onChange={(e) => handleUpdate({ width: Number(e.target.value) || 0 })}
+                value={draft.width}
+                onChange={(e) => set("width", Number(e.target.value) || 0)}
                 className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200 focus:border-indigo-500 focus:outline-none"
               />
             </div>
@@ -118,41 +135,39 @@ export function ImageOverlayNode(NodeRef: NodeProps<FlowNodeType>) {
                 type="number"
                 min="0"
                 max="100"
-                value={hVal}
-                onChange={(e) => handleUpdate({ height: Number(e.target.value) || 0 })}
+                value={draft.height}
+                onChange={(e) => set("height", Number(e.target.value) || 0)}
                 className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200 focus:border-indigo-500 focus:outline-none"
               />
             </div>
           </div>
 
-          {/* Opacity Slider */}
           <div className="flex flex-col gap-1">
             <div className="flex justify-between items-center">
               <label className="text-[9px] font-semibold text-zinc-400 uppercase tracking-wider">Opacity</label>
-              <span className="text-[10px] text-zinc-400">{Math.round(opacityVal * 100)}%</span>
+              <span className="text-[10px] text-zinc-400">{Math.round(draft.opacity * 100)}%</span>
             </div>
             <input
               type="range"
               min="0"
               max="1"
               step="0.05"
-              value={opacityVal}
-              onChange={(e) => handleUpdate({ opacity: Number(e.target.value) })}
+              value={draft.opacity}
+              onChange={(e) => set("opacity", Number(e.target.value))}
               className="w-full h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-indigo-500 focus:outline-none"
             />
           </div>
 
-          {/* Image File Selector */}
           <div className="flex flex-col gap-2 border-t border-zinc-800/40 pt-2.5">
             <label className="text-[9px] font-semibold text-zinc-400 uppercase tracking-wider">Image File</label>
             <div className="flex gap-1.5">
               <input
                 type="text"
                 readOnly
-                value={imagePath}
+                value={draft.imagePath}
                 className="flex-1 bg-zinc-900 border border-zinc-800 rounded px-2.5 py-1.5 text-xs text-zinc-400 select-all overflow-hidden text-ellipsis whitespace-nowrap text-left"
                 placeholder="Select image file..."
-                title={imagePath}
+                title={draft.imagePath}
               />
               <button
                 onClick={handleSelectImage}
@@ -162,6 +177,15 @@ export function ImageOverlayNode(NodeRef: NodeProps<FlowNodeType>) {
               </button>
             </div>
           </div>
+
+          {isDirty && (
+            <button
+              onClick={handleApply}
+              className="w-full py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded cursor-pointer transition-colors mt-1"
+            >
+              Apply
+            </button>
+          )}
         </div>
       </BaseNodeCard>
       <Handle
@@ -169,6 +193,7 @@ export function ImageOverlayNode(NodeRef: NodeProps<FlowNodeType>) {
         type="source"
         position={Position.Right}
         isConnectable={node.isConnectable}
+        style={{ top: "34px" }}
         className="hover:!border-indigo-400 hover:!shadow-[0_0_10px_rgba(129,140,248,0.5)] hover:!scale-125"
       />
     </>

@@ -13,4 +13,3 @@ Extensions
 .gemini
 ./src/.tanstack
 .agents
-.agents/rules/code-style-guide.md

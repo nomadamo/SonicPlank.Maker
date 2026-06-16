@@ -21,6 +21,7 @@ export interface H264EncoderHandle {
   encodeCanvas: (
     canvas: HTMLCanvasElement | OffscreenCanvas,
     frameIndex: number,
+    forceKeyframe?: boolean,
   ) => void;
   /** Flush and release the encoder. */
   close: () => Promise<void>;
@@ -66,11 +67,20 @@ export async function pickSupportedCodec(
       const support = await VideoEncoder.isConfigSupported(
         buildConfig(codec, cfg),
       );
-      if (support.supported) return support.config?.codec || codec;
+      if (support.supported) {
+        const ext = support as VideoEncoderSupport & { powerEfficient?: boolean };
+        const hw = support.config?.hardwareAcceleration ?? "unknown";
+        const pe = String(ext.powerEfficient ?? "unknown");
+        console.log(
+          `[webcodecs-streamer] codec selected: ${support.config?.codec ?? codec} | hardwareAcceleration=${hw} | powerEfficient=${pe}`,
+        );
+        return support.config?.codec || codec;
+      }
     } catch {
       // try next candidate
     }
   }
+  console.warn("[webcodecs-streamer] no supported H.264 codec — VideoEncoder unavailable");
   return null;
 }
 
@@ -102,7 +112,12 @@ export async function createH264CanvasEncoder(
   // requires a fixed keyframe interval; letting the encoder pick scene-cut
   // keyframes breaks their segmenting.
   const keyFrameInterval = Math.max(1, Math.round(cfg.fps * 2));
-  const frameDurationUs = 1_000_000 / cfg.fps;
+
+  // Wall-clock origin for PTS. Using frame-count × frameDuration would cause
+  // timestamps to drift ahead of real time whenever the compositor runs below
+  // the nominal fps (e.g. heavy overlay drawing) — FFmpeg would buffer those
+  // "future" timestamps and produce a steadily growing stream delay.
+  const startTime = performance.now();
 
   // Lightweight diagnostics: count dropped (backpressured) frames and log the
   // encoder queue depth periodically so a degrading pipeline is visible.
@@ -111,7 +126,7 @@ export async function createH264CanvasEncoder(
 
   return {
     codec,
-    encodeCanvas(canvas, frameIndex) {
+    encodeCanvas(canvas, frameIndex, forceKeyframe) {
       if (encoder.state !== "configured") return;
       // Backpressure: if the encoder is falling behind, drop this frame rather
       // than queue unbounded VideoFrames (which would leak GPU memory).
@@ -120,11 +135,13 @@ export async function createH264CanvasEncoder(
         return;
       }
 
-      const timestamp = Math.round(frameIndex * frameDurationUs);
+      // Timestamps in microseconds, anchored to wall-clock time so they stay
+      // in sync with reality even when the compositor runs below nominal fps.
+      const timestamp = Math.round((performance.now() - startTime) * 1000);
       const frame = new VideoFrame(canvas, { timestamp });
       try {
         encoder.encode(frame, {
-          keyFrame: frameIndex % keyFrameInterval === 0,
+          keyFrame: !!forceKeyframe || frameIndex % keyFrameInterval === 0,
         });
         submitted++;
       } finally {

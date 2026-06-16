@@ -42,7 +42,15 @@ declare global {
       getDisplays: () => Promise<DisplayInfo[]>;
       setOverlays: (overlays: any[]) => Promise<void>;
       getOverlays: () => Promise<any[]>;
-      startStream: (rtmpUrl: string, options?: any) => Promise<{ success: boolean }>;
+      startStream: (rtmpUrl: string, options?: {
+        mode?: string;
+        encoder?: string;
+        bitrateKbps?: number;
+        fps?: number;
+        width?: number;
+        height?: number;
+        streamDelayMs?: number;
+      }) => Promise<{ success: boolean }>;
       stopStream: () => Promise<{ success: boolean }>;
       pushStreamData: (arrayBuffer: ArrayBuffer) => void;
       onOverlaysUpdated: (callback: (overlays: any[]) => void) => void;
