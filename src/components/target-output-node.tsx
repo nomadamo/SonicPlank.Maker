@@ -1,4 +1,4 @@
-import { BaseNodeCard } from "./base-node";
+import { BaseNodeCard, showToast } from "./base-node";
 import { StatusDialog } from "@/components/ui/status-dialog";
 import { cn } from "@/lib/utils";
 import { Handle, NodeProps, Position, useEdges, useNodes } from "@xyflow/react";
@@ -122,15 +122,18 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
   // per-frame cost of 80+ ctx.stroke() calls (circle) and 128 createLinearGradient()
   // calls (bars) that were starving the main thread during audio playback.
   const visualizerCachesRef = useRef<
-    Map<string, {
-      canvas: OffscreenCanvas;
-      ctx2d: OffscreenCanvasRenderingContext2D;
-      lastDrawn: number;
-      dataArray: Uint8Array<ArrayBuffer>;
-      broadcastArray: number[];
-      barsGrad: CanvasGradient | null;
-      barsGradH: number;
-    }>
+    Map<
+      string,
+      {
+        canvas: OffscreenCanvas;
+        ctx2d: OffscreenCanvasRenderingContext2D;
+        lastDrawn: number;
+        dataArray: Uint8Array<ArrayBuffer>;
+        broadcastArray: number[];
+        barsGrad: CanvasGradient | null;
+        barsGradH: number;
+      }
+    >
   >(new Map());
   // Per-overlay font string cache for text overlays. The font string is rebuilt
   // only when font properties or canvas height change, avoiding a new string
@@ -761,7 +764,9 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
         }
       } else if (overlay.type === "visualizer") {
         // Find if this visualizer node has a connected audio node
-        const edgeToVisualizer = edgesRef.current.find((e) => e.target === overlay.id);
+        const edgeToVisualizer = edgesRef.current.find(
+          (e) => e.target === overlay.id,
+        );
         let analyser: AnalyserNode | null = null;
         if (edgeToVisualizer) {
           analyser = getFlowAudioAnalyser(edgeToVisualizer.source);
@@ -911,7 +916,8 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
               oc.fillStyle = "#06b6d4";
               for (let i = 0; i < dotCount; i++) {
                 const amplitude =
-                  cache.dataArray[Math.floor((i / dotCount) * bufferLength)] / 255;
+                  cache.dataArray[Math.floor((i / dotCount) * bufferLength)] /
+                  255;
                 oc.beginPath();
                 oc.arc(
                   i * dotSpacing + dotSpacing / 2,
@@ -964,11 +970,15 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
         const contentKey = `${W}|${H}|${overlay.title ?? ""}|${overlay.artist ?? ""}|${overlay.albumArt ?? ""}|${Math.floor(curTime)}|${Math.floor(pct * 100)}`;
 
         let npCache = nowPlayingCacheRef.current.get(overlay.id);
-        const needsNewCanvas = !npCache || npCache.canvas.width !== W || npCache.canvas.height !== H;
-        const needsRedraw = needsNewCanvas || !npCache || npCache.contentKey !== contentKey;
+        const needsNewCanvas =
+          !npCache || npCache.canvas.width !== W || npCache.canvas.height !== H;
+        const needsRedraw =
+          needsNewCanvas || !npCache || npCache.contentKey !== contentKey;
 
         if (needsRedraw) {
-          const npCanvas = needsNewCanvas ? new OffscreenCanvas(W, H) : npCache.canvas;
+          const npCanvas = needsNewCanvas
+            ? new OffscreenCanvas(W, H)
+            : npCache.canvas;
           const oc = npCanvas.getContext("2d");
           if (oc) {
             const pad = H * 0.12;
@@ -1006,7 +1016,12 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
             if (img && img.complete && img.naturalWidth > 0) {
               oc.drawImage(img, artX, artY, artSize, artSize);
             } else {
-              const grad = oc.createLinearGradient(artX, artY, artX + artSize, artY + artSize);
+              const grad = oc.createLinearGradient(
+                artX,
+                artY,
+                artX + artSize,
+                artY + artSize,
+              );
               grad.addColorStop(0, "#4f46e5");
               grad.addColorStop(1, "#06b6d4");
               oc.fillStyle = grad;
@@ -1027,7 +1042,10 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
             oc.font = `bold ${artSize * 0.22}px Inter, sans-serif`;
             let displayTitle = overlay.title || "No Track Connected";
             if (oc.measureText(displayTitle).width > maxTextWidth) {
-              while (displayTitle.length > 0 && oc.measureText(displayTitle + "...").width > maxTextWidth) {
+              while (
+                displayTitle.length > 0 &&
+                oc.measureText(displayTitle + "...").width > maxTextWidth
+              ) {
                 displayTitle = displayTitle.slice(0, -1);
               }
               displayTitle += "...";
@@ -1039,7 +1057,10 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
             oc.font = `500 ${artSize * 0.16}px Inter, sans-serif`;
             let displayArtist = overlay.artist || "Connect Audio Source";
             if (oc.measureText(displayArtist).width > maxTextWidth) {
-              while (displayArtist.length > 0 && oc.measureText(displayArtist + "...").width > maxTextWidth) {
+              while (
+                displayArtist.length > 0 &&
+                oc.measureText(displayArtist + "...").width > maxTextWidth
+              ) {
                 displayArtist = displayArtist.slice(0, -1);
               }
               displayArtist += "...";
@@ -1049,7 +1070,10 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
             // Progress bar
             const progressY = H - pad * 1.6;
             const timerSpace = artSize * 0.75;
-            const barW = Math.max(10, W - (pad * 3 + artSize) - timerSpace - pad * 2);
+            const barW = Math.max(
+              10,
+              W - (pad * 3 + artSize) - timerSpace - pad * 2,
+            );
             oc.fillStyle = "rgba(255, 255, 255, 0.1)";
             oc.beginPath();
             drawRoundedRect(oc, textX, progressY, barW, H * 0.04, H * 0.02);
@@ -1057,7 +1081,14 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
             if (pct > 0) {
               oc.fillStyle = "#6366f1";
               oc.beginPath();
-              drawRoundedRect(oc, textX, progressY, barW * pct, H * 0.04, H * 0.02);
+              drawRoundedRect(
+                oc,
+                textX,
+                progressY,
+                barW * pct,
+                H * 0.04,
+                H * 0.02,
+              );
               oc.fill();
             }
 
@@ -1334,6 +1365,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
         },
       );
       if (!activeStream) {
+        showToast(`Unable to acquire target for capture: ${captureSourceId}`);
         console.error(
           "[TargetOutputNode] Failed to start capture for streaming.",
         );
@@ -1415,7 +1447,10 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
       height: encHeight,
       fps: streamFps,
       bitrateKbps,
-      onChunk: (buffer) => window.electron.pushStreamData(buffer),
+      onChunk: (buffer) => {
+        window.electron.pushStreamData(buffer);
+        console.log(" --- Chunk pushed --- ");
+      },
       onError: (err) => console.error("[TargetOutputNode] H.264 encoder:", err),
     });
 
@@ -1896,7 +1931,14 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
                   <select
                     value={settings.streamEncoder || "copy"}
                     onChange={(e) =>
-                      updateSettings({ streamEncoder: e.target.value as "copy" | "libx264" | "h264_nvenc" | "h264_amf" | "h264_qsv" })
+                      updateSettings({
+                        streamEncoder: e.target.value as
+                          | "copy"
+                          | "libx264"
+                          | "h264_nvenc"
+                          | "h264_amf"
+                          | "h264_qsv",
+                      })
                     }
                     className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200 focus:border-indigo-500 focus:outline-none cursor-pointer"
                   >

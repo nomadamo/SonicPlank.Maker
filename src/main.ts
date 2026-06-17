@@ -4,6 +4,7 @@ import {
   desktopCapturer,
   dialog,
   ipcMain,
+  MessageChannelMain,
   session,
   screen,
 } from "electron";
@@ -71,7 +72,10 @@ function startDelayFlush() {
   streamDelayTimer = setInterval(() => {
     const now = Date.now();
     const stdin = getStdin();
-    while (streamDelayBuffer.length > 0 && now - streamDelayBuffer[0].receivedAt >= streamDelayMs) {
+    while (
+      streamDelayBuffer.length > 0 &&
+      now - streamDelayBuffer[0].receivedAt >= streamDelayMs
+    ) {
       const frame = streamDelayBuffer.shift();
       if (frame && stdin) {
         try {
@@ -456,7 +460,8 @@ const registerIpcHandlers = () => {
 
       // Configure stream delay — frames are held in the delay buffer for this
       // many milliseconds before being written to FFmpeg stdin.
-      streamDelayMs = Number((options as Record<string, unknown>)?.streamDelayMs) || 0;
+      streamDelayMs =
+        Number((options as Record<string, unknown>)?.streamDelayMs) || 0;
       if (streamDelayMs > 0) {
         startDelayFlush();
       }
@@ -474,18 +479,18 @@ const registerIpcHandlers = () => {
           "-y",
           "-progress",
           "pipe:2",
-          // +genpts: generate PTS from the frame-count DTS assigned by -r. Without
-          // this, raw H.264 demuxer passes AV_NOPTS_VALUE PTS through -c:v copy and
-          // the FLV muxer reconstructs timing itself, causing time=N/A in progress
-          // output and jitter in the RTMP stream.
+          // Give the h264 demuxer up to 5 s / 5 MB to find the SPS NAL.
+          // The raw h264 demuxer defaults to analyzeduration=0 which causes it
+          // to give up before the first keyframe arrives through the MessagePort.
+          "-probesize",
+          "5000000",
+          "-analyzeduration",
+          "5000000",
+          // +genpts: generate PTS from the frame-count DTS assigned by -r.
           "-fflags",
           "+genpts",
-          // Tell FFmpeg the input frame rate so it assigns monotonic DTS by frame
-          // count (0, 1/fps, 2/fps, …) rather than by wall-clock arrival time.
-          // Wall-clock timestamps cause non-monotonic DTS when the IPC between
-          // the renderer and main process delivers chunks in bursts (which happens
-          // under heavy compositing load like the visualizer) — the FLV muxer then
-          // sees DTS go backward and emits continuous non-monotonic warnings.
+          // Monotonic DTS by frame count — avoids non-monotonic warnings under
+          // burst delivery from the compositor.
           "-r",
           `${fps}`,
           "-f",
@@ -627,10 +632,6 @@ const registerIpcHandlers = () => {
     }
   });
 
-  // Fire-and-forget write: ArrayBuffer was transferred from renderer (no GC copy).
-  // With -r ${fps} on the FFmpeg input, DTS is assigned by frame count so
-  // wall-clock arrival timing is irrelevant. When a delay is configured the
-  // frame is queued and released by startDelayFlush's interval timer.
   ipcMain.on("pushStreamData", (_event, arrayBuffer) => {
     const buf = Buffer.from(arrayBuffer as ArrayBuffer);
     if (streamDelayMs > 0) {
@@ -710,7 +711,7 @@ const registerIpcHandlers = () => {
   // ('sonicplank-preview-frames') — no second capture, no WGC session conflict.
   ipcMain.handle(
     "openEditOverlay",
-    (_event, args: { aspect?: string } | undefined) => {
+    (event, args: { aspect?: string } | undefined) => {
       if (previewWin && !previewWin.isDestroyed()) {
         previewWin.focus();
         return;
@@ -744,10 +745,19 @@ const registerIpcHandlers = () => {
         previewWin.webContents.openDevTools();
       }
 
-      // Send current overlays to the preview as soon as its renderer is ready
+      // Send current overlays and establish the preview frame MessagePort pair
+      // once the preview renderer is ready.
       previewWin.webContents.once("did-finish-load", () => {
         if (previewWin && !previewWin.isDestroyed()) {
           previewWin.webContents.send("onOverlaysUpdated", activeOverlays);
+          // Zero-copy preview frame channel: compositor renderer → preview window.
+          // sendPort stays in the editor renderer; receivePort goes to previewWin.
+          const { port1: sendPort, port2: receivePort } =
+            new MessageChannelMain();
+          event.sender.postMessage("previewSendPort", null, [sendPort]);
+          previewWin.webContents.postMessage("previewReceivePort", null, [
+            receivePort,
+          ]);
         }
       });
 
@@ -761,18 +771,6 @@ const registerIpcHandlers = () => {
           }
         });
       });
-    },
-  );
-
-  // Editor sends JPEG-encoded compositor frames here; main relays directly to the
-  // preview window. BroadcastChannel does not cross renderer-process boundaries in
-  // Electron, so IPC relay is the only reliable transport for frame data.
-  ipcMain.on(
-    "sendPreviewFrame",
-    (_event, buf: ArrayBuffer, width: number, height: number) => {
-      if (previewWin && !previewWin.isDestroyed()) {
-        previewWin.webContents.send("onPreviewFrame", buf, width, height);
-      }
     },
   );
 

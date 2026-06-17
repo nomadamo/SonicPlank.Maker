@@ -2,7 +2,12 @@ import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { useSetAtom, useAtomValue } from "jotai";
-import { updateNodeDataAtom, flowNodesAtom, flowDataAtom, flowEdgesAtom } from "@/store/flowStore";
+import {
+  updateNodeDataAtom,
+  flowNodesAtom,
+  flowDataAtom,
+  flowEdgesAtom,
+} from "@/store/flowStore";
 import { useStateMachine } from "@/store/stateMachine";
 import { toast } from "sonner";
 import * as React from "react";
@@ -99,14 +104,19 @@ export function BaseNodeFooter({ className, ...props }: ComponentProps<"div">) {
 }
 
 const borderColors = {
-  emerald: "border-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.35)] ring-1 ring-emerald-500/30",
-  indigo: "border-indigo-500 shadow-[0_0_15px_rgba(99,102,241,0.35)] ring-1 ring-indigo-500/30",
+  emerald:
+    "border-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.35)] ring-1 ring-emerald-500/30",
+  indigo:
+    "border-indigo-500 shadow-[0_0_15px_rgba(99,102,241,0.35)] ring-1 ring-indigo-500/30",
   cyan: "border-cyan-500 shadow-[0_0_15px_rgba(6,182,212,0.35)] ring-1 ring-cyan-500/30",
-  purple: "border-purple-500 shadow-[0_0_15px_rgba(168,85,247,0.35)] ring-1 ring-purple-500/30",
+  purple:
+    "border-purple-500 shadow-[0_0_15px_rgba(168,85,247,0.35)] ring-1 ring-purple-500/30",
   rose: "border-rose-500 shadow-[0_0_15px_rgba(244,63,94,0.35)] ring-1 ring-rose-500/30",
   pink: "border-pink-500 shadow-[0_0_15px_rgba(236,72,153,0.35)] ring-1 ring-pink-500/30",
-  orange: "border-orange-500 shadow-[0_0_15px_rgba(249,115,22,0.35)] ring-1 ring-orange-500/30",
-  amber: "border-amber-500 shadow-[0_0_15px_rgba(245,158,11,0.35)] ring-1 ring-amber-500/30",
+  orange:
+    "border-orange-500 shadow-[0_0_15px_rgba(249,115,22,0.35)] ring-1 ring-orange-500/30",
+  amber:
+    "border-amber-500 shadow-[0_0_15px_rgba(245,158,11,0.35)] ring-1 ring-amber-500/30",
   red: "border-red-500 shadow-[0_0_15px_rgba(239,68,68,0.35)] ring-1 ring-red-500/30",
   zinc: "border-zinc-500 shadow-[0_0_15px_rgba(113,113,122,0.35)] ring-1 ring-zinc-500/30",
 };
@@ -138,6 +148,10 @@ interface BaseNodeCardProps {
   anchorName?: string;
   className?: string;
 }
+
+export const showToast = (message: string) => {
+  toast(message);
+};
 
 export function BaseNodeCard({
   id,
@@ -205,7 +219,13 @@ export function BaseNodeCard({
     setPersistRequested(true);
     setHasUnsavedChanges(true);
     toast("Node duplicated");
-  }, [id, isDuplicateDisabled, setNodes, setPersistRequested, setHasUnsavedChanges]);
+  }, [
+    id,
+    isDuplicateDisabled,
+    setNodes,
+    setPersistRequested,
+    setHasUnsavedChanges,
+  ]);
 
   const showProperties = [
     "audioFlowNode",
@@ -229,7 +249,7 @@ export function BaseNodeCard({
               "w-80 panel flex flex-col select-none bg-zinc-950/95 backdrop-blur-md border text-white rounded-xl shadow-2xl transition-all duration-200",
               isMinimized ? "p-3.5 gap-0" : "p-4 gap-4",
               selected ? borderClass : "border-zinc-800",
-              className
+              className,
             )}
             id={`flow-node-${id}`}
             style={{ anchorName } as React.CSSProperties}
@@ -240,12 +260,20 @@ export function BaseNodeCard({
                 <DropdownMenu>
                   <DropdownMenuTrigger
                     render={
-                      <button className={cn("p-2 rounded-lg border outline-none focus:ring-1 focus:ring-zinc-400 nodrag nopan nowheel cursor-pointer", iconClass)}>
+                      <button
+                        className={cn(
+                          "p-2 rounded-lg border outline-none focus:ring-1 focus:ring-zinc-400 nodrag nopan nowheel cursor-pointer",
+                          iconClass,
+                        )}
+                      >
                         <IconComponent className="w-5 h-5 shrink-0" />
                       </button>
                     }
                   />
-                  <DropdownMenuContent align="start" className="bg-zinc-950/95 border border-zinc-800 text-zinc-100 backdrop-blur-md rounded-lg shadow-xl min-w-40 p-1 nodrag nopan nowheel z-[9999]">
+                  <DropdownMenuContent
+                    align="start"
+                    className="bg-zinc-950/95 border border-zinc-800 text-zinc-100 backdrop-blur-md rounded-lg shadow-xl min-w-40 p-1 nodrag nopan nowheel z-[9999]"
+                  >
                     {showProperties && (
                       <DropdownMenuItem
                         onClick={() => setPropertiesOpen(true)}
@@ -262,7 +290,7 @@ export function BaseNodeCard({
                         "flex items-center gap-2 px-2.5 py-1.5 text-xs rounded cursor-pointer",
                         isDuplicateDisabled
                           ? "text-zinc-600 cursor-not-allowed opacity-50"
-                          : "text-zinc-200 hover:bg-zinc-800 hover:text-white"
+                          : "text-zinc-200 hover:bg-zinc-800 hover:text-white",
                       )}
                     >
                       <CopyIcon className="w-4 h-4 text-zinc-400" />
@@ -278,8 +306,12 @@ export function BaseNodeCard({
                   </DropdownMenuContent>
                 </DropdownMenu>
                 <div>
-                  <h4 className="text-sm font-semibold text-zinc-100">{title}</h4>
-                  {subtitle && <p className="text-[11px] text-zinc-400">{subtitle}</p>}
+                  <h4 className="text-sm font-semibold text-zinc-100">
+                    {title}
+                  </h4>
+                  {subtitle && (
+                    <p className="text-[11px] text-zinc-400">{subtitle}</p>
+                  )}
                 </div>
               </div>
 
@@ -321,7 +353,7 @@ export function BaseNodeCard({
             "flex items-center gap-2 px-2.5 py-1.5 text-xs rounded cursor-pointer",
             isDuplicateDisabled
               ? "text-zinc-600 cursor-not-allowed opacity-50"
-              : "text-zinc-200 hover:bg-zinc-800 hover:text-white"
+              : "text-zinc-200 hover:bg-zinc-800 hover:text-white",
           )}
         >
           <CopyIcon className="w-4 h-4 text-zinc-400" />

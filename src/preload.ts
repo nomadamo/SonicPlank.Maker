@@ -6,6 +6,47 @@ import { contextBridge, ipcRenderer, webUtils } from "electron";
 
 export type Channels = AppControlProps & FileOpsProps;
 
+// ── MessagePort state (preview frames only) ──────────────────────────────────
+// Used for the compositor→preview renderer frame channel. Renderer-to-renderer
+// ports travel through Chromium only and support ArrayBuffer transfer correctly.
+// The stream data path uses ipcRenderer.send (Chromium→Node.js does not support
+// ArrayBuffer transfer via MessagePortMain).
+
+let previewSendPort: MessagePort | null = null;
+let previewFrameCallback:
+  | ((buf: ArrayBuffer, width: number, height: number) => void)
+  | null = null;
+let editOverlayClosedCallback: (() => void) | null = null;
+
+// Receive the preview send port delivered by main after the preview window loads.
+ipcRenderer.on("previewSendPort", (event) => {
+  previewSendPort = event.ports[0] ?? null;
+});
+
+// Preview window side: receive the receive port and wire it to the callback.
+ipcRenderer.on("previewReceivePort", (event) => {
+  const port = event.ports[0];
+  if (!port) return;
+  port.start();
+  port.onmessage = (e: MessageEvent) => {
+    if (previewFrameCallback) {
+      const { data, width, height } = e.data as {
+        data: ArrayBuffer;
+        width: number;
+        height: number;
+      };
+      previewFrameCallback(data, width, height);
+    }
+  };
+});
+
+// When the preview window closes, release the send port — sending on a closed
+// channel throws, and the next openEditOverlay will issue a fresh port pair.
+ipcRenderer.on("editOverlayClosed", () => {
+  previewSendPort = null;
+  editOverlayClosedCallback?.();
+});
+
 contextBridge.exposeInMainWorld("electron", {
   sendMessage(channel: Channels, args: unknown[]) {
     ipcRenderer.invoke(channel, args);
@@ -77,7 +118,10 @@ contextBridge.exposeInMainWorld("electron", {
     const res = await ipcRenderer.invoke("getOverlays");
     return res;
   },
-  startStream: async (rtmpUrl: string, options?: any): Promise<{ success: boolean }> => {
+  startStream: async (
+    rtmpUrl: string,
+    options?: any,
+  ): Promise<{ success: boolean }> => {
     const res = await ipcRenderer.invoke("startStream", rtmpUrl, options);
     return res;
   },
@@ -86,10 +130,7 @@ contextBridge.exposeInMainWorld("electron", {
     return res;
   },
   pushStreamData: (arrayBuffer: ArrayBuffer): void => {
-    // Transfer (not clone) the ArrayBuffer to main process. Without the transfer
-    // list the renderer retains a copy of every frame's data (~25KB × 30fps =
-    // 750KB/s of garbage), causing progressive GC pressure and FPS decline.
-    ipcRenderer.send("pushStreamData", arrayBuffer, [arrayBuffer]);
+    ipcRenderer.send("pushStreamData", arrayBuffer);
   },
   onOverlaysUpdated: (callback: (overlays: any[]) => void) => {
     ipcRenderer.on("onOverlaysUpdated", (_event, overlays) =>
@@ -122,10 +163,10 @@ contextBridge.exposeInMainWorld("electron", {
     await ipcRenderer.invoke("openEditOverlay", args);
   },
   onEditOverlayClosed: (callback: () => void) => {
-    ipcRenderer.on("editOverlayClosed", callback);
+    editOverlayClosedCallback = callback;
   },
   removeOnEditOverlayClosed: () => {
-    ipcRenderer.removeAllListeners("editOverlayClosed");
+    editOverlayClosedCallback = null;
   },
   notifyEditOverlayConnected: () => {
     ipcRenderer.send("editOverlayConnected");
@@ -136,14 +177,18 @@ contextBridge.exposeInMainWorld("electron", {
   removeOnEditOverlayConnected: () => {
     ipcRenderer.removeAllListeners("editOverlayConnected");
   },
-  sendPreviewFrame: (buf: ArrayBuffer, width: number, height: number) => {
-    ipcRenderer.send("sendPreviewFrame", buf, width, height);
+  sendPreviewFrame: (data: ArrayBuffer, width: number, height: number) => {
+    if (previewSendPort) {
+      previewSendPort.postMessage({ data, width, height }, [data]);
+    }
   },
-  onPreviewFrame: (callback: (buf: ArrayBuffer, width: number, height: number) => void) => {
-    ipcRenderer.on("onPreviewFrame", (_event, buf, width, height) => callback(buf, width, height));
+  onPreviewFrame: (
+    callback: (data: ArrayBuffer, width: number, height: number) => void,
+  ) => {
+    previewFrameCallback = callback;
   },
   removeOnPreviewFrame: () => {
-    ipcRenderer.removeAllListeners("onPreviewFrame");
+    previewFrameCallback = null;
   },
   getAvailableThemes: async (): Promise<any[]> => {
     return await ipcRenderer.invoke("getAvailableThemes");
@@ -157,9 +202,12 @@ contextBridge.exposeInMainWorld("electron", {
   onAudioTimeUpdated: (
     callback: (nodeId: string, currentTime: number, paused: boolean) => void,
   ) => {
-    ipcRenderer.on("onAudioTimeUpdated", (_event, nodeId, currentTime, paused) => {
-      callback(nodeId, currentTime, paused);
-    });
+    ipcRenderer.on(
+      "onAudioTimeUpdated",
+      (_event, nodeId, currentTime, paused) => {
+        callback(nodeId, currentTime, paused);
+      },
+    );
   },
   removeOnAudioTimeUpdated: () => {
     ipcRenderer.removeAllListeners("onAudioTimeUpdated");

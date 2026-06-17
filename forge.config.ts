@@ -10,10 +10,16 @@ import { FuseV1Options, FuseVersion } from "@electron/fuses";
 const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
+    // Path without extension — Forge appends .ico on Windows, .icns on macOS,
+    // .png on Linux. Place src/img/icon.ico alongside icon.png for Windows builds.
+    icon: "./src/img/icon",
   },
   rebuildConfig: {},
   makers: [
-    new MakerSquirrel({}),
+    new MakerSquirrel({
+      // Installer icon (Windows only). Requires an .ico file at this path.
+      setupIcon: "./src/img/icon.ico",
+    }),
     new MakerZIP({}, ["darwin"]),
     new MakerRpm({}),
     new MakerDeb({}),
