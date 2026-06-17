@@ -9,15 +9,21 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as TimelineRouteImport } from './routes/timeline'
+import { Route as SonicsRouteImport } from './routes/sonics'
+import { Route as ScenesRouteImport } from './routes/scenes'
 import { Route as PreviewRouteImport } from './routes/preview'
 import { Route as FlowEditorRouteImport } from './routes/flow-editor'
 import { Route as AppRouteImport } from './routes/App'
 import { Route as IndexRouteImport } from './routes/index'
 
-const TimelineRoute = TimelineRouteImport.update({
-  id: '/timeline',
-  path: '/timeline',
+const SonicsRoute = SonicsRouteImport.update({
+  id: '/sonics',
+  path: '/sonics',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ScenesRoute = ScenesRouteImport.update({
+  id: '/scenes',
+  path: '/scenes',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PreviewRoute = PreviewRouteImport.update({
@@ -46,14 +52,16 @@ export interface FileRoutesByFullPath {
   '/App': typeof AppRoute
   '/flow-editor': typeof FlowEditorRoute
   '/preview': typeof PreviewRoute
-  '/timeline': typeof TimelineRoute
+  '/scenes': typeof ScenesRoute
+  '/sonics': typeof SonicsRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/App': typeof AppRoute
   '/flow-editor': typeof FlowEditorRoute
   '/preview': typeof PreviewRoute
-  '/timeline': typeof TimelineRoute
+  '/scenes': typeof ScenesRoute
+  '/sonics': typeof SonicsRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -61,14 +69,22 @@ export interface FileRoutesById {
   '/App': typeof AppRoute
   '/flow-editor': typeof FlowEditorRoute
   '/preview': typeof PreviewRoute
-  '/timeline': typeof TimelineRoute
+  '/scenes': typeof ScenesRoute
+  '/sonics': typeof SonicsRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/App' | '/flow-editor' | '/preview' | '/timeline'
+  fullPaths: '/' | '/App' | '/flow-editor' | '/preview' | '/scenes' | '/sonics'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/App' | '/flow-editor' | '/preview' | '/timeline'
-  id: '__root__' | '/' | '/App' | '/flow-editor' | '/preview' | '/timeline'
+  to: '/' | '/App' | '/flow-editor' | '/preview' | '/scenes' | '/sonics'
+  id:
+    | '__root__'
+    | '/'
+    | '/App'
+    | '/flow-editor'
+    | '/preview'
+    | '/scenes'
+    | '/sonics'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -76,16 +92,24 @@ export interface RootRouteChildren {
   AppRoute: typeof AppRoute
   FlowEditorRoute: typeof FlowEditorRoute
   PreviewRoute: typeof PreviewRoute
-  TimelineRoute: typeof TimelineRoute
+  ScenesRoute: typeof ScenesRoute
+  SonicsRoute: typeof SonicsRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/timeline': {
-      id: '/timeline'
-      path: '/timeline'
-      fullPath: '/timeline'
-      preLoaderRoute: typeof TimelineRouteImport
+    '/sonics': {
+      id: '/sonics'
+      path: '/sonics'
+      fullPath: '/sonics'
+      preLoaderRoute: typeof SonicsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/scenes': {
+      id: '/scenes'
+      path: '/scenes'
+      fullPath: '/scenes'
+      preLoaderRoute: typeof ScenesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/preview': {
@@ -124,7 +148,8 @@ const rootRouteChildren: RootRouteChildren = {
   AppRoute: AppRoute,
   FlowEditorRoute: FlowEditorRoute,
   PreviewRoute: PreviewRoute,
-  TimelineRoute: TimelineRoute,
+  ScenesRoute: ScenesRoute,
+  SonicsRoute: SonicsRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

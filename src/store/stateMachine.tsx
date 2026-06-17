@@ -3,12 +3,13 @@ import { useSetAtom } from "jotai";
 import { flowDataAtom, defaultFlowData } from "./flowStore";
 import { timelineDataAtom, defaultTimelineData } from "./timelineStore";
 import { ReactFlowProvider } from "@xyflow/react";
-import { LoadingAnimation } from "@/components/animations/loading-animation";
 import { useLibraryStore } from "./libraryStore";
 import { useSettings } from "./settingsStore";
+import { SplashOverlay } from "@/components/splash-overlay";
 import "@arkn/react-icon-picker/dist/style.css";
 
 type StateMachineContextValue = {
+  loaded: boolean;
   hasUnsavedChanges: boolean;
   setHasUnsavedChanges(value: boolean): void;
   quitRequested: boolean;
@@ -212,6 +213,7 @@ export const StateMachineProvider: React.FC<React.PropsWithChildren> = (
     <ReactFlowProvider>
       <StateMachineContext.Provider
         value={{
+          loaded,
           hasUnsavedChanges,
           setHasUnsavedChanges,
           quitRequested,
@@ -222,7 +224,8 @@ export const StateMachineProvider: React.FC<React.PropsWithChildren> = (
           setTheme,
         }}
       >
-        {loaded ? props.children : <LoadingAnimation />}
+        {props.children}
+        <SplashOverlay visible={!loaded} />
       </StateMachineContext.Provider>
     </ReactFlowProvider>
   );

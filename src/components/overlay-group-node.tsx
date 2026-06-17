@@ -27,7 +27,7 @@ export function OverlayGroupNode(NodeRef: NodeProps<FlowNodeType>) {
     const incomingEdges = edges.filter((e) => e.target === node.id);
     return incomingEdges
       .map((e) => nodes.find((n) => n.id === e.source))
-      .filter((n): n is FlowNodeType => !!(n && ["textOverlayNode", "colorOverlayNode", "imageOverlayNode", "visualizerOverlayNode"].includes(n.type || "")))
+      .filter((n): n is FlowNodeType => !!(n && ["textOverlayNode", "colorOverlayNode", "imageOverlayNode", "visualizerOverlayNode", "nowPlayingNode", "twitchChatNode"].includes(n.type || "")))
       .sort((a, b) => a.position.y - b.position.y);
   }, [edges, nodes, node.id]);
 
@@ -82,14 +82,14 @@ export function OverlayGroupNode(NodeRef: NodeProps<FlowNodeType>) {
               }}
               renderItem={(item) => {
                 let descriptor = "";
+                let typeCapitalized = "";
                 const data = item.data as any;
-                if (item.type === "textOverlayNode") descriptor = `"${data.textContent || "Watermark"}"`;
-                else if (item.type === "colorOverlayNode") descriptor = data.backgroundColor || "#4f46e5";
-                else if (item.type === "imageOverlayNode") descriptor = data.imagePath ? String(data.imagePath).split(/[/\\]/).pop() || "" : "None";
-                else if (item.type === "visualizerOverlayNode") descriptor = "Frequency Spectrum";
-
-                const typeLabel = item.type?.replace("OverlayNode", "");
-                const typeCapitalized = typeLabel ? typeLabel.charAt(0).toUpperCase() + typeLabel.slice(1) : "";
+                if (item.type === "textOverlayNode") { descriptor = `"${data.textContent || "Watermark"}"`; typeCapitalized = "Text"; }
+                else if (item.type === "colorOverlayNode") { descriptor = data.backgroundColor || "#4f46e5"; typeCapitalized = "Color"; }
+                else if (item.type === "imageOverlayNode") { descriptor = data.imagePath ? String(data.imagePath).split(/[/\\]/).pop() || "" : "None"; typeCapitalized = "Image"; }
+                else if (item.type === "visualizerOverlayNode") { descriptor = "Frequency Spectrum"; typeCapitalized = "Visualizer"; }
+                else if (item.type === "nowPlayingNode") { descriptor = "Audio metadata"; typeCapitalized = "Now Playing"; }
+                else if (item.type === "twitchChatNode") { descriptor = data.channel ? `#${String(data.channel).replace(/^#/, "")}` : "Not connected"; typeCapitalized = "Twitch Chat"; }
 
                 return (
                   <SortableItem id={item.id} className="nodrag nopan nowheel select-none">
@@ -114,14 +114,14 @@ export function OverlayGroupNode(NodeRef: NodeProps<FlowNodeType>) {
         position={Position.Left}
         isConnectable={node.isConnectable}
         isValidConnection={isValidConnection}
-        className="hover:!border-indigo-400 hover:!shadow-[0_0_10px_rgba(129,140,248,0.5)] hover:!scale-125"
+        className="hover:border-indigo-400! hover:shadow-[0_0_10px_rgba(129,140,248,0.5)]! hover:scale-125!"
       />
       <Handle
         id={`handle_${node.id}_source`}
         type="source"
         position={Position.Right}
         isConnectable={node.isConnectable}
-        className="hover:!border-indigo-400 hover:!shadow-[0_0_10px_rgba(129,140,248,0.5)] hover:!scale-125"
+        className="hover:border-indigo-400! hover:shadow-[0_0_10px_rgba(129,140,248,0.5)]! hover:scale-125!"
       />
     </>
   );

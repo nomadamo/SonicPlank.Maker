@@ -90,7 +90,7 @@ const FloatingNav = ({ items }: { items: TabProps[] }) => {
   }, [active]);
 
   return (
-    <div className="absolute left-1/2 z-50 -translate-x-1/2 z-50 w-dvw rounded-full max-w-lg mt-15 px-27">
+    <div className="absolute left-1/2 z-50 -translate-x-1/2 w-dvw rounded-full max-w-lg mt-15 px-20">
       <div
         ref={containerRef}
         className="relative bg-zinc-950/80 backdrop-blur-md flex items-center justify-between font-medium shadow-2xl rounded-full gap-2 px-1 py-1 border border-zinc-800"

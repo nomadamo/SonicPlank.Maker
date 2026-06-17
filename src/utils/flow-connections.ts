@@ -25,6 +25,7 @@ export const CONNECTION_RULES: Record<string, Record<string, HandleConnectionRul
         "imageOverlayNode",
         "visualizerOverlayNode",
         "nowPlayingNode",
+        "twitchChatNode",
       ],
       allowedSourceHandleSuffix: "source",
     },

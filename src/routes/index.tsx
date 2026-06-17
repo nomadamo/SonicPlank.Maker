@@ -83,6 +83,7 @@ import {
   formatTime as formatDuration,
   extractStreamInfo,
 } from "@/utils/audio";
+import { IconBrandSpotify } from "@tabler/icons-react";
 
 export const Route = createFileRoute("/")({
   beforeLoad: () => {
@@ -309,7 +310,7 @@ function Library() {
   const [managerOpen, setManagerOpen] = useState(false);
   const [recordingOpen, setRecordingOpen] = useState(false);
   const [addStreamOpen, setAddStreamOpen] = useState(false);
-  const { setHasUnsavedChanges } = useStateMachine();
+  const { setHasUnsavedChanges, loaded } = useStateMachine();
   const [flowNodesData, setFlowNodesData] = useAtom(flowNodesAtom);
   const [timelineTracks, setTimelineTracks] = useAtom(timelineTracksAtom);
   const { items, setItems, categories } = useLibraryStore();
@@ -326,14 +327,15 @@ function Library() {
     );
   }, [items, selectedCategories]);
 
-  // Save library whenever items or categories change
+  // Save library whenever items or categories change, but only after initial load
+  // to avoid overwriting persisted data with empty state during early mount.
   useEffect(() => {
-    // Only save if items actually exist (prevents overwriting on initial mount before hydration)
+    if (!loaded) return;
     const data: LibraryData = { items, categories };
     window.electron.saveLibrary(data).catch((error) => {
       console.error("[Library] Failed to save library:", error);
     });
-  }, [items, categories, categoryFilter, selectedCategories]);
+  }, [loaded, items, categories, categoryFilter, selectedCategories]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -443,6 +445,10 @@ function Library() {
     }
   }, [items]);
 
+  const handleAddSpotify = useCallback(() => {
+    return null;
+  }, []);
+
   const handleStopPlaying = useCallback(() => setPlayingItemId(null), []);
 
   const handleRemoveItem = useCallback((id: string) => {
@@ -466,7 +472,7 @@ function Library() {
       };
       setFlowNodesData((prev) => [...(prev || []), newNode]);
       setHasUnsavedChanges(true);
-      navigate({ to: "/flow-editor" });
+      void navigate({ to: "/flow-editor" });
     },
     [flowNodesData, setFlowNodesData, setHasUnsavedChanges, navigate],
   );
@@ -513,7 +519,7 @@ function Library() {
         return tracks;
       });
       setHasUnsavedChanges(true);
-      navigate({ to: "/timeline" });
+      void navigate({ to: "/sonics" });
     },
     [setTimelineTracks, setHasUnsavedChanges, navigate],
   );
@@ -532,7 +538,7 @@ function Library() {
         className="mt-13"
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
+        onDrop={void handleDrop}
       >
         {isDraggingOver && (
           <div className="absolute inset-0 bg-primary/10 border-2 border-dashed border-primary rounded-xl flex flex-col items-center justify-center gap-3 backdrop-blur-[2px] z-[60] pointer-events-none transition-all">
@@ -605,6 +611,13 @@ function Library() {
                   >
                     <Mic className="h-4 w-4" />
                     Record Audio
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={handleAddSpotify}
+                    className="cursor-pointer"
+                  >
+                    <IconBrandSpotify className="h-4 w-4" />
+                    Add from Spotify
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -775,12 +788,16 @@ function Library() {
 
             {/* Floating Buttons */}
             <motion.div
-              initial={{ opacity: 0, scale: 0.8 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ delay: 0.3, duration: 0.2 }}
+              initial={{ opacity: 0, bottom: "20px" }}
+              animate={{ opacity: 1, bottom: playingItemId ? "150px" : "20px" }}
+              transition={{
+                type: "spring",
+                bounce: 0,
+                delay: 0,
+                duration: 0.4,
+              }}
               style={{
                 position: "absolute",
-                bottom: playingItemId ? "130px" : "20px",
                 left: "20px",
                 zIndex: 10,
               }}
@@ -831,6 +848,13 @@ function Library() {
                   >
                     <Mic className="h-4 w-4" />
                     Record Audio
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={handleAddSpotify}
+                    className="cursor-pointer"
+                  >
+                    <IconBrandSpotify className="h-4 w-4" />
+                    Add from Spotify
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -1011,11 +1035,7 @@ function LibraryCard({
                     color: categoryColor || "#a1a1aa",
                   }}
                 >
-                  <Icon
-                    name={categoryIcon}
-                    size={28}
-                    strokeWidth={1.5}
-                  />
+                  <Icon name={categoryIcon} size={28} strokeWidth={1.5} />
                 </div>
               ) : (
                 <div className="p-3.5 rounded-xl border bg-zinc-500/10 border-zinc-500/20 text-zinc-400">
@@ -1053,7 +1073,14 @@ function LibraryCard({
               >
                 {item.title}
               </p>
-              {!isStream && (
+              {isStream ? (
+                <p
+                  className="text-xs text-muted-foreground truncate"
+                  title="Various"
+                >
+                  {"Various"}
+                </p>
+              ) : (
                 <p
                   className="text-xs text-muted-foreground truncate"
                   title={item.artist}
@@ -1075,18 +1102,27 @@ function LibraryCard({
                   >
                     Stream
                   </span>
+                ) : categoryName ? (
+                  <span
+                    className="bg-primary/10 px-1.5 py-0.5 rounded-sm truncate max-w-[80px]"
+                    style={{
+                      color: categoryColor,
+                    }}
+                    title={categoryName}
+                  >
+                    {categoryName}
+                  </span>
                 ) : (
-                  categoryName && (
-                    <span
-                      className="bg-primary/10 px-1.5 py-0.5 rounded-sm truncate max-w-[80px]"
-                      style={{
-                        color: categoryColor,
-                      }}
-                      title={categoryName}
-                    >
-                      {categoryName}
-                    </span>
-                  )
+                  <span
+                    className="bg-primary/10 px-1.5 py-0.5 rounded-sm truncate max-w-[80px]"
+                    style={{
+                      color: "#a1a1aa",
+                      backgroundColor: "transparent",
+                    }}
+                    title="None"
+                  >
+                    &nbsp;
+                  </span>
                 )}
               </p>
             </div>
@@ -1102,7 +1138,7 @@ function LibraryCard({
             </ContextMenuItem>
             <ContextMenuItem onClick={() => onAddToTimeline(item)}>
               <ListMusicIcon className="h-4 w-4" />
-              Add to Timeline
+              Add to Sonics
             </ContextMenuItem>
           </>
         )}

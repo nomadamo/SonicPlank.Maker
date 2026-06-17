@@ -8,7 +8,7 @@ export interface NodeTrigger {
 
 export interface OverlayElement {
   id: string;
-  type: "text" | "color" | "image" | "visualizer" | "nowPlaying";
+  type: "text" | "color" | "image" | "visualizer" | "nowPlaying" | "twitchChat";
   x: number; // percentage coordinate (0-100) for scaling
   y: number; // percentage coordinate (0-100) for scaling
   width: number; // percentage width (0-100)
@@ -28,6 +28,7 @@ export interface OverlayElement {
   artist?: string;
   audioNodeId?: string;
   duration?: number;
+  maxMessages?: number;
 }
 
 export type FlowNodeType<

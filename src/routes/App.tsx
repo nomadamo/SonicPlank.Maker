@@ -26,6 +26,7 @@ import {
   LibraryIcon,
   SettingsIcon,
   ListMusicIcon,
+  ClapperboardIcon,
 } from "lucide-react";
 import {
   ChromeCloseIcon,
@@ -136,9 +137,16 @@ export default function App() {
     },
     {
       id: 2,
-      label: "Timeline",
+      label: "Sonics",
       icon: <ListMusicIcon />,
-      to: "/timeline",
+      to: "/sonics",
+      className: "[&.active]:font-bold",
+    },
+    {
+      id: 3,
+      label: "Scenes",
+      icon: <ClapperboardIcon />,
+      to: "/scenes",
       className: "[&.active]:font-bold",
     },
     {

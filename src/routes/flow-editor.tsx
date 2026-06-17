@@ -22,6 +22,7 @@ import { VisualizerOverlayNode } from "@/components/visualizer-overlay-node";
 import { TargetOutputNode } from "@/components/target-output-node";
 import { OverlayGroupNode } from "@/components/overlay-group-node";
 import { NowPlayingNode } from "@/components/now-playing-node";
+import { TwitchChatNode } from "@/components/twitch-chat-node";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { AnimatedRoute } from "@/components/animated-route";
 import { LoadingAnimation } from "@/components/animations/loading-animation";
@@ -49,6 +50,7 @@ import {
   Image as ImageIcon,
   Activity as ActivityIcon,
   Layers as LayersIcon,
+  MessageSquare as MessageSquareIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAtomValue, useSetAtom } from "jotai";
@@ -105,6 +107,7 @@ const nodeTypes = {
   targetOutputNode: TargetOutputNode,
   overlayGroupNode: OverlayGroupNode,
   nowPlayingNode: NowPlayingNode,
+  twitchChatNode: TwitchChatNode,
 };
 
 const edgeTypes: EdgeTypes = {
@@ -128,6 +131,7 @@ interface AddNodesMenuProps {
   onAddVisualizerOverlayNode: () => void;
   onAddOverlayGroupNode: () => void;
   onAddNowPlayingNode: () => void;
+  onAddTwitchChatNode: () => void;
 }
 
 function AddNodesMenu({
@@ -143,6 +147,7 @@ function AddNodesMenu({
   onAddVisualizerOverlayNode,
   onAddOverlayGroupNode,
   onAddNowPlayingNode,
+  onAddTwitchChatNode,
 }: AddNodesMenuProps) {
   return (
     <div className="flex flex-col gap-3">
@@ -363,6 +368,21 @@ function AddNodesMenu({
               Now Playing
             </span>
           </button>
+
+          <button
+            onClick={() => {
+              onAddTwitchChatNode();
+              closePopover();
+            }}
+            className="flex items-center gap-2 p-1.5 rounded-lg text-left hover:bg-zinc-900 transition-colors group cursor-pointer border border-zinc-900 hover:border-zinc-800"
+          >
+            <div className="p-1 rounded bg-purple-500/10 border border-purple-500/20 text-purple-400">
+              <MessageSquareIcon className="w-3.5 h-3.5" />
+            </div>
+            <span className="text-[10px] font-medium text-zinc-200">
+              Twitch Chat
+            </span>
+          </button>
         </div>
       </div>
     </div>
@@ -573,13 +593,15 @@ function FlowEditor() {
     if (latestFlowDataRef.current.nodes === flowNodesData) return;
     setCurrentNodes(flowNodesData || []);
     setPersistRequested(true);
-  }, [flowNodesData, setCurrentNodes, setPersistRequested]);
+    setHasUnsavedChanges(true);
+  }, [flowNodesData, setCurrentNodes, setPersistRequested, setHasUnsavedChanges]);
 
   useEffect(() => {
     if (latestFlowDataRef.current.edges === flowEdgesData) return;
     setCurrentEdges(flowEdgesData || []);
     setPersistRequested(true);
-  }, [flowEdgesData, setCurrentEdges, setPersistRequested]);
+    setHasUnsavedChanges(true);
+  }, [flowEdgesData, setCurrentEdges, setPersistRequested, setHasUnsavedChanges]);
 
   // ─── ReactFlow → Store sync (debounced 200ms) ───────────────────────────────
   useEffect(() => {
@@ -1104,6 +1126,29 @@ function FlowEditor() {
     setHasUnsavedChanges,
   ]);
 
+  const onAddTwitchChatNode = useCallback(() => {
+    const newNode: FlowNodeType = {
+      id: crypto.randomUUID(),
+      type: "twitchChatNode",
+      position: getCenterProjectPosition(),
+      data: {
+        x: 2,
+        y: 50,
+        width: 28,
+        height: 38,
+        opacity: 0.9,
+      },
+    };
+    setCurrentNodes((nodes) => [...nodes, newNode]);
+    setPersistRequested(true);
+    setHasUnsavedChanges(true);
+  }, [
+    getCenterProjectPosition,
+    setCurrentNodes,
+    setPersistRequested,
+    setHasUnsavedChanges,
+  ]);
+
   const onAddTargetOutputNode = useCallback(() => {
     const newNode: FlowNodeType = {
       id: crypto.randomUUID(),
@@ -1247,6 +1292,7 @@ function FlowEditor() {
                               }
                               onAddOverlayGroupNode={onAddOverlayGroupNode}
                               onAddNowPlayingNode={onAddNowPlayingNode}
+                              onAddTwitchChatNode={onAddTwitchChatNode}
                             />
                           </PopoverContent>
                         </Popover>
@@ -1392,6 +1438,7 @@ function FlowEditor() {
                           }
                           onAddOverlayGroupNode={onAddOverlayGroupNode}
                           onAddNowPlayingNode={onAddNowPlayingNode}
+                          onAddTwitchChatNode={onAddTwitchChatNode}
                         />
                       </PopoverContent>
                     </Popover>

@@ -117,39 +117,39 @@ export function AnimatedSvgEdge({
         path={path}
         style={{
           stroke: selected ? "#52525b" : "#27272a", // Selected: zinc-600, Default: zinc-800
-          strokeWidth: selected ? 2.5 : 1.5,
+          strokeWidth: selected ? 3.5 : 2.5,
           transition: "stroke 0.2s, stroke-width 0.2s",
           opacity: 0.8,
           ...style,
         }}
         {...restEdgeProps}
       />
-      <g>
-        <animateMotion {...animateMotionProps} />
-        {/* Outer Glow Blur */}
-        <circle
-          r="3"
-          opacity="0.25"
-          fill={targetColor}
-          style={{ filter: "blur(2px)" }}
-        >
-          <animate
-            attributeName="fill"
-            values={`${targetColor};${sourceColor}`}
-            dur={`${duration}s`}
-            repeatCount="indefinite"
-          />
-        </circle>
-        {/* Core Particle */}
-        <circle r="1.5" opacity="0.7" fill={targetColor}>
-          <animate
-            attributeName="fill"
-            values={`${targetColor};${sourceColor}`}
-            dur={`${duration}s`}
-            repeatCount="indefinite"
-          />
-        </circle>
-      </g>
+      {animated && (
+        <g>
+          <animateMotion {...animateMotionProps} />
+          <circle
+            r="3"
+            opacity="0.25"
+            fill={targetColor}
+            style={{ filter: "blur(2px)" }}
+          >
+            <animate
+              attributeName="fill"
+              values={`${targetColor};${sourceColor}`}
+              dur={`${duration}s`}
+              repeatCount="indefinite"
+            />
+          </circle>
+          <circle r="1.5" opacity="0.7" fill={targetColor}>
+            <animate
+              attributeName="fill"
+              values={`${targetColor};${sourceColor}`}
+              dur={`${duration}s`}
+              repeatCount="indefinite"
+            />
+          </circle>
+        </g>
+      )}
     </>
   );
 }

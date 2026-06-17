@@ -110,7 +110,7 @@ function TimeDisplay({ maxEndTime }: { maxEndTime: number }) {
   );
 }
 
-export const Route = createFileRoute("/timeline")({
+export const Route = createFileRoute("/sonics")({
   beforeLoad: () => {
     console.log("Timeline page");
   },

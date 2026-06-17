@@ -13,6 +13,7 @@ import {
   ScanEyeIcon,
 } from "lucide-react";
 import { FlowNodeType, OverlayElement } from "@/types/flow-node";
+import { chatMessagesStore, type ChatMessage } from "@/store/chatMessagesStore";
 import { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { useScreenCapture } from "@/hooks/useScreenCapture";
 import { isValidConnection } from "@/utils/flow-connections";
@@ -436,6 +437,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
               "imageOverlayNode",
               "visualizerOverlayNode",
               "nowPlayingNode",
+              "twitchChatNode",
             ].includes(n.type || "")
           ),
       )
@@ -446,7 +448,9 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
       const type = (
         n.type === "nowPlayingNode"
           ? "nowPlaying"
-          : n.type?.replace("OverlayNode", "")
+          : n.type === "twitchChatNode"
+            ? "twitchChat"
+            : n.type?.replace("OverlayNode", "")
       ) as OverlayElement["type"];
       const data = n.data as any;
 
@@ -494,6 +498,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
         artist,
         audioNodeId,
         duration,
+        maxMessages: data.maxMessages !== undefined ? Number(data.maxMessages) : 10,
       });
     });
 
@@ -1110,6 +1115,58 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
 
         if (npCache) {
           ctx.drawImage(npCache.canvas, xVal, yVal);
+        }
+      } else if (overlay.type === "twitchChat") {
+        const messages = chatMessagesStore.get(overlay.id) ?? [];
+
+        const sizePx = Math.max(
+          8,
+          Math.round((overlay.fontSize || 2.5) * (canvas.height / 100)),
+        );
+        const fontStr = `${overlay.fontStyle || "normal"} ${overlay.fontWeight || "normal"} ${sizePx}px ${overlay.fontFamily || "Inter, sans-serif"}`;
+        ctx.font = fontStr;
+
+        const lineH = Math.round(sizePx * 1.5);
+        const padX = Math.round(sizePx * 0.6);
+        const padY = Math.round(sizePx * 0.5);
+
+        // Semi-transparent background
+        ctx.fillStyle = "rgba(0,0,0,0.55)";
+        ctx.beginPath();
+        const r = Math.min(8, wVal * 0.02, hVal * 0.02);
+        ctx.roundRect(xVal, yVal, wVal, hVal, r);
+        ctx.fill();
+
+        if (messages.length > 0) {
+          // Clip text to the content area
+          ctx.beginPath();
+          ctx.rect(xVal + padX, yVal + padY, wVal - padX * 2, hVal - padY * 2);
+          ctx.clip();
+
+          ctx.textBaseline = "top";
+          const maxVisible = Math.floor((hVal - padY * 2) / lineH);
+          const visible = messages.slice(-maxVisible);
+          let ty = yVal + hVal - padY - lineH;
+
+          for (let i = visible.length - 1; i >= 0; i--) {
+            const msg = visible[i];
+            const prefix = `${msg.username}: `;
+
+            ctx.fillStyle = msg.color || "#9147ff";
+            ctx.fillText(prefix, xVal + padX, ty);
+
+            const prefixW = ctx.measureText(prefix).width;
+            ctx.fillStyle = "#ffffff";
+            ctx.fillText(
+              msg.message,
+              xVal + padX + prefixW,
+              ty,
+              wVal - padX * 2 - prefixW,
+            );
+
+            ty -= lineH;
+            if (ty < yVal + padY) break;
+          }
         }
       }
 
