@@ -12,15 +12,13 @@ import {
   ListMusicIcon,
   Settings2Icon,
   PlayCircleIcon,
-  SquareIcon,
   TagsIcon,
-  ActivityIcon,
   Filter,
   Mic,
   Radio,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { useAtom } from "jotai";
+import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { flowNodesAtom } from "@/store/flowStore";
 import { timelineTracksAtom } from "@/store/timelineStore";
 import {
@@ -32,17 +30,8 @@ import {
 } from "@/components/ui/context-menu";
 import type { LibraryItem, LibraryData } from "@/types/library-item";
 import { useStateMachine } from "@/store/stateMachine";
-import { useLibraryStore } from "@/store/libraryStore";
+import { useLibraryStore, currentPlaybackAtom } from "@/store/libraryStore";
 import { LibraryItemPropertiesDialog } from "@/components/library-item-properties-dialog";
-import {
-  AudioPlayer,
-  AudioPlayerControlBar,
-  AudioPlayerControlGroup,
-  AudioPlayerPlay,
-  AudioPlayerSeekBar,
-  AudioPlayerTimeDisplay,
-  AudioPlayerVolume,
-} from "@/components/audio/player";
 import {
   Combobox,
   ComboboxChip,
@@ -56,7 +45,6 @@ import {
   useComboboxAnchor,
 } from "@/components/ui/combobox";
 import { Combobox as ComboboxPrimitive } from "@base-ui/react";
-import { useAudioStore } from "@/lib/audio-store";
 import { useAudio } from "@/hooks/use-audio";
 import { Mixed8 } from "waviz";
 import { CategoryManagerDialog } from "@/components/category-manager-dialog";
@@ -84,6 +72,9 @@ import {
   extractStreamInfo,
 } from "@/utils/audio";
 import { IconBrandSpotify } from "@tabler/icons-react";
+import { AddFromSpotifyDialog } from "@/components/add-from-spotify-dialog";
+import { LibraryAudioPlayerWrapper } from "@/components/library-audio-player";
+import { SpotifyLibraryPlayer } from "@/components/spotify-library-player";
 
 export const Route = createFileRoute("/")({
   beforeLoad: () => {
@@ -153,147 +144,6 @@ function VisualizerBackdrop({ visible }: { visible: boolean }) {
   );
 }
 
-function LibraryAudioPlayerWrapper({
-  item,
-  onStop,
-  showVisualizer,
-  onToggleVisualizer,
-}: {
-  item: LibraryItem;
-  onStop: () => void;
-  showVisualizer: boolean;
-  onToggleVisualizer: () => void;
-}) {
-  const setCurrentTrack = useAudioStore((s) => s.setCurrentTrack);
-  const pause = useAudioStore((s) => s.pause);
-
-  const track = {
-    id: item.id,
-    url:
-      item.filePath.startsWith("http://") ||
-      item.filePath.startsWith("https://")
-        ? item.filePath
-        : item.filePath.startsWith("file:///")
-          ? item.filePath
-          : "file:///" + item.filePath,
-    title: item.title,
-    artist: item.artist,
-    duration: item.duration,
-  };
-
-  const { htmlAudio } = useAudio();
-
-  useEffect(() => {
-    const audio = htmlAudio.getAudioElement();
-    if (!audio) return;
-
-    const handleEnded = () => {
-      onStop();
-    };
-
-    audio.addEventListener("ended", handleEnded);
-    return () => {
-      audio.removeEventListener("ended", handleEnded);
-    };
-  }, [htmlAudio, onStop]);
-
-  useEffect(() => {
-    // Autoplay the track on mount by setting it as current.
-    const timer = setTimeout(() => {
-      setCurrentTrack(track);
-    }, 50);
-
-    return () => {
-      clearTimeout(timer);
-      pause();
-      setCurrentTrack(null);
-    };
-  }, [item.id, setCurrentTrack, pause]);
-
-  return (
-    <AudioPlayer
-      tracks={[]}
-      size="sm"
-      className="w-full shadow-none border-none bg-transparent rounded-none"
-      style={{ background: "transparent", border: "none", boxShadow: "none" }}
-    >
-      <AudioPlayerControlBar
-        variant="compact"
-        className="px-4 py-2 w-full flex items-center justify-between"
-      >
-        {/* Left: Title & Artist */}
-        <div className="flex flex-col gap-0.5 p-3 items-start justify-center w-1/4 min-w-[120px] overflow-hidden">
-          <div
-            className="font-bold text-shadow-black text-foreground truncate w-full"
-            title={item.title}
-          >
-            {item.title}
-          </div>
-          <div
-            className="text-muted-foreground text-shadow-black truncate w-full"
-            title={item.artist}
-          >
-            {item.artist}
-          </div>
-        </div>
-
-        {/* Center: Controls & Seek */}
-        <div className="flex flex-col items-center justify-center gap-1 flex-1 max-w-2xl px-4">
-          <div className="flex items-center ml-13.5 gap-4">
-            <AudioPlayerPlay
-              className="h-17 w-17 m-0! p-0! [&_svg]:h-6 bg-secondary border [&_svg]:w-6 rounded-full"
-              size="icon-lg"
-              variant="ghost"
-            />
-            <Button
-              variant="ghost"
-              size="lg"
-              style={{
-                width: "40px",
-                height: "40px",
-              }}
-              onClick={onStop}
-              className="text-muted-foreground hover:text-foreground"
-              title="Stop"
-            >
-              <SquareIcon className="h-4 w-4 fill-current" />
-            </Button>
-          </div>
-          <div className="flex items-center gap-2 w-full">
-            <AudioPlayerTimeDisplay className="text-xs" />
-            <AudioPlayerSeekBar />
-            <AudioPlayerTimeDisplay remaining className="text-xs" />
-          </div>
-        </div>
-
-        {/* Right: Volume */}
-        <div className="flex items-center justify-end w-1/4 min-w-[150px] gap-2">
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={onToggleVisualizer}
-                  className={cn(
-                    "text-muted-foreground hover:text-foreground shrink-0 rounded-full h-8 w-8",
-                    showVisualizer && "text-primary mix-blend-soft-light",
-                  )}
-                >
-                  <ActivityIcon className="h-4 w-4" />
-                </Button>
-              }
-            />
-            <TooltipContent>
-              Toggle Visiualizer {showVisualizer ? "off" : "on"}
-            </TooltipContent>
-          </Tooltip>
-          <AudioPlayerVolume />
-        </div>
-      </AudioPlayerControlBar>
-    </AudioPlayer>
-  );
-}
 
 function Library() {
   const [addAudioQueue, setAddAudioQueue] = useState<string[]>([]);
@@ -310,6 +160,7 @@ function Library() {
   const [managerOpen, setManagerOpen] = useState(false);
   const [recordingOpen, setRecordingOpen] = useState(false);
   const [addStreamOpen, setAddStreamOpen] = useState(false);
+  const [addSpotifyOpen, setAddSpotifyOpen] = useState(false);
   const { setHasUnsavedChanges, loaded } = useStateMachine();
   const [flowNodesData, setFlowNodesData] = useAtom(flowNodesAtom);
   const [timelineTracks, setTimelineTracks] = useAtom(timelineTracksAtom);
@@ -446,8 +297,11 @@ function Library() {
   }, [items]);
 
   const handleAddSpotify = useCallback(() => {
-    return null;
+    setAddSpotifyOpen(true);
   }, []);
+
+  const currentPlayback = useAtomValue(currentPlaybackAtom);
+  const setCurrentPlayback = useSetAtom(currentPlaybackAtom);
 
   const handleStopPlaying = useCallback(() => setPlayingItemId(null), []);
 
@@ -638,7 +492,7 @@ function Library() {
             <div
               className={cn(
                 "flex-1 overflow-y-auto w-full h-full p-4 transition-all duration-300",
-                playingItemId ? "pb-[160px]" : "pb-24",
+                (playingItemId || currentPlayback) ? "pb-[160px]" : "pb-24",
               )}
             >
               {/* Category Filter Combobox Row */}
@@ -738,6 +592,8 @@ function Library() {
                     filteredItems.map((item, index) => {
                       const isStream = !!(
                         item.isStream ||
+                        item.isSpotifyStream ||
+                        item.isSpotifyPlaylist ||
                         item.filePath.startsWith("http://") ||
                         item.filePath.startsWith("https://")
                       );
@@ -773,6 +629,7 @@ function Library() {
                           }
                           onPlay={() => {
                             setPlayingItemId(item.id);
+                            setCurrentPlayback(null);
                           }}
                           onRemove={handleRemoveItem}
                           onAddToFlow={handleAddToFlow}
@@ -899,6 +756,10 @@ function Library() {
         initialTitle={prefilledStreamTitle}
         initialUrl={prefilledStreamUrl}
       />
+      <AddFromSpotifyDialog
+        open={addSpotifyOpen}
+        onOpenChange={setAddSpotifyOpen}
+      />
       <AddAudioDialog
         open={addAudioOpen}
         onOpenChange={handleAddAudioOpenChange}
@@ -907,26 +768,55 @@ function Library() {
       />
       <motion.div
         initial={false}
-        animate={{ y: playingItemId ? 0 : "100%" }}
+        animate={{ y: (playingItemId || currentPlayback) ? 0 : "100%" }}
         transition={{ type: "spring", bounce: 0, duration: 0.4 }}
         className="fixed bottom-0 left-0 right-0 z-50 p-0 border-t shadow-2xl rounded-t-xl bg-card max-h-[80vh] flex flex-col overflow-hidden"
         style={{ pointerEvents: playingItemId ? "auto" : "none" }}
       >
         <VisualizerBackdrop visible={!!playingItemId && showVisualizer} />
         <div className="w-full flex flex-col py-1 relative z-10">
-          {playingItemId && (
-            <>
-              {items.find((i) => i.id === playingItemId) && (
+          {(() => {
+            if (playingItemId) {
+              const playingItem = items.find((i) => i.id === playingItemId);
+              if (!playingItem) return null;
+              return playingItem.isSpotifyStream || playingItem.isSpotifyPlaylist ? (
+                <SpotifyLibraryPlayer
+                  key={playingItemId}
+                  item={playingItem}
+                  onStop={handleStopPlaying}
+                />
+              ) : (
                 <LibraryAudioPlayerWrapper
                   key={playingItemId}
-                  item={items.find((i) => i.id === playingItemId)!}
+                  item={playingItem}
                   onStop={handleStopPlaying}
                   showVisualizer={showVisualizer}
                   onToggleVisualizer={() => setShowVisualizer(!showVisualizer)}
                 />
-              )}
-            </>
-          )}
+              );
+            }
+            if (currentPlayback) {
+              return (
+                <SpotifyLibraryPlayer
+                  key="__current_playback__"
+                  item={{
+                    id: "__current_playback__",
+                    title: currentPlayback.title,
+                    artist: currentPlayback.artist,
+                    albumArt: currentPlayback.albumArt,
+                    filePath: currentPlayback.uri,
+                    duration: currentPlayback.duration,
+                    addedAt: Date.now(),
+                    isSpotifyStream: !currentPlayback.isPlaylist || undefined,
+                    isSpotifyPlaylist: currentPlayback.isPlaylist || undefined,
+                  }}
+                  autoPlay={false}
+                  onStop={() => setCurrentPlayback(null)}
+                />
+              );
+            }
+            return null;
+          })()}
         </div>
       </motion.div>
     </AnimatedRoute>
@@ -969,6 +859,8 @@ function LibraryCard({
 }) {
   const isStream = !!(
     item.isStream ||
+    item.isSpotifyStream ||
+    item.isSpotifyPlaylist ||
     item.filePath.startsWith("http://") ||
     item.filePath.startsWith("https://")
   );

@@ -7,12 +7,22 @@ import { VitePlugin } from "@electron-forge/plugin-vite";
 import { FusesPlugin } from "@electron-forge/plugin-fuses";
 import { FuseV1Options, FuseVersion } from "@electron/fuses";
 
+// Native binary produced by `cargo build --release`. Must be listed in
+// extraResource so it lands outside the asar archive (native binaries
+// cannot be executed from within asar). Accessed at runtime via
+// process.resourcesPath + "/sonicplank-core[.exe]".
+const nativeBinaryExt = process.platform === "win32" ? ".exe" : "";
+const nativeBinaryPath = `./src-native/target/release/sonicplank-core${nativeBinaryExt}`;
+
 const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
     // Path without extension — Forge appends .ico on Windows, .icns on macOS,
     // .png on Linux. Place src/img/icon.ico alongside icon.png for Windows builds.
     icon: "./src/img/icon",
+    // Copies the Rust binary and icons into <app>/resources/ at package time.
+    // The binary is NOT inside the asar so Electron can spawn it as a child process.
+    extraResource: [nativeBinaryPath, "./src/img/icon.ico", "./src/img/icon.png"],
   },
   rebuildConfig: {},
   makers: [

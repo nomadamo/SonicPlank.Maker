@@ -1,0 +1,33 @@
+[package]
+name        = "sonicplank-core"
+version.workspace    = true
+edition.workspace    = true
+authors.workspace    = true
+license.workspace    = true
+description = "Native capture, encoding, and streaming core for SonicPlank"
+
+[[bin]]
+name = "sonicplank-core"
+path = "src/main.rs"
+
+[dependencies]
+sonicplank-ipc      = { workspace = true }
+tokio               = { workspace = true }
+serde               = { workspace = true }
+serde_json          = { workspace = true }
+notify              = { workspace = true }
+tracing             = { workspace = true }
+tracing-subscriber  = { workspace = true }
+anyhow              = { workspace = true }
+windows             = { workspace = true }
+ffmpeg-sys-next     = { workspace = true }
+
+[dev-dependencies]
+tokio               = { workspace = true, features = ["test-util", "full"] }
+proptest            = { workspace = true }
+mockall             = { workspace = true }
+rstest              = { workspace = true }
+insta               = { workspace = true }
+
+[lints]
+workspace   = true

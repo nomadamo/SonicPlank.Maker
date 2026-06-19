@@ -19,7 +19,9 @@ import {
   MusicIcon,
   ImageIcon,
   TagsIcon,
+  ClockIcon,
 } from "lucide-react";
+import { IconBrandSpotify } from "@tabler/icons-react";
 import { useLibraryStore } from "@/store/libraryStore";
 import {
   Select,
@@ -64,7 +66,10 @@ export function LibraryItemPropertiesDialog({
     setFilePath(item?.filePath ?? "");
   }, [item]);
 
-  const isStream = !!(
+  const isSpotify = !!(item?.isSpotifyStream || item?.isSpotifyPlaylist);
+
+  const isStream = !isSpotify && !!(
+    item?.isStream ||
     item?.filePath?.startsWith("http://") ||
     item?.filePath?.startsWith("https://")
   );
@@ -115,191 +120,240 @@ export function LibraryItemPropertiesDialog({
       <DialogContent style={{ maxWidth: "480px" }}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <MusicIcon className="h-5 w-5 text-primary" />
+            {isSpotify ? (
+              <IconBrandSpotify className="h-5 w-5 text-green-500" />
+            ) : (
+              <MusicIcon className="h-5 w-5 text-primary" />
+            )}
             Item Properties
           </DialogTitle>
           <DialogDescription>
-            Edit the metadata for this library item.
+            {isSpotify
+              ? "Spotify track metadata is read-only."
+              : "Edit the metadata for this library item."}
           </DialogDescription>
         </DialogHeader>
 
         <Separator />
 
-        <div className="flex flex-col gap-4 py-2">
-          {/* Title */}
-          <div className="flex flex-col gap-1.5">
-            <Label
-              htmlFor="lib-prop-title"
-              className="flex items-center gap-1.5"
-            >
-              <MusicIcon className="h-3.5 w-3.5 text-muted-foreground" />
-              Title
-            </Label>
-            <Input
-              id="lib-prop-title"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="Track title"
-            />
-          </div>
-
-          {/* Artist */}
-          {!isStream && (
-            <div className="flex flex-col gap-1.5">
-              <Label
-                htmlFor="lib-prop-artist"
-                className="flex items-center gap-1.5"
-              >
-                <UserIcon className="h-3.5 w-3.5 text-muted-foreground" />
-                Artist
-              </Label>
-              <Input
-                id="lib-prop-artist"
-                value={artist}
-                onChange={(e) => setArtist(e.target.value)}
-                placeholder="Artist name"
-              />
-            </div>
-          )}
-
-          {/* Category */}
-          {!isStream && (
-            <div className="flex flex-col gap-1.5">
-              <Label className="flex items-center gap-1.5">
-                <TagsIcon className="h-3.5 w-3.5 text-muted-foreground" />
-                Category
-              </Label>
-              <Select
-                value={categoryId || "unassigned"}
-                itemToStringLabel={(val) =>
-                  categories.map((c) => (c.id == val ? c.name : ""))
-                }
-                onValueChange={(val) =>
-                  setCategoryId(val === "unassigned" ? undefined : val)
-                }
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Select a category" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="unassigned">Unassigned</SelectItem>
-                  {categories.map((c) => (
-                    <SelectItem key={c.id} value={c.id}>
-                      {c.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          )}
-
-          {/* Stream URL */}
-          {isStream && (
-            <div className="flex flex-col gap-1.5">
-              <Label
-                htmlFor="lib-prop-url"
-                className="flex items-center gap-1.5"
-              >
-                <FileAudioIcon className="h-3.5 w-3.5 text-muted-foreground" />
-                Stream URL
-              </Label>
-              <Input
-                id="lib-prop-url"
-                value={filePath}
-                onChange={(e) => setFilePath(e.target.value)}
-                placeholder="Stream URL (http:// or https://)"
-              />
-            </div>
-          )}
-
-          {/* Album Art */}
-          <div className="flex flex-col gap-1.5">
-            <Label className="flex items-center gap-1.5">
-              <ImageIcon className="h-3.5 w-3.5 text-muted-foreground" />
-              {isStream ? "Image" : "Album Art"}
-            </Label>
-            <div className="flex items-center gap-4 mt-1">
-              <div
-                className="w-20 h-20 rounded-md border flex items-center justify-center bg-muted overflow-hidden cursor-pointer hover:opacity-80 transition-opacity"
-                onClick={() =>
-                  document.getElementById("album-art-upload")?.click()
-                }
-              >
-                {albumArt ? (
+        {isSpotify ? (
+          /* ── Spotify read-only view ── */
+          <div className="flex flex-col gap-4 py-2">
+            <div className="flex items-center gap-4">
+              <div className="w-20 h-20 rounded-md border bg-muted overflow-hidden shrink-0 flex items-center justify-center">
+                {item.albumArt ? (
                   <img
-                    src={albumArt}
-                    alt="Album Art"
+                    src={item.albumArt}
+                    alt={item.title}
                     className="w-full h-full object-cover"
                   />
                 ) : (
-                  <MusicIcon
-                    className="text-muted-foreground opacity-40"
-                    size={24}
-                  />
+                  <IconBrandSpotify className="h-8 w-8 text-green-500 opacity-60" />
                 )}
               </div>
-              <div className="flex flex-col gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
+              <div className="flex flex-col gap-1 min-w-0">
+                <p className="text-sm font-semibold truncate">{item.title}</p>
+                <p className="text-xs text-muted-foreground truncate flex items-center gap-1">
+                  <UserIcon className="h-3 w-3 shrink-0" />
+                  {item.artist || "—"}
+                </p>
+                {item.duration != null && (
+                  <p className="text-xs text-muted-foreground flex items-center gap-1">
+                    <ClockIcon className="h-3 w-3 shrink-0" />
+                    {formatDuration(item.duration)}
+                  </p>
+                )}
+                <span className="mt-1 inline-flex items-center gap-1 text-[10px] font-medium text-green-500 bg-green-500/10 px-1.5 py-0.5 rounded-sm w-fit">
+                  <IconBrandSpotify className="h-2.5 w-2.5" />
+                  Spotify
+                </span>
+              </div>
+            </div>
+          </div>
+        ) : (
+          /* ── Editable view ── */
+          <div className="flex flex-col gap-4 py-2">
+            {/* Title */}
+            <div className="flex flex-col gap-1.5">
+              <Label
+                htmlFor="lib-prop-title"
+                className="flex items-center gap-1.5"
+              >
+                <MusicIcon className="h-3.5 w-3.5 text-muted-foreground" />
+                Title
+              </Label>
+              <Input
+                id="lib-prop-title"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder="Track title"
+              />
+            </div>
+
+            {/* Artist */}
+            {!isStream && (
+              <div className="flex flex-col gap-1.5">
+                <Label
+                  htmlFor="lib-prop-artist"
+                  className="flex items-center gap-1.5"
+                >
+                  <UserIcon className="h-3.5 w-3.5 text-muted-foreground" />
+                  Artist
+                </Label>
+                <Input
+                  id="lib-prop-artist"
+                  value={artist}
+                  onChange={(e) => setArtist(e.target.value)}
+                  placeholder="Artist name"
+                />
+              </div>
+            )}
+
+            {/* Category */}
+            {!isStream && (
+              <div className="flex flex-col gap-1.5">
+                <Label className="flex items-center gap-1.5">
+                  <TagsIcon className="h-3.5 w-3.5 text-muted-foreground" />
+                  Category
+                </Label>
+                <Select
+                  value={categoryId || "unassigned"}
+                  itemToStringLabel={(val) =>
+                    categories.map((c) => (c.id == val ? c.name : ""))
+                  }
+                  onValueChange={(val) =>
+                    setCategoryId(val === "unassigned" ? undefined : val)
+                  }
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Select a category" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="unassigned">Unassigned</SelectItem>
+                    {categories.map((c) => (
+                      <SelectItem key={c.id} value={c.id}>
+                        {c.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            {/* Stream URL */}
+            {isStream && (
+              <div className="flex flex-col gap-1.5">
+                <Label
+                  htmlFor="lib-prop-url"
+                  className="flex items-center gap-1.5"
+                >
+                  <FileAudioIcon className="h-3.5 w-3.5 text-muted-foreground" />
+                  Stream URL
+                </Label>
+                <Input
+                  id="lib-prop-url"
+                  value={filePath}
+                  onChange={(e) => setFilePath(e.target.value)}
+                  placeholder="Stream URL (http:// or https://)"
+                />
+              </div>
+            )}
+
+            {/* Album Art */}
+            <div className="flex flex-col gap-1.5">
+              <Label className="flex items-center gap-1.5">
+                <ImageIcon className="h-3.5 w-3.5 text-muted-foreground" />
+                {isStream ? "Image" : "Album Art"}
+              </Label>
+              <div className="flex items-center gap-4 mt-1">
+                <div
+                  className="w-20 h-20 rounded-md border flex items-center justify-center bg-muted overflow-hidden cursor-pointer hover:opacity-80 transition-opacity"
                   onClick={() =>
                     document.getElementById("album-art-upload")?.click()
                   }
                 >
-                  Change Image
-                </Button>
-                {albumArt && (
+                  {albumArt ? (
+                    <img
+                      src={albumArt}
+                      alt="Album Art"
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <MusicIcon
+                      className="text-muted-foreground opacity-40"
+                      size={24}
+                    />
+                  )}
+                </div>
+                <div className="flex flex-col gap-2">
                   <Button
-                    variant="ghost"
+                    variant="outline"
                     size="sm"
-                    className="text-muted-foreground h-8"
-                    onClick={() => setAlbumArt("")}
+                    onClick={() =>
+                      document.getElementById("album-art-upload")?.click()
+                    }
                   >
-                    Remove
+                    Change Image
                   </Button>
+                  {albumArt && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="text-muted-foreground h-8"
+                      onClick={() => setAlbumArt("")}
+                    >
+                      Remove
+                    </Button>
+                  )}
+                </div>
+                <input
+                  type="file"
+                  id="album-art-upload"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handleImageUpload}
+                />
+              </div>
+            </div>
+
+            <Separator />
+
+            {/* Read-only metadata */}
+            {!isStream && (
+              <div className="flex flex-col gap-2">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                  File Info
+                </p>
+                <div className="flex items-start gap-2">
+                  <FileAudioIcon className="h-3.5 w-3.5 mt-0.5 text-muted-foreground shrink-0" />
+                  <p
+                    className="text-xs text-muted-foreground break-all"
+                    title={item.filePath}
+                  >
+                    {item.filePath || "—"}
+                  </p>
+                </div>
+                {item.duration != null && (
+                  <p className="text-xs text-muted-foreground">
+                    Duration: {formatDuration(item.duration)}
+                  </p>
                 )}
               </div>
-              <input
-                type="file"
-                id="album-art-upload"
-                accept="image/*"
-                className="hidden"
-                onChange={handleImageUpload}
-              />
-            </div>
+            )}
           </div>
-
-          <Separator />
-
-          {/* Read-only metadata */}
-          {!isStream && (
-            <div className="flex flex-col gap-2">
-              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                File Info
-              </p>
-              <div className="flex items-start gap-2">
-                <FileAudioIcon className="h-3.5 w-3.5 mt-0.5 text-muted-foreground shrink-0" />
-                <p
-                  className="text-xs text-muted-foreground break-all"
-                  title={item.filePath}
-                >
-                  {item.filePath || "—"}
-                </p>
-              </div>
-              {item.duration != null && (
-                <p className="text-xs text-muted-foreground">
-                  Duration: {formatDuration(item.duration)}
-                </p>
-              )}
-            </div>
-          )}
-        </div>
+        )}
 
         <div className="flex justify-end gap-2 pt-2">
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button onClick={handleSave}>Save Changes</Button>
+          {isSpotify ? (
+            <Button onClick={() => onOpenChange(false)}>Close</Button>
+          ) : (
+            <>
+              <Button variant="ghost" onClick={() => onOpenChange(false)}>
+                Cancel
+              </Button>
+              <Button onClick={handleSave}>Save Changes</Button>
+            </>
+          )}
         </div>
       </DialogContent>
     </Dialog>

@@ -11,6 +11,7 @@ import {
   Radio as RadioIcon,
   SquareDashedMousePointer,
   ScanEyeIcon,
+  ChevronDown as ChevronDownIcon,
 } from "lucide-react";
 import { FlowNodeType, OverlayElement } from "@/types/flow-node";
 import { chatMessagesStore, type ChatMessage } from "@/store/chatMessagesStore";
@@ -27,6 +28,27 @@ import {
   type H264EncoderHandle,
 } from "@/utils/webcodecs-streamer";
 import type { StreamStats } from "../global";
+
+function wrapText(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxW: number,
+): string[] {
+  const words = text.split(" ");
+  const lines: string[] = [];
+  let current = "";
+  for (const word of words) {
+    const candidate = current ? `${current} ${word}` : word;
+    if (current !== "" && ctx.measureText(candidate).width > maxW) {
+      lines.push(current);
+      current = word;
+    } else {
+      current = candidate;
+    }
+  }
+  if (current) lines.push(current);
+  return lines.length > 0 ? lines : [""];
+}
 
 function drawRoundedRect(
   ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
@@ -184,6 +206,9 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
   }, [settings.streamUrl, settings.streamToken]);
   const [showStreamInput, setShowStreamInput] = useState(false);
   const [streamStats, setStreamStats] = useState<StreamStats | null>(null);
+  const [isStopping, setIsStopping] = useState(false);
+  const [isStarting, setIsStarting] = useState(false);
+  const [statsExpanded, setStatsExpanded] = useState(false);
   // rAF handle for the JPEG fallback capture loop (non-null = fallback streaming active)
   const frameIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   // Active WebCodecs encoder handle (null when falling back to the JPEG path)
@@ -301,12 +326,23 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
   }, []);
 
   const resolutionPresets = useMemo(() => {
-    if (captureSourceId?.startsWith("screen:") && displays.length > 0) {
-      const idStr = captureSourceId.replace("screen:", "");
-      const activeDisplay =
-        displays.find((d) => String(d.id) === idStr) ||
-        displays.find((d) => d.isPrimary) ||
-        displays[0];
+    const isScreenSource = captureSourceId?.startsWith("screen:");
+    const isMonitorSource = captureSourceId?.startsWith("monitor:");
+    if ((isScreenSource || isMonitorSource) && displays.length > 0) {
+      let activeDisplay: any = null;
+      if (isMonitorSource) {
+        const index = parseInt(captureSourceId!.replace("monitor:", ""), 10);
+        activeDisplay =
+          !isNaN(index) && index >= 0 && index < displays.length
+            ? displays[index]
+            : (displays.find((d: any) => d.isPrimary) ?? displays[0]);
+      } else {
+        const idStr = captureSourceId!.replace("screen:", "");
+        activeDisplay =
+          displays.find((d) => String(d.id) === idStr) ||
+          displays.find((d) => d.isPrimary) ||
+          displays[0];
+      }
       if (activeDisplay) {
         const w = activeDisplay.bounds.width;
         const h = activeDisplay.bounds.height;
@@ -498,7 +534,8 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
         artist,
         audioNodeId,
         duration,
-        maxMessages: data.maxMessages !== undefined ? Number(data.maxMessages) : 10,
+        maxMessages:
+          data.maxMessages !== undefined ? Number(data.maxMessages) : 10,
       });
     });
 
@@ -1138,35 +1175,57 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
         ctx.fill();
 
         if (messages.length > 0) {
-          // Clip text to the content area
+          ctx.save();
           ctx.beginPath();
           ctx.rect(xVal + padX, yVal + padY, wVal - padX * 2, hVal - padY * 2);
           ctx.clip();
 
           ctx.textBaseline = "top";
-          const maxVisible = Math.floor((hVal - padY * 2) / lineH);
-          const visible = messages.slice(-maxVisible);
-          let ty = yVal + hVal - padY - lineH;
+          const maxLines = Math.floor((hVal - padY * 2) / lineH);
+          const contentW = wVal - padX * 2;
 
-          for (let i = visible.length - 1; i >= 0; i--) {
-            const msg = visible[i];
+          // Pre-compute wrapped lines newest-first until we fill the box
+          type RenderedMsg = {
+            msg: ChatMessage;
+            prefix: string;
+            prefixW: number;
+            lines: string[];
+          };
+          const rendered: RenderedMsg[] = [];
+          let totalLines = 0;
+          for (let i = messages.length - 1; i >= 0; i--) {
+            const msg = messages[i];
             const prefix = `${msg.username}: `;
-
-            ctx.fillStyle = msg.color || "#9147ff";
-            ctx.fillText(prefix, xVal + padX, ty);
-
             const prefixW = ctx.measureText(prefix).width;
-            ctx.fillStyle = "#ffffff";
-            ctx.fillText(
+            const lines = wrapText(
+              ctx,
               msg.message,
-              xVal + padX + prefixW,
-              ty,
-              wVal - padX * 2 - prefixW,
+              Math.max(1, contentW - prefixW),
             );
-
-            ty -= lineH;
-            if (ty < yVal + padY) break;
+            if (totalLines + lines.length > maxLines) break;
+            totalLines += lines.length;
+            rendered.unshift({ msg, prefix, prefixW, lines });
           }
+
+          // Draw bottom-up
+          let ty = yVal + hVal - padY - lineH;
+          for (let i = rendered.length - 1; i >= 0; i--) {
+            const { msg, prefix, prefixW, lines } = rendered[i];
+            for (let li = lines.length - 1; li >= 0; li--) {
+              if (li === 0) {
+                ctx.fillStyle = msg.color || "#9147ff";
+                ctx.fillText(prefix, xVal + padX, ty);
+                ctx.fillStyle = "#ffffff";
+                ctx.fillText(lines[li], xVal + padX + prefixW, ty);
+              } else {
+                ctx.fillStyle = "#ffffff";
+                ctx.fillText(lines[li], xVal + padX + prefixW, ty);
+              }
+              ty -= lineH;
+            }
+          }
+
+          ctx.restore();
         }
       }
 
@@ -1406,6 +1465,42 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
   // transcode loop.
   const startStreaming = useCallback(async () => {
     if (!rtmpUrl || !captureSourceId) return;
+
+    setIsStarting(true);
+    try {
+    // ── Native WGC path — bypass Chromium capture + WebCodecs entirely ─────────
+    if (
+      captureSourceId.startsWith("monitor:") ||
+      captureSourceId.startsWith("window:")
+    ) {
+      const streamFps = settings.streamFps ?? 30;
+      const presetW =
+        typeof activePreset.width === "number" && activePreset.width > 0
+          ? activePreset.width
+          : undefined;
+      const presetH =
+        typeof activePreset.height === "number" && activePreset.height > 0
+          ? activePreset.height
+          : undefined;
+      try {
+        await window.electron.startNativeStream(captureSourceId, {
+          rtmpUrl,
+          fps: streamFps,
+          outputWidth: presetW,
+          outputHeight: presetH,
+          fitMode: fitModeRef.current,
+          encoder: settings.streamEncoder || "libx264",
+        });
+      } catch (err) {
+        console.error("[TargetOutputNode] Failed to start native stream:", err);
+        showToast("Failed to start native stream.");
+        return;
+      }
+      setIsStreaming(true);
+      setShowStreamInput(false);
+      return;
+    }
+
     const canvas = canvasRef.current;
     if (!canvas) return;
 
@@ -1506,7 +1601,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
       bitrateKbps,
       onChunk: (buffer) => {
         window.electron.pushStreamData(buffer);
-        console.log(" --- Chunk pushed --- ");
+        //console.log(" --- Chunk pushed --- ");
       },
       onError: (err) => console.error("[TargetOutputNode] H.264 encoder:", err),
     });
@@ -1620,6 +1715,9 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
 
     setIsStreaming(true);
     setShowStreamInput(false);
+    } finally {
+      setIsStarting(false);
+    }
   }, [
     stream,
     rtmpUrl,
@@ -1631,33 +1729,47 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
     startCapture,
     renderCardCompositor,
     settings.streamEncoder,
-    settings.streamBitrateKbps,
     settings.streamFps,
     settings.streamDelayMs,
   ]);
 
   const stopStreaming = useCallback(async () => {
-    // Stop the compositor from feeding new frames to the encoder
-    isStreamingRef.current = false;
-    streamDimsRef.current = null;
-    // Stop the JPEG fallback rAF loop, if it was running
-    if (frameIntervalRef.current !== null) {
-      cancelAnimationFrame(frameIntervalRef.current as unknown as number);
-      frameIntervalRef.current = null;
+    setIsStopping(true);
+    try {
+      // ── Native WGC path ───────────────────────────────────────────────────────
+      if (
+        captureSourceId?.startsWith("monitor:") ||
+        captureSourceId?.startsWith("window:")
+      ) {
+        await window.electron.stopNativeStream();
+        setIsStreaming(false);
+        return;
+      }
+
+      // Stop the compositor from feeding new frames to the encoder
+      isStreamingRef.current = false;
+      streamDimsRef.current = null;
+      // Stop the JPEG fallback rAF loop, if it was running
+      if (frameIntervalRef.current !== null) {
+        cancelAnimationFrame(frameIntervalRef.current as unknown as number);
+        frameIntervalRef.current = null;
+      }
+      // Flush + release the WebCodecs encoder (drains remaining frames to FFmpeg)
+      if (h264EncoderRef.current) {
+        await h264EncoderRef.current.close();
+        h264EncoderRef.current = null;
+      }
+      await window.electron.stopStream();
+      setIsStreaming(false);
+      // If streaming auto-started the capture (preview wasn't open), stop it now
+      if (streamOwnsCaptureRef.current && !isPreviewActive) {
+        stopCapture();
+        streamOwnsCaptureRef.current = false;
+      }
+    } finally {
+      setIsStopping(false);
     }
-    // Flush + release the WebCodecs encoder (drains remaining frames to FFmpeg)
-    if (h264EncoderRef.current) {
-      await h264EncoderRef.current.close();
-      h264EncoderRef.current = null;
-    }
-    await window.electron.stopStream();
-    setIsStreaming(false);
-    // If streaming auto-started the capture (preview wasn't open), stop it now
-    if (streamOwnsCaptureRef.current && !isPreviewActive) {
-      stopCapture();
-      streamOwnsCaptureRef.current = false;
-    }
-  }, [isPreviewActive, stopCapture]);
+  }, [captureSourceId, isPreviewActive, stopCapture]);
 
   // Subscribe to live FFmpeg stream stats while streaming is active
   useEffect(() => {
@@ -1873,18 +1985,33 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
 
               <button
                 onClick={
-                  isStreaming
+                  isStreaming && !isStopping
                     ? stopStreaming
-                    : () => setShowStreamInput(!showStreamInput)
+                    : !isStreaming && !isStarting
+                      ? () => setShowStreamInput(!showStreamInput)
+                      : undefined
                 }
+                disabled={isStopping || isStarting}
                 className={cn(
-                  "flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-[10px] font-semibold uppercase tracking-wider cursor-pointer border transition-all",
-                  isStreaming
-                    ? "bg-purple-500/10 text-purple-400 border-purple-500/20 hover:bg-purple-500/20 animate-pulse"
-                    : "bg-zinc-900 text-zinc-300 border-zinc-800 hover:bg-zinc-800 hover:text-white",
+                  "flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-[10px] font-semibold uppercase tracking-wider border transition-all",
+                  isStopping || isStarting
+                    ? "bg-zinc-800 text-zinc-500 border-zinc-700 cursor-not-allowed"
+                    : isStreaming
+                      ? "bg-purple-500/10 text-purple-400 border-purple-500/20 hover:bg-purple-500/20 animate-pulse cursor-pointer"
+                      : "bg-zinc-900 text-zinc-300 border-zinc-800 hover:bg-zinc-800 hover:text-white cursor-pointer",
                 )}
               >
-                {isStreaming ? (
+                {isStopping ? (
+                  <>
+                    <span className="w-2.5 h-2.5 rounded-full border border-zinc-500 border-t-transparent animate-spin inline-block" />{" "}
+                    Ending...
+                  </>
+                ) : isStarting ? (
+                  <>
+                    <span className="w-2.5 h-2.5 rounded-full border border-zinc-500 border-t-transparent animate-spin inline-block" />{" "}
+                    Starting...
+                  </>
+                ) : isStreaming ? (
                   <>
                     <SquareIcon className="w-2.5 h-2.5 fill-current" /> End
                     Stream
@@ -1942,28 +2069,8 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
                 />
               </div>
 
-              {/* Bitrate + FPS + Encoder */}
+              {/* FPS + Encoder */}
               <div className="flex gap-2 mt-1">
-                <div className="flex flex-col gap-1 flex-1">
-                  <span className="text-[9px] font-semibold text-zinc-400 uppercase tracking-wider">
-                    Bitrate (Kbps)
-                  </span>
-                  <input
-                    type="number"
-                    value={settings.streamBitrateKbps ?? 6000}
-                    onChange={(e) => {
-                      const val = parseInt(e.target.value, 10);
-                      updateSettings({
-                        streamBitrateKbps: isNaN(val) ? undefined : val,
-                      });
-                    }}
-                    className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200 focus:border-indigo-500 focus:outline-none font-mono"
-                    placeholder="6000"
-                    min={500}
-                    max={51000}
-                    step={500}
-                  />
-                </div>
                 <div className="flex flex-col gap-1 w-16 shrink-0">
                   <span className="text-[9px] font-semibold text-zinc-400 uppercase tracking-wider">
                     FPS
@@ -2041,9 +2148,22 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
                 </button>
                 <button
                   onClick={startStreaming}
-                  className="text-[10px] px-2 py-0.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded font-medium cursor-pointer"
+                  disabled={isStarting}
+                  className={cn(
+                    "text-[10px] px-2 py-0.5 rounded font-medium flex items-center gap-1.5 transition-all",
+                    isStarting
+                      ? "bg-zinc-700 text-zinc-400 cursor-not-allowed"
+                      : "bg-indigo-600 hover:bg-indigo-500 text-white cursor-pointer",
+                  )}
                 >
-                  Start Stream
+                  {isStarting ? (
+                    <>
+                      <span className="w-2 h-2 rounded-full border border-zinc-400 border-t-transparent animate-spin inline-block" />
+                      Starting...
+                    </>
+                  ) : (
+                    "Start Stream"
+                  )}
                 </button>
               </div>
             </div>
@@ -2067,60 +2187,118 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
           )}
         </div>
 
-        {/* Live stream stats bar */}
+        {/* Live stream stats */}
         {isStreaming && streamStats && (
-          <div className="flex flex-col gap-1.5 nodrag nopan nowheel">
-            <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">
-              Stream statistics
-            </label>
-            <div className="flex items-center gap-2 justify-between mt-1">
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5 px-2 py-1.5 bg-zinc-950 border border-purple-500/20 rounded-lg text-[9px] font-mono">
-                <span className="text-zinc-500 font-sans font-semibold uppercase tracking-wider text-[8px]">
-                  Live
+          <div className="nodrag nopan nowheel flex flex-col gap-1">
+            {/* Compact row — always visible */}
+            <div className="flex items-center gap-2 px-2 py-1.5 bg-zinc-950 border border-purple-500/20 rounded-lg text-[9px] font-mono">
+              <span className="flex items-center gap-1 text-purple-400 font-sans font-semibold uppercase tracking-wider text-[8px] shrink-0">
+                <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse" />
+                Live
+              </span>
+              <span className="text-zinc-700">│</span>
+              <span
+                className={cn(
+                  "tabular-nums w-[4ch] text-right font-semibold",
+                  (streamStats.fps ?? 0) >= 25
+                    ? "text-emerald-400"
+                    : (streamStats.fps ?? 0) >= 15
+                      ? "text-amber-400"
+                      : "text-red-400",
+                )}
+              >
+                {streamStats.fps?.toFixed(1) ?? "—"}
+              </span>
+              <span className="text-zinc-600">fps</span>
+              <span className="text-zinc-700">│</span>
+              <span className="text-zinc-400 tabular-nums">
+                {streamStats.time ?? "00:00:00"}
+              </span>
+              {streamStats.dropped != null && streamStats.dropped > 0 && (
+                <>
+                  <span className="text-zinc-700">│</span>
+                  <span className="text-red-400 tabular-nums">
+                    ▲{streamStats.dropped}
+                  </span>
+                </>
+              )}
+              <button
+                onClick={() => setStatsExpanded((v) => !v)}
+                className="ml-auto text-zinc-600 hover:text-zinc-300 cursor-pointer transition-colors"
+                title={statsExpanded ? "Hide stats" : "Show stats"}
+              >
+                <ChevronDownIcon
+                  className={cn(
+                    "w-3 h-3 transition-transform duration-150",
+                    statsExpanded && "rotate-180",
+                  )}
+                />
+              </button>
+            </div>
+
+            {/* Expanded detail grid */}
+            {statsExpanded && (
+              <div className="grid grid-cols-[3.5rem_1fr] gap-x-3 gap-y-0.5 px-2.5 py-2 bg-zinc-950 border border-zinc-800 rounded-lg text-[9px] font-mono">
+                <span className="text-zinc-600 uppercase tracking-wider text-[8px] self-center">FPS</span>
+                <span
+                  className={cn(
+                    "tabular-nums font-semibold",
+                    (streamStats.fps ?? 0) >= 25
+                      ? "text-emerald-400"
+                      : (streamStats.fps ?? 0) >= 15
+                        ? "text-amber-400"
+                        : "text-red-400",
+                  )}
+                >
+                  {streamStats.fps?.toFixed(1) ?? "—"}
                 </span>
-                {streamStats.fps !== null && (
-                  <span
-                    className={cn(
-                      "font-semibold",
-                      streamStats.fps >= 25
-                        ? "text-emerald-400"
-                        : streamStats.fps >= 15
-                          ? "text-amber-400"
-                          : "text-red-400",
-                    )}
-                  >
-                    {streamStats.fps.toFixed(1)} fps
-                  </span>
-                )}
-                {streamStats.bitrate && (
-                  <span className="text-zinc-300">{streamStats.bitrate}</span>
-                )}
+
+                <span className="text-zinc-600 uppercase tracking-wider text-[8px] self-center">Frames</span>
+                <span className="text-zinc-300 tabular-nums">
+                  {streamStats.frame?.toLocaleString() ?? "—"}
+                </span>
+
+                <span className="text-zinc-600 uppercase tracking-wider text-[8px] self-center">Uptime</span>
+                <span className="text-zinc-300 tabular-nums">
+                  {streamStats.time ?? "—"}
+                </span>
+
+                <span className="text-zinc-600 uppercase tracking-wider text-[8px] self-center">Bitrate</span>
+                <span className="text-zinc-300 tabular-nums">
+                  {streamStats.bitrate ?? "—"}
+                </span>
+
+                <span className="text-zinc-600 uppercase tracking-wider text-[8px] self-center">Dropped</span>
+                <span
+                  className={cn(
+                    "tabular-nums",
+                    streamStats.dropped != null && streamStats.dropped > 0
+                      ? "text-red-400"
+                      : "text-zinc-500",
+                  )}
+                >
+                  {streamStats.dropped ?? 0}
+                </span>
+
                 {streamStats.speed && (
-                  <span
-                    className={cn(
-                      streamStats.speed && parseFloat(streamStats.speed) >= 0.9
-                        ? "text-emerald-400"
-                        : streamStats.speed &&
-                            parseFloat(streamStats.speed) >= 0.5
-                          ? "text-amber-400"
-                          : "text-red-400",
-                    )}
-                  >
-                    {streamStats.speed}
-                  </span>
-                )}
-                {streamStats.dropped !== null && streamStats.dropped > 0 && (
-                  <span className="text-red-400">
-                    ⚠ {streamStats.dropped} dropped
-                  </span>
-                )}
-                {streamStats.time && (
-                  <span className="text-zinc-500 ml-auto">
-                    {streamStats.time}
-                  </span>
+                  <>
+                    <span className="text-zinc-600 uppercase tracking-wider text-[8px] self-center">Speed</span>
+                    <span
+                      className={cn(
+                        "tabular-nums",
+                        parseFloat(streamStats.speed) >= 0.9
+                          ? "text-emerald-400"
+                          : parseFloat(streamStats.speed) >= 0.5
+                            ? "text-amber-400"
+                            : "text-red-400",
+                      )}
+                    >
+                      {streamStats.speed}
+                    </span>
+                  </>
                 )}
               </div>
-            </div>
+            )}
           </div>
         )}
       </BaseNodeCard>

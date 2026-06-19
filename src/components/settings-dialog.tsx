@@ -10,7 +10,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { useSettings } from "@/store/settingsStore";
 import { Button } from "@/components/ui/button";
-import { Moon, Sun, Monitor, Speaker } from "lucide-react";
+import { Moon, Sun, Monitor } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/motion/tabs";
 import {
   Select,
@@ -19,6 +19,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import type { EncoderConfig } from "@/global";
+import {
+  NVENC_OPTS, X264_OPTS, AMF_OPTS, QSV_OPTS,
+  ENCODER_LABELS, makeDefaultEncoderConfig, type EncoderKey,
+} from "@/constants/encoder";
 import { useStateMachine } from "@/store/stateMachine";
 import { Slider } from "@/components/ui/slider";
 import { Input } from "@/components/ui/input";
@@ -46,6 +51,190 @@ import {
 interface SettingsDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+}
+
+// ── Helper sub-components ─────────────────────────────────────────────────────
+
+function FieldRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="grid grid-cols-[7.5rem_1fr] items-center gap-2">
+      <span className="text-xs text-zinc-400 text-right">{label}</span>
+      {children}
+    </div>
+  );
+}
+
+function OptionSelect({
+  value,
+  options,
+  onChange,
+}: {
+  value: string;
+  options: readonly string[];
+  onChange: (v: string) => void;
+}) {
+  return (
+    <Select value={value || "__none__"} onValueChange={(v: string) => onChange(v === "__none__" ? "" : v)}>
+      <SelectTrigger className="h-7 text-xs font-mono">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="__none__" className="text-xs font-mono text-zinc-500">— default —</SelectItem>
+        {options.map((o) => (
+          <SelectItem key={o} value={o} className="text-xs font-mono">{o}</SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
+function NumField({
+  value,
+  placeholder,
+  step = 1,
+  onChange,
+}: {
+  value: number | null;
+  placeholder: string;
+  step?: number;
+  onChange: (v: number | null) => void;
+}) {
+  return (
+    <Input
+      type="number"
+      step={step}
+      className="h-7 text-xs font-mono"
+      placeholder={placeholder}
+      value={value ?? ""}
+      onChange={(e) => {
+        const n = step < 1 ? parseFloat(e.target.value) : parseInt(e.target.value, 10);
+        onChange(isNaN(n) ? null : n);
+      }}
+    />
+  );
+}
+
+// ── Core encoder settings tab ─────────────────────────────────────────────────
+
+// EncoderKey imported from @/constants/encoder
+
+const ENCODER_OPT_MAP = {
+  h264_nvenc: NVENC_OPTS,
+  libx264:    X264_OPTS,
+  h264_amf:   AMF_OPTS,
+  h264_qsv:   QSV_OPTS,
+} as const;
+
+function CoreTab() {
+  const [config, setConfigState] = React.useState<EncoderConfig | null>(null);
+  const [activeEncoder, setActiveEncoder] = React.useState<EncoderKey>("h264_nvenc");
+  const [isDirty, setIsDirty] = React.useState(false);
+  const [applyState, setApplyState] = React.useState<"idle" | "saved">("idle");
+
+  React.useEffect(() => {
+    window.electron.getEncoderConfig().then((cfg) => {
+      setConfigState(cfg ?? makeDefaultEncoderConfig());
+    }).catch(console.error);
+  }, []);
+
+  const setOption = React.useCallback((encoder: EncoderKey, key: string, val: string) => {
+    setConfigState((prev) => {
+      if (!prev) return prev;
+      const opts = { ...prev[encoder].options };
+      if (val) opts[key] = val; else delete opts[key];
+      return { ...prev, [encoder]: { ...prev[encoder], options: opts } };
+    });
+    setIsDirty(true);
+    setApplyState("idle");
+  }, []);
+
+  const setBitrate = React.useCallback((val: number | null) => {
+    setConfigState((prev) => {
+      if (!prev) return prev;
+      return { ...prev, bitrate_kbps: val ?? 6000 };
+    });
+    setIsDirty(true);
+    setApplyState("idle");
+  }, []);
+
+  const handleApply = React.useCallback(() => {
+    if (!config) return;
+    window.electron.setEncoderConfig(config)
+      .then(() => {
+        setIsDirty(false);
+        setApplyState("saved");
+        setTimeout(() => setApplyState("idle"), 2000);
+      })
+      .catch(console.error);
+  }, [config]);
+
+  if (!config) {
+    return (
+      <TabsContent value="core" className="flex items-center justify-center min-h-[360px]">
+        <span className="text-xs text-zinc-500">Loading…</span>
+      </TabsContent>
+    );
+  }
+
+  const preset = config[activeEncoder];
+  const opt = (key: string) => preset.options[key] ?? "";
+  const opts = ENCODER_OPT_MAP[activeEncoder] as Record<string, { label: string; values: readonly string[] }>;
+
+  return (
+    <TabsContent value="core" className="flex flex-col gap-3 min-h-[360px]">
+      <div className="flex flex-col gap-1 text-left">
+        <label className="text-sm font-medium">Encoder Presets</label>
+        <span className="text-xs text-muted-foreground">
+          Applied at next stream start. Click Apply to save.
+        </span>
+      </div>
+
+      <FieldRow label="Stream Bitrate (kbps)">
+        <NumField value={config.bitrate_kbps} placeholder="8000" onChange={setBitrate} />
+      </FieldRow>
+
+      <div className="flex gap-1.5">
+        {(Object.keys(ENCODER_LABELS) as EncoderKey[]).map((enc) => (
+          <Button
+            key={enc}
+            size="sm"
+            variant={activeEncoder === enc ? "default" : "outline"}
+            className="text-xs flex-1 px-1"
+            onClick={() => setActiveEncoder(enc)}
+          >
+            {ENCODER_LABELS[enc]}
+          </Button>
+        ))}
+      </div>
+
+      <Separator />
+
+      <div className="flex flex-col gap-2.5">
+        {Object.entries(opts).map(([key, def]) => (
+          <FieldRow key={key} label={def.label}>
+            <OptionSelect
+              value={opt(key)}
+              options={def.values}
+              onChange={(v) => setOption(activeEncoder, key, v)}
+            />
+          </FieldRow>
+        ))}
+
+      </div>
+
+      <div className="flex items-center gap-3 justify-end mt-auto pt-1">
+        {applyState === "saved" && (
+          <span className="text-xs text-green-500">Saved</span>
+        )}
+        {isDirty && applyState !== "saved" && (
+          <span className="text-xs text-zinc-500">Unsaved changes</span>
+        )}
+        <Button size="sm" disabled={!isDirty} onClick={handleApply}>
+          Apply
+        </Button>
+      </div>
+    </TabsContent>
+  );
 }
 
 const INTERVAL_OPTIONS: { label: string; value: number }[] = [
@@ -119,10 +308,11 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
         <Separator />
 
         <Tabs defaultValue="general" variant="segment" className="w-full">
-          <TabsList className="w-full grid grid-cols-3 mb-4">
+          <TabsList className="w-full grid grid-cols-4 mb-4">
             <TabsTrigger value="general" className="w-full">General</TabsTrigger>
             <TabsTrigger value="audio" className="w-full">Audio</TabsTrigger>
             <TabsTrigger value="output" className="w-full">Output</TabsTrigger>
+            <TabsTrigger value="core" className="w-full">Core</TabsTrigger>
           </TabsList>
 
           {/* General Tab */}
@@ -385,6 +575,9 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
               />
             </div>
           </TabsContent>
+
+          {/* Core Tab */}
+          <CoreTab />
 
           {/* Output / Recording Tab */}
           <TabsContent value="output" className="flex flex-col gap-4 min-h-[360px]">

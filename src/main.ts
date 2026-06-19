@@ -19,6 +19,14 @@ import {
 import getAudioData from "./utils/get-audio-data";
 import path from "node:path";
 import fs from "node:fs";
+import crypto from "node:crypto";
+import net from "node:net";
+import readline from "node:readline";
+import {
+  SPOTIFY_CLIENT_ID,
+  SPOTIFY_REDIRECT_URI,
+  SPOTIFY_SCOPES,
+} from "./constants/audio";
 import started from "electron-squirrel-startup";
 import { inDevelopment } from "./constants";
 import { spawn } from "node:child_process";
@@ -111,6 +119,292 @@ function stopDelayFlush(flushRemaining = true) {
 function getStdin(): NodeJS.WritableStream | null {
   const proc = ffmpegProcess as { stdin?: NodeJS.WritableStream } | null;
   return proc?.stdin?.writable ? proc.stdin : null;
+}
+
+// ── Native core process ──────────────────────────────────────────────────────
+
+const CORE_BINARY_EXT = process.platform === "win32" ? ".exe" : "";
+
+let coreProcess: ReturnType<typeof spawn> | null = null;
+// Data pipe — carries binary frame data (Phase 1+). Read-only from Electron's
+// perspective; commands go to stdin, events come from stdout.
+let coreDataSocket: net.Socket | null = null;
+
+// One-shot listeners keyed by event type. waitForCoreEvent() registers here;
+// the persistent stdout readline fires them as events arrive.
+const coreEventListeners = new Map<
+  string,
+  (ev: Record<string, unknown>) => void
+>();
+let coreStdoutRl: readline.Interface | null = null;
+
+// Accumulates partial binary frames arriving from the data pipe.
+let coreFrameBuffer = Buffer.alloc(0);
+
+// Reference count for the Rust WGC capture session. Multiple callers (preview
+// and streaming) may share a single session; StartCapture is sent only when
+// going from 0→1, StopCapture only when going from 1→0.
+let captureRefCount = 0;
+let activeCaptureSourceId: string | null = null;
+let nativeStreamStartAt: number | null = null;
+// Set when the renderer has explicitly requested native preview frames.
+// Rust is told via enable_preview/disable_preview commands; this mirrors it
+// on the JS side so parseDataPipeFrame can gate the IPC broadcast.
+let nativePreviewActive = false;
+
+// Set up a persistent readline on core stdout. Must be called after coreProcess
+// is assigned. Subsequent calls are no-ops (already started guard).
+function startCoreEventLoop(): void {
+  if (!coreProcess?.stdout || coreStdoutRl) return;
+  coreStdoutRl = readline.createInterface({ input: coreProcess.stdout });
+  coreStdoutRl.on("line", (line) => {
+    try {
+      const ev = JSON.parse(line) as Record<string, unknown>;
+      const type = ev.type as string | undefined;
+      if (!type) return;
+      // stream_status fires repeatedly — broadcast directly rather than consuming a one-shot listener.
+      if (type === "stream_status") {
+        const frame = (ev.frame as number) ?? 0;
+        const fps = (ev.fps as number) ?? 0;
+        const bitrateKbps = (ev.bitrate_kbps as number) ?? 0;
+        const dropped = (ev.dropped as number) ?? 0;
+        const totalSec = nativeStreamStartAt != null
+          ? Math.floor((Date.now() - nativeStreamStartAt) / 1000)
+          : 0;
+        const hh = String(Math.floor(totalSec / 3600)).padStart(2, "0");
+        const mm = String(Math.floor((totalSec % 3600) / 60)).padStart(2, "0");
+        const ss = String(totalSec % 60).padStart(2, "0");
+        const stats = {
+          frame,
+          fps,
+          bitrate:
+            bitrateKbps >= 1000
+              ? `${(bitrateKbps / 1000).toFixed(1)} Mbps`
+              : `${bitrateKbps} kbps`,
+          time: `${hh}:${mm}:${ss}`,
+          size: null,
+          speed: null,
+          dropped,
+        };
+        BrowserWindow.getAllWindows().forEach((win) => {
+          if (!win.isDestroyed()) win.webContents.send("onStreamStatus", stats);
+        });
+        return;
+      }
+      const cb = coreEventListeners.get(type);
+      if (cb) {
+        coreEventListeners.delete(type);
+        cb(ev);
+      }
+    } catch {
+      console.warn("[Core] unparseable stdout line:", line);
+    }
+  });
+  coreStdoutRl.on("close", () => {
+    coreStdoutRl = null;
+  });
+}
+
+// Return a promise that resolves when core emits the given event type.
+function waitForCoreEvent<T extends Record<string, unknown>>(
+  type: string,
+  timeoutMs = 5000,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const tid = setTimeout(() => {
+      coreEventListeners.delete(type);
+      reject(new Error(`[Core] timeout waiting for '${type}' event`));
+    }, timeoutMs);
+    coreEventListeners.set(type, (ev) => {
+      clearTimeout(tid);
+      resolve(ev as T);
+    });
+  });
+}
+
+// Parse accumulated binary frames from the data pipe. The data pipe is
+// preview-only — streaming is handled entirely inside the Rust core.
+function parseDataPipeFrame(chunk: Buffer): void {
+  coreFrameBuffer = Buffer.concat([coreFrameBuffer, chunk]);
+
+  while (coreFrameBuffer.length >= 8) {
+    const frameType = coreFrameBuffer.readUInt32LE(0);
+    const payloadLen = coreFrameBuffer.readUInt32LE(4);
+    const totalLen = 8 + payloadLen;
+
+    if (coreFrameBuffer.length < totalLen) break;
+
+    // frameType 1 = VideoPreview: [u32 width][u32 height][BGRA pixels]
+    if (frameType === 1 && payloadLen >= 8) {
+      const width = coreFrameBuffer.readUInt32LE(8);
+      const height = coreFrameBuffer.readUInt32LE(12);
+      const pixelBytes = width * height * 4;
+      if (16 + pixelBytes <= totalLen && nativePreviewActive) {
+        const pixels = coreFrameBuffer.subarray(16, 16 + pixelBytes);
+        BrowserWindow.getAllWindows().forEach((win) => {
+          if (!win.isDestroyed()) {
+            win.webContents.send("onNativePreviewFrame", width, height, pixels);
+          }
+        });
+      }
+    }
+
+    coreFrameBuffer = Buffer.from(coreFrameBuffer.subarray(totalLen));
+  }
+}
+
+function resolveCoreBinary(): string {
+  if (app.isPackaged) {
+    return path.join(
+      process.resourcesPath,
+      `sonicplank-core${CORE_BINARY_EXT}`,
+    );
+  }
+  // Dev: __dirname is .vite/build/ at runtime — step up to project root.
+  return path.resolve(
+    __dirname,
+    `../../src-native/target/debug/sonicplank-core${CORE_BINARY_EXT}`,
+  );
+}
+
+// Wait for the Ready event on stdout and return the negotiated pipe name.
+// Also starts the persistent event loop so subsequent events are dispatched.
+function waitForCoreReady(): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    const timeout = setTimeout(
+      () => reject(new Error("Core ready timeout after 10 s")),
+      10_000,
+    );
+    if (!coreProcess?.stdout) {
+      reject(new Error("Core process has no stdout"));
+      return;
+    }
+    startCoreEventLoop();
+    coreEventListeners.set("ready", (ev) => {
+      clearTimeout(timeout);
+      const pipe = ev.pipe as string | undefined;
+      if (!pipe) {
+        reject(new Error("Ready event missing pipe field"));
+        return;
+      }
+      console.log(
+        `[Core] ready - version=${ev.version ?? "?"} pid=${ev.pid ?? "?"} pipe=${pipe}`,
+      );
+      resolve(pipe);
+    });
+  });
+}
+
+// Connect to the negotiated data pipe and send Hello to authenticate.
+function connectDataPipe(pipeName: string, token: string): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const socket = net.createConnection({ path: pipeName });
+
+    socket.once("connect", () => {
+      // Hello must be the first message — core verifies the token before
+      // accepting any frame data.
+      socket.write(JSON.stringify({ type: "hello", token }) + "\n");
+      coreDataSocket = socket;
+      console.log("[Core] data pipe connected and Hello sent");
+      resolve();
+    });
+
+    socket.once("error", (err) => {
+      console.error("[Core] data pipe connection error:", err);
+      reject(err);
+    });
+
+    socket.on("data", (data: Buffer) => {
+      parseDataPipeFrame(data);
+    });
+
+    socket.on("close", () => {
+      console.log("[Core] data pipe closed");
+      coreDataSocket = null;
+    });
+  });
+}
+
+async function startCore(): Promise<void> {
+  const binary = resolveCoreBinary();
+  if (!fs.existsSync(binary)) {
+    console.warn(`[Core] binary not found at ${binary} — skipping`);
+    return;
+  }
+
+  // Generate per-launch secrets. Token authenticates the data pipe connection;
+  // pipeId randomises the pipe name to prevent squatting.
+  const token = crypto.randomBytes(32).toString("base64url");
+  const pipeId = crypto.randomBytes(16).toString("hex");
+
+  const spawnEnv = { ...process.env };
+  if (!app.isPackaged) {
+    // FFmpeg shared DLLs live next to the dev package headers/libs.
+    const ffmpegBin =
+      "C:\\ffmpeg-dev\\ffmpeg-n7.1-latest-win64-gpl-shared-7.1\\bin";
+    spawnEnv.PATH = `${ffmpegBin};${spawnEnv.PATH ?? ""}`;
+  }
+
+  coreProcess = spawn(binary, [], {
+    stdio: ["pipe", "pipe", "pipe"],
+    env: spawnEnv,
+  });
+
+  coreProcess.stderr?.on("data", (data: Buffer) => {
+    for (const line of data.toString().split("\n")) {
+      if (line.trim()) console.log(`[core] ${line}`);
+    }
+  });
+
+  coreProcess.on("error", (err: Error) =>
+    console.error("[Core] spawn error:", err),
+  );
+  coreProcess.on("exit", (code: number | null, signal: string | null) => {
+    console.log(
+      `[Core] exited: code=${code ?? "null"} signal=${signal ?? "null"}`,
+    );
+    coreProcess = null;
+    coreDataSocket = null;
+  });
+
+  // Write Auth immediately — core blocks on stdin until it receives this.
+  coreProcess.stdin?.write(
+    JSON.stringify({ type: "auth", token, pipe_id: pipeId }) + "\n",
+  );
+
+  try {
+    const pipeName = await waitForCoreReady();
+    await connectDataPipe(pipeName, token);
+  } catch (err) {
+    console.error("[Core] startup failed:", err);
+  }
+}
+
+// Send a command on the control plane (stdin). Commands never go over the data pipe.
+function sendCoreCommand(cmd: Record<string, unknown>): void {
+  if (!coreProcess?.stdin?.writable) {
+    console.warn("[Core] stdin not writable — command dropped:", cmd);
+    return;
+  }
+  coreProcess.stdin.write(JSON.stringify(cmd) + "\n");
+}
+
+function stopCore(): void {
+  // Shutdown travels on the control plane (stdin).
+  sendCoreCommand({ type: "shutdown" });
+  coreProcess?.stdin?.end();
+
+  if (coreDataSocket) {
+    coreDataSocket.destroy();
+    coreDataSocket = null;
+  }
+
+  if (coreProcess) {
+    setTimeout(() => {
+      coreProcess?.kill();
+      coreProcess = null;
+    }, 2000);
+  }
 }
 
 // Themes directory settings
@@ -398,253 +692,251 @@ const registerIpcHandlers = () => {
     });
   });
 
-  // Spawn FFmpeg with the given args and wire up the shared stdin-error /
-  // stderr-stats-parsing / close handlers used by every streaming mode.
-  function spawnFfmpegStream(ffmpegArgs: string[]) {
-    ffmpegProcess = spawn("ffmpeg", ffmpegArgs);
+  // function spawnFfmpegStream(ffmpegArgs: string[]) {
+  //   ffmpegProcess = spawn("ffmpeg", ffmpegArgs);
 
-    ffmpegProcess.stdin.on("error", (err: any) => {
-      console.error("FFmpeg stdin error:", err);
-    });
+  //   ffmpegProcess.stdin.on("error", (err: any) => {
+  //     console.error("FFmpeg stdin error:", err);
+  //   });
 
-    ffmpegProcess.stderr.on("data", (data: any) => {
-      const line: string = data.toString();
-      console.log(`FFmpeg status: ${line}`);
+  //   ffmpegProcess.stderr.on("data", (data: any) => {
+  //     const line: string = data.toString();
+  //     console.log(`FFmpeg status: ${line}`);
 
-      // Parse the progress line: frame= NNN fps= NN q=... size=...KiB time=... bitrate=...kbits/s speed=...x drop=NNN
-      const frameMatch = line.match(/frame=\s*(\d+)/);
-      const fpsMatch = line.match(/fps=\s*([\d.]+)/);
-      const sizeMatch = line.match(/size=\s*([\d.]+\s*\w+)/);
-      const timeMatch = line.match(/time=\s*([\d:.]+)/);
-      const bitrateMatch = line.match(/bitrate=\s*([\d.]+\s*\w+\/s)/);
-      const speedMatch = line.match(/speed=\s*([\d.]+x)/);
-      const dropMatch = line.match(/drop=\s*(\d+)/);
+  //     // Parse the progress line: frame= NNN fps= NN q=... size=...KiB time=... bitrate=...kbits/s speed=...x drop=NNN
+  //     const frameMatch = line.match(/frame=\s*(\d+)/);
+  //     const fpsMatch = line.match(/fps=\s*([\d.]+)/);
+  //     const sizeMatch = line.match(/size=\s*([\d.]+\s*\w+)/);
+  //     const timeMatch = line.match(/time=\s*([\d:.]+)/);
+  //     const bitrateMatch = line.match(/bitrate=\s*([\d.]+\s*\w+\/s)/);
+  //     const speedMatch = line.match(/speed=\s*([\d.]+x)/);
+  //     const dropMatch = line.match(/drop=\s*(\d+)/);
 
-      if (fpsMatch || bitrateMatch || frameMatch || timeMatch) {
-        const stats = {
-          frame: frameMatch ? parseInt(frameMatch[1]) : null,
-          fps: fpsMatch ? parseFloat(fpsMatch[1]) : null,
-          size: sizeMatch ? sizeMatch[1].trim() : null,
-          time: timeMatch ? timeMatch[1].trim() : null,
-          bitrate: bitrateMatch ? bitrateMatch[1].trim() : null,
-          speed: speedMatch ? speedMatch[1].trim() : null,
-          dropped: dropMatch ? parseInt(dropMatch[1]) : null,
-        };
-        BrowserWindow.getAllWindows().forEach((win) => {
-          if (!win.isDestroyed()) win.webContents.send("onStreamStatus", stats);
-        });
-      }
-    });
+  //     if (fpsMatch || bitrateMatch || frameMatch || timeMatch) {
+  //       const stats = {
+  //         frame: frameMatch ? parseInt(frameMatch[1]) : null,
+  //         fps: fpsMatch ? parseFloat(fpsMatch[1]) : null,
+  //         size: sizeMatch ? sizeMatch[1].trim() : null,
+  //         time: timeMatch ? timeMatch[1].trim() : null,
+  //         bitrate: bitrateMatch ? bitrateMatch[1].trim() : null,
+  //         speed: speedMatch ? speedMatch[1].trim() : null,
+  //         dropped: dropMatch ? parseInt(dropMatch[1]) : null,
+  //       };
+  //       BrowserWindow.getAllWindows().forEach((win) => {
+  //         if (!win.isDestroyed()) win.webContents.send("onStreamStatus", stats);
+  //       });
+  //     }
+  //   });
 
-    ffmpegProcess.on("close", (code: number) => {
-      console.log(`FFmpeg process exited with code ${code}`);
-      ffmpegProcess = null;
-    });
-  }
+  //   ffmpegProcess.on("close", (code: number) => {
+  //     console.log(`FFmpeg process exited with code ${code}`);
+  //     ffmpegProcess = null;
+  //   });
+  // }
 
-  ipcMain.handle("startStream", (_event, rtmpUrl, options) => {
-    try {
-      if (ffmpegProcess) {
-        ffmpegProcess.kill();
-        ffmpegProcess = null;
-      }
+  // ipcMain.handle("startStream", (_event, rtmpUrl, options) => {
+  //   try {
+  //     if (ffmpegProcess) {
+  //       ffmpegProcess.kill();
+  //       ffmpegProcess = null;
+  //     }
 
-      const mode = options?.mode || "mjpeg";
-      const encoder = options?.encoder || "libx264";
-      const bitrateKbps = options?.bitrateKbps || 6000;
-      const fps: number =
-        Number((options as Record<string, unknown>)?.fps) || 30;
-      const width: number | null = options?.width || null;
-      const height: number | null = options?.height || null;
-      const bufsizeKbps = bitrateKbps * 2;
+  //     const mode = options?.mode || "mjpeg";
+  //     const encoder = options?.encoder || "libx264";
+  //     const bitrateKbps = options?.bitrateKbps || 6000;
+  //     const fps: number =
+  //       Number((options as Record<string, unknown>)?.fps) || 30;
+  //     const width: number | null = options?.width || null;
+  //     const height: number | null = options?.height || null;
+  //     const bufsizeKbps = bitrateKbps * 2;
 
-      // Configure stream delay — frames are held in the delay buffer for this
-      // many milliseconds before being written to FFmpeg stdin.
-      streamDelayMs =
-        Number((options as Record<string, unknown>)?.streamDelayMs) || 0;
-      if (streamDelayMs > 0) {
-        startDelayFlush();
-      }
+  //     // Configure stream delay — frames are held in the delay buffer for this
+  //     // many milliseconds before being written to FFmpeg stdin.
+  //     streamDelayMs =
+  //       Number((options as Record<string, unknown>)?.streamDelayMs) || 0;
+  //     if (streamDelayMs > 0) {
+  //       startDelayFlush();
+  //     }
 
-      // ── Mode: h264 ──────────────────────────────────────────────────────────
-      // Frames are already encoded to H.264 on the GPU by the renderer's
-      // WebCodecs VideoEncoder. FFmpeg only needs to mux to FLV — `-c:v copy`,
-      // no decode, no re-encode (near-zero CPU). The FLV muxer auto-converts
-      // the Annex-B bitstream to AVCC, so no bitstream filter is required.
-      if (mode === "h264") {
-        console.log(
-          `Starting FFmpeg RTMP mux (WebCodecs H.264 passthrough) to ${rtmpUrl} | ${fps}fps`,
-        );
-        const ffmpegArgs = [
-          "-y",
-          "-progress",
-          "pipe:2",
-          // Give the h264 demuxer up to 5 s / 5 MB to find the SPS NAL.
-          // The raw h264 demuxer defaults to analyzeduration=0 which causes it
-          // to give up before the first keyframe arrives through the MessagePort.
-          "-probesize",
-          "5000000",
-          "-analyzeduration",
-          "5000000",
-          // +genpts: generate PTS from the frame-count DTS assigned by -r.
-          "-fflags",
-          "+genpts",
-          // Monotonic DTS by frame count — avoids non-monotonic warnings under
-          // burst delivery from the compositor.
-          "-r",
-          `${fps}`,
-          "-f",
-          "h264",
-          "-i",
-          "pipe:0",
-          "-c:v",
-          "copy",
-          "-an",
-          "-f",
-          "flv",
-          rtmpUrl,
-        ];
-        spawnFfmpegStream(ffmpegArgs);
-        return { success: true };
-      }
+  //     // ── Mode: h264 ──────────────────────────────────────────────────────────
+  //     // Frames are already encoded to H.264 on the GPU by the renderer's
+  //     // WebCodecs VideoEncoder. FFmpeg only needs to mux to FLV — `-c:v copy`,
+  //     // no decode, no re-encode (near-zero CPU). The FLV muxer auto-converts
+  //     // the Annex-B bitstream to AVCC, so no bitstream filter is required.
+  //     if (mode === "h264") {
+  //       console.log(
+  //         `Starting FFmpeg RTMP mux (WebCodecs H.264 passthrough) to ${rtmpUrl} | ${fps}fps`,
+  //       );
+  //       const ffmpegArgs = [
+  //         "-y",
+  //         "-progress",
+  //         "pipe:2",
+  //         // Give the h264 demuxer up to 5 s / 5 MB to find the SPS NAL.
+  //         // The raw h264 demuxer defaults to analyzeduration=0 which causes it
+  //         // to give up before the first keyframe arrives through the MessagePort.
+  //         "-probesize",
+  //         "5000000",
+  //         "-analyzeduration",
+  //         "5000000",
+  //         // +genpts: generate PTS from the frame-count DTS assigned by -r.
+  //         "-fflags",
+  //         "+genpts",
+  //         // Monotonic DTS by frame count — avoids non-monotonic warnings under
+  //         // burst delivery from the compositor.
+  //         "-r",
+  //         `${fps}`,
+  //         "-f",
+  //         "h264",
+  //         "-i",
+  //         "pipe:0",
+  //         "-c:v",
+  //         "copy",
+  //         "-an",
+  //         "-f",
+  //         "flv",
+  //         rtmpUrl,
+  //       ];
+  //       spawnFfmpegStream(ffmpegArgs);
+  //       return { success: true };
+  //     }
 
-      // ── Mode: mjpeg (fallback) ──────────────────────────────────────────────
-      const resLabel = width && height ? ` | output: ${width}x${height}` : "";
-      console.log(
-        `Starting FFmpeg RTMP stream to ${rtmpUrl} | encoder: ${encoder} | bitrate: ${bitrateKbps}k | ${fps}fps${resLabel}`,
-      );
+  //     // ── Mode: mjpeg (fallback) ──────────────────────────────────────────────
+  //     const resLabel = width && height ? ` | output: ${width}x${height}` : "";
+  //     console.log(
+  //       `Starting FFmpeg RTMP stream to ${rtmpUrl} | encoder: ${encoder} | bitrate: ${bitrateKbps}k | ${fps}fps${resLabel}`,
+  //     );
 
-      const ffmpegArgs = [
-        "-y",
-        "-progress",
-        "pipe:2",
-        "-f",
-        "image2pipe",
-        "-framerate",
-        `${fps}`,
-        "-vcodec",
-        "mjpeg",
-        "-i",
-        "pipe:0",
-      ];
+  //     const ffmpegArgs = [
+  //       "-y",
+  //       "-progress",
+  //       "pipe:2",
+  //       "-f",
+  //       "image2pipe",
+  //       "-framerate",
+  //       `${fps}`,
+  //       "-vcodec",
+  //       "mjpeg",
+  //       "-i",
+  //       "pipe:0",
+  //     ];
 
-      if (encoder === "h264_nvenc") {
-        ffmpegArgs.push(
-          "-c:v",
-          "h264_nvenc",
-          "-preset",
-          "p4",
-          "-pix_fmt",
-          "yuv420p",
-          "-b:v",
-          `${bitrateKbps}k`,
-          "-maxrate:v",
-          `${bitrateKbps}k`,
-          "-bufsize:v",
-          `${bufsizeKbps}k`,
-          "-g",
-          `${fps * 2}`,
-        );
-      } else if (encoder === "h264_amf") {
-        ffmpegArgs.push(
-          "-c:v",
-          "h264_amf",
-          "-pix_fmt",
-          "yuv420p",
-          "-b:v",
-          `${bitrateKbps}k`,
-          "-maxrate:v",
-          `${bitrateKbps}k`,
-          "-bufsize:v",
-          `${bufsizeKbps}k`,
-          "-g",
-          `${fps * 2}`,
-        );
-      } else if (encoder === "h264_qsv") {
-        ffmpegArgs.push(
-          "-c:v",
-          "h264_qsv",
-          "-pix_fmt",
-          "yuv420p",
-          "-b:v",
-          `${bitrateKbps}k`,
-          "-maxrate:v",
-          `${bitrateKbps}k`,
-          "-bufsize:v",
-          `${bufsizeKbps}k`,
-          "-g",
-          `${fps * 2}`,
-        );
-      } else {
-        ffmpegArgs.push(
-          "-c:v",
-          "libx264",
-          "-preset",
-          "ultrafast",
-          "-threads",
-          "0",
-          "-pix_fmt",
-          "yuv420p",
-          "-b:v",
-          `${bitrateKbps}k`,
-          "-maxrate:v",
-          `${bitrateKbps}k`,
-          "-bufsize:v",
-          `${bufsizeKbps}k`,
-          "-g",
-          `${fps * 2}`,
-        );
-      }
+  //     if (encoder === "hevc_nvenc") {
+  //       ffmpegArgs.push(
+  //         "-c:v",
+  //         "h264_nvenc",
+  //         "-preset",
+  //         "p4",
+  //         "-pix_fmt",
+  //         "yuv420p",
+  //         "-b:v",
+  //         `${bitrateKbps}k`,
+  //         "-maxrate:v",
+  //         `${bitrateKbps}k`,
+  //         "-bufsize:v",
+  //         `${bufsizeKbps}k`,
+  //         "-g",
+  //         `${fps * 2}`,
+  //       );
+  //     } else if (encoder === "h264_amf") {
+  //       ffmpegArgs.push(
+  //         "-c:v",
+  //         "h264_amf",
+  //         "-pix_fmt",
+  //         "yuv420p",
+  //         "-b:v",
+  //         `${bitrateKbps}k`,
+  //         "-maxrate:v",
+  //         `${bitrateKbps}k`,
+  //         "-bufsize:v",
+  //         `${bufsizeKbps}k`,
+  //         "-g",
+  //         `${fps * 2}`,
+  //       );
+  //     } else if (encoder === "h264_qsv") {
+  //       ffmpegArgs.push(
+  //         "-c:v",
+  //         "h264_qsv",
+  //         "-pix_fmt",
+  //         "yuv420p",
+  //         "-b:v",
+  //         `${bitrateKbps}k`,
+  //         "-maxrate:v",
+  //         `${bitrateKbps}k`,
+  //         "-bufsize:v",
+  //         `${bufsizeKbps}k`,
+  //         "-g",
+  //         `${fps * 2}`,
+  //       );
+  //     } else {
+  //       ffmpegArgs.push(
+  //         "-c:v",
+  //         "libx264",
+  //         "-preset",
+  //         "ultrafast",
+  //         "-threads",
+  //         "0",
+  //         "-pix_fmt",
+  //         "yuv420p",
+  //         "-b:v",
+  //         `${bitrateKbps}k`,
+  //         "-maxrate:v",
+  //         `${bitrateKbps}k`,
+  //         "-bufsize:v",
+  //         `${bufsizeKbps}k`,
+  //         "-g",
+  //         `${fps * 2}`,
+  //       );
+  //     }
 
-      if (width && height && width > 0 && height > 0) {
-        const w = Math.round(width / 2) * 2;
-        const h = Math.round(height / 2) * 2;
-        ffmpegArgs.push("-vf", `scale=${w}:${h}:flags=lanczos`);
-      }
+  //     if (width && height && width > 0 && height > 0) {
+  //       const w = Math.round(width / 2) * 2;
+  //       const h = Math.round(height / 2) * 2;
+  //       ffmpegArgs.push("-vf", `scale=${w}:${h}:flags=lanczos`);
+  //     }
 
-      ffmpegArgs.push("-an", "-f", "flv", rtmpUrl);
+  //     ffmpegArgs.push("-an", "-f", "flv", rtmpUrl);
 
-      spawnFfmpegStream(ffmpegArgs);
+  //     spawnFfmpegStream(ffmpegArgs);
 
-      return { success: true };
-    } catch (error: any) {
-      console.error("Failed to start FFmpeg streaming process:", error);
-      throw error;
-    }
-  });
+  //     return { success: true };
+  //   } catch (error: any) {
+  //     console.error("Failed to start FFmpeg streaming process:", error);
+  //     throw error;
+  //   }
+  // });
 
-  ipcMain.handle("stopStream", () => {
-    try {
-      // Flush any buffered frames before closing — preserves content queued
-      // in the delay buffer so the last N seconds reach the RTMP server.
-      stopDelayFlush(true);
-      streamDelayMs = 0;
-      if (ffmpegProcess) {
-        ffmpegProcess.stdin.end();
-        ffmpegProcess.kill();
-        ffmpegProcess = null;
-        console.log("FFmpeg RTMP stream stopped.");
-      }
-      return { success: true };
-    } catch (error: any) {
-      console.error("Failed to stop FFmpeg streaming process:", error);
-      throw error;
-    }
-  });
+  // ipcMain.handle("stopStream", () => {
+  //   try {
+  //     // Flush any buffered frames before closing — preserves content queued
+  //     // in the delay buffer so the last N seconds reach the RTMP server.
+  //     stopDelayFlush(true);
+  //     streamDelayMs = 0;
+  //     if (ffmpegProcess) {
+  //       ffmpegProcess.stdin.end();
+  //       ffmpegProcess.kill();
+  //       ffmpegProcess = null;
+  //       console.log("FFmpeg RTMP stream stopped.");
+  //     }
+  //     return { success: true };
+  //   } catch (error: any) {
+  //     console.error("Failed to stop FFmpeg streaming process:", error);
+  //     throw error;
+  //   }
+  // });
 
-  ipcMain.on("pushStreamData", (_event, arrayBuffer) => {
-    const buf = Buffer.from(arrayBuffer as ArrayBuffer);
-    if (streamDelayMs > 0) {
-      streamDelayBuffer.push({ data: buf, receivedAt: Date.now() });
-    } else {
-      try {
-        const stdin = getStdin();
-        if (stdin) stdin.write(buf);
-      } catch (error) {
-        console.error("Failed to push streaming buffer to FFmpeg:", error);
-      }
-    }
-  });
+  // ipcMain.on("pushStreamData", (_event, arrayBuffer) => {
+  //   const buf = Buffer.from(arrayBuffer as ArrayBuffer);
+  //   if (streamDelayMs > 0) {
+  //     streamDelayBuffer.push({ data: buf, receivedAt: Date.now() });
+  //   } else {
+  //     try {
+  //       const stdin = getStdin();
+  //       if (stdin) stdin.write(buf);
+  //     } catch (error) {
+  //       console.error("Failed to push streaming buffer to FFmpeg:", error);
+  //     }
+  //   }
+  // });
 
   ipcMain.handle("getAvailableThemes", async () => {
     ensureThemesDir();
@@ -725,6 +1017,7 @@ const registerIpcHandlers = () => {
       console.log("[Main] Opening Edit Overlay window:", startUrl);
 
       previewWin = new BrowserWindow({
+        icon: getIconPath(),
         autoHideMenuBar: true,
         minWidth: 800,
         minHeight: 450,
@@ -783,10 +1076,291 @@ const registerIpcHandlers = () => {
       }
     });
   });
+
+  // Spotify PKCE OAuth flow — opens a dedicated BrowserWindow, intercepts the
+  // redirect to extract the auth code, exchanges it for tokens, and returns them
+  // to the renderer. Requires http://127.0.0.1:8888/callback registered in the
+  // Spotify Developer Dashboard.
+  // ── Native preview (Phase 1) ────────────────────────────────────────────────
+  // These handlers bridge the renderer to the Rust capture core via stdin/stdout.
+
+  ipcMain.handle("getPreviewSources", async () => {
+    if (!coreProcess) return [];
+    sendCoreCommand({ type: "get_sources" });
+    try {
+      const ev = await waitForCoreEvent<{ items: unknown[] }>("sources");
+      return ev.items ?? [];
+    } catch (e) {
+      console.error("[Core] getPreviewSources failed:", e);
+      return [];
+    }
+  });
+
+  ipcMain.handle("startPreviewCapture", async (_event, sourceId: string) => {
+    if (!coreProcess) throw new Error("Core not running");
+
+    if (captureRefCount > 0 && activeCaptureSourceId === sourceId) {
+      // Streaming already holds an active session for this source — reuse it.
+      captureRefCount++;
+      sendCoreCommand({ type: "enable_preview" });
+      nativePreviewActive = true;
+      return;
+    }
+
+    // Different source currently active — stop the old session first.
+    if (captureRefCount > 0) {
+      sendCoreCommand({ type: "stop_capture" });
+      await waitForCoreEvent("capture_stopped").catch(() => {});
+      captureRefCount = 0;
+      activeCaptureSourceId = null;
+    }
+
+    sendCoreCommand({ type: "start_capture", source_id: sourceId });
+    await waitForCoreEvent("capture_started");
+    captureRefCount = 1;
+    activeCaptureSourceId = sourceId;
+    sendCoreCommand({ type: "enable_preview" });
+    nativePreviewActive = true;
+  });
+
+  ipcMain.handle("stopPreviewCapture", async () => {
+    if (!coreProcess) return;
+
+    nativePreviewActive = false;
+    sendCoreCommand({ type: "disable_preview" });
+    captureRefCount = Math.max(0, captureRefCount - 1);
+    if (captureRefCount === 0) {
+      sendCoreCommand({ type: "stop_capture" });
+      await waitForCoreEvent("capture_stopped").catch(() => {});
+      activeCaptureSourceId = null;
+    }
+    // else: streaming is still holding the session open — leave it running.
+  });
+
+  ipcMain.handle(
+    "startNativeStream",
+    async (
+      _event,
+      sourceId: string,
+      options: {
+        rtmpUrl: string;
+        bitrateKbps?: number;
+        fps?: number;
+        outputWidth?: number;
+        outputHeight?: number;
+        fitMode?: string;
+        encoder?: string;
+      },
+    ) => {
+      if (!coreProcess) throw new Error("Core not running");
+
+      // Ensure a capture session is running for this source.
+      if (captureRefCount > 0 && activeCaptureSourceId === sourceId) {
+        captureRefCount++;
+      } else {
+        if (captureRefCount > 0) {
+          sendCoreCommand({ type: "stop_capture" });
+          await waitForCoreEvent("capture_stopped").catch(() => {});
+          captureRefCount = 0;
+          activeCaptureSourceId = null;
+        }
+        sendCoreCommand({ type: "start_capture", source_id: sourceId });
+        await waitForCoreEvent("capture_started");
+        captureRefCount = 1;
+        activeCaptureSourceId = sourceId;
+      }
+
+      // Read bitrate from encoder config; fall back to 6000 kbps.
+      let bitrateKbps = 6000;
+      try {
+        const cfg = JSON.parse(fs.readFileSync(getEncoderConfigPath(), "utf-8")) as { bitrate_kbps?: number };
+        if (cfg.bitrate_kbps) bitrateKbps = cfg.bitrate_kbps;
+      } catch { /* use default */ }
+
+      // Delegate encoding and RTMP delivery entirely to the Rust core.
+      sendCoreCommand({
+        type: "start_stream",
+        rtmp_url: options.rtmpUrl,
+        bitrate_kbps: bitrateKbps,
+        fps: options.fps ?? 30,
+        output_width: options.outputWidth ?? null,
+        output_height: options.outputHeight ?? null,
+        fit_mode: options.fitMode ?? null,
+        encoder: options.encoder ?? "libx264",
+      });
+
+      const ev = await waitForCoreEvent<{
+        type: string;
+        width: number;
+        height: number;
+      }>("stream_started", 15_000);
+      nativeStreamStartAt = Date.now();
+      console.log(`[Native stream] started ${ev.width}x${ev.height}`);
+      return { success: true, width: ev.width, height: ev.height };
+    },
+  );
+
+  ipcMain.handle("stopNativeStream", async () => {
+    nativeStreamStartAt = null;
+    if (coreProcess) {
+      sendCoreCommand({ type: "stop_stream" });
+      await waitForCoreEvent("stream_stopped", 5_000).catch(() => {});
+    }
+
+    captureRefCount = Math.max(0, captureRefCount - 1);
+    if (captureRefCount === 0 && coreProcess) {
+      sendCoreCommand({ type: "stop_capture" });
+      await waitForCoreEvent("capture_stopped").catch(() => {});
+      activeCaptureSourceId = null;
+    }
+
+    return { success: true };
+  });
+
+  // ── Encoder config (encoder-config.json) ─────────────────────────────────
+  // Electron reads/writes the file directly; the Rust core watches it and
+  // reloads automatically. Both agree on the path via the same search order:
+  // production → resources dir (next to binary); dev → process.cwd().
+  function getEncoderConfigPath(): string {
+    if (app.isPackaged) {
+      return path.join(process.resourcesPath, "encoder-config.json");
+    }
+    return path.join(process.cwd(), "encoder-config.json");
+  }
+
+  ipcMain.handle("getEncoderConfig", (): unknown => {
+    try {
+      const content = fs.readFileSync(getEncoderConfigPath(), "utf-8");
+      return JSON.parse(content) as unknown;
+    } catch {
+      return null;
+    }
+  });
+
+  ipcMain.handle("setEncoderConfig", (_event, config: unknown) => {
+    fs.writeFileSync(
+      getEncoderConfigPath(),
+      JSON.stringify(config, null, 2) + "\n",
+      "utf-8",
+    );
+  });
+
+  ipcMain.handle("initiateSpotifyAuth", () => {
+    const verifier = crypto.randomBytes(32).toString("base64url");
+    const challenge = crypto
+      .createHash("sha256")
+      .update(verifier)
+      .digest("base64url");
+
+    const params = new URLSearchParams({
+      response_type: "code",
+      client_id: SPOTIFY_CLIENT_ID,
+      scope: SPOTIFY_SCOPES.join(" "),
+      redirect_uri: SPOTIFY_REDIRECT_URI,
+      code_challenge_method: "S256",
+      code_challenge: challenge,
+    });
+
+    const authUrl = `https://accounts.spotify.com/authorize?${params}`;
+
+    return new Promise<{
+      accessToken: string;
+      refreshToken: string;
+      expiresIn: number;
+    }>((resolve, reject) => {
+      const authWin = new BrowserWindow({
+        icon: getIconPath(),
+        width: 480,
+        height: 700,
+        autoHideMenuBar: true,
+        title: "Connect to Spotify",
+        webPreferences: { nodeIntegration: false, contextIsolation: true },
+      });
+      authWin.removeMenu();
+      void authWin.loadURL(authUrl);
+
+      let settled = false;
+
+      const handleRedirect = async (url: string) => {
+        if (!url.startsWith(SPOTIFY_REDIRECT_URI) || settled) return;
+        settled = true;
+        authWin.close();
+
+        const parsed = new URL(url);
+        const code = parsed.searchParams.get("code");
+        const error = parsed.searchParams.get("error");
+
+        if (error || !code) {
+          reject(new Error(error ?? "No authorization code received"));
+          return;
+        }
+
+        try {
+          const body = new URLSearchParams({
+            grant_type: "authorization_code",
+            code,
+            redirect_uri: SPOTIFY_REDIRECT_URI,
+            client_id: SPOTIFY_CLIENT_ID,
+            code_verifier: verifier,
+          });
+          const resp = await fetch("https://accounts.spotify.com/api/token", {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: body.toString(),
+          });
+          if (!resp.ok) {
+            const text = await resp.text();
+            throw new Error(`Token exchange failed (${resp.status}): ${text}`);
+          }
+          const data = (await resp.json()) as {
+            access_token: string;
+            refresh_token: string;
+            expires_in: number;
+          };
+          resolve({
+            accessToken: data.access_token,
+            refreshToken: data.refresh_token,
+            expiresIn: data.expires_in,
+          });
+        } catch (err) {
+          reject(err);
+        }
+      };
+
+      authWin.webContents.on("will-navigate", (event, url) => {
+        if (url.startsWith(SPOTIFY_REDIRECT_URI)) {
+          event.preventDefault();
+          void handleRedirect(url);
+        }
+      });
+
+      authWin.webContents.on("will-redirect", (event, url) => {
+        if (url.startsWith(SPOTIFY_REDIRECT_URI)) {
+          event.preventDefault();
+          void handleRedirect(url);
+        }
+      });
+
+      authWin.on("closed", () => {
+        if (!settled) {
+          settled = true;
+          reject(new Error("Authentication window was closed"));
+        }
+      });
+    });
+  });
+};
+
+const getIconPath = () => {
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, "icon.ico");
+  }
+  return path.join(__dirname, "../../src/img/icon.ico");
 };
 
 const createWindow = async () => {
   const mainWindow = new BrowserWindow({
+    icon: getIconPath(),
     width: 1400,
     height: 1000,
     autoHideMenuBar: true,
@@ -831,11 +1405,27 @@ const createWindow = async () => {
 
   const reactDevToolsPath = path.join(
     __dirname,
-    "Extensions\\fmkadmapgofadopljbjfkapdkoienihi\\7.0.1_0",
+    "..\\..\\Extensions\\fmkadmapgofadopljbjfkapdkoienihi\\7.0.1_0",
   );
 
   if (inDevelopment) {
     mainWindow.webContents.openDevTools();
+
+    if (fs.existsSync(reactDevToolsPath)) {
+      try {
+        await session.defaultSession.extensions.loadExtension(
+          reactDevToolsPath,
+        );
+        console.log("React DevTools extension loaded successfully.");
+      } catch (error) {
+        console.error("Failed to load React DevTools extension:", error);
+      }
+    } else {
+      console.warn(
+        "React DevTools path does not exist, skipping load:",
+        reactDevToolsPath,
+      );
+    }
   }
 
   app.setAboutPanelOptions({
@@ -845,25 +1435,16 @@ const createWindow = async () => {
     version: "0.1.0",
     copyright: "2026",
   });
-
-  if (fs.existsSync(reactDevToolsPath)) {
-    try {
-      await session.defaultSession.extensions.loadExtension(reactDevToolsPath);
-      console.log("React DevTools extension loaded successfully.");
-    } catch (error) {
-      console.error("Failed to load React DevTools extension:", error);
-    }
-  } else {
-    console.warn(
-      "React DevTools path does not exist, skipping load:",
-      reactDevToolsPath,
-    );
-  }
 };
 
 app.on("ready", () => {
   registerIpcHandlers();
+  void startCore();
   void createWindow();
+});
+
+app.on("before-quit", () => {
+  stopCore();
 });
 
 app.on("window-all-closed", () => {

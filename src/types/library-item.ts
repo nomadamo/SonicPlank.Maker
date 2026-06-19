@@ -17,6 +17,8 @@ export type LibraryItem = {
   addedAt: number; // timestamp
   categoryId?: string; // ID of the assigned category
   isStream?: boolean; // indicates an online stream (listen-only)
+  isSpotifyStream?: boolean; // indicates an online stream (listen-only)
+  isSpotifyPlaylist?: boolean; // indicates an online stream (listen-only)
 };
 
 export type LibraryData = {

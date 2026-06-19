@@ -76,6 +76,51 @@ declare global {
       removeOnAudioTimeUpdated: () => void;
       onStreamStatus: (callback: (stats: StreamStats) => void) => void;
       removeOnStreamStatus: () => void;
+      initiateSpotifyAuth: () => Promise<{
+        accessToken: string;
+        refreshToken: string;
+        expiresIn: number;
+      }>;
+      // Native preview (Phase 1)
+      getPreviewSources: () => Promise<NativeCaptureSource[]>;
+      startPreviewCapture: (sourceId: string) => Promise<void>;
+      stopPreviewCapture: () => Promise<void>;
+      onNativePreviewFrame: (
+        callback: (data: Uint8Array, width: number, height: number) => void,
+      ) => void;
+      removeOnNativePreviewFrame: () => void;
+      startNativeStream: (
+        sourceId: string,
+        options: {
+          rtmpUrl: string;
+          bitrateKbps?: number;
+          fps?: number;
+          outputWidth?: number;
+          outputHeight?: number;
+          encoder?: string;
+        },
+      ) => Promise<{ success: boolean; width: number; height: number }>;
+      stopNativeStream: () => Promise<{ success: boolean }>;
+      getEncoderConfig: () => Promise<EncoderConfig | null>;
+      setEncoderConfig: (config: EncoderConfig) => Promise<void>;
     };
   }
+}
+
+export interface NativeCaptureSource {
+  id: string;
+  name: string;
+  kind: "monitor" | "window";
+}
+
+export interface EncoderPreset {
+  options: Record<string, string>;
+}
+
+export interface EncoderConfig {
+  bitrate_kbps: number;
+  h264_nvenc: EncoderPreset;
+  libx264: EncoderPreset;
+  h264_amf: EncoderPreset;
+  h264_qsv: EncoderPreset;
 }

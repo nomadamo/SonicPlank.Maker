@@ -1,0 +1,29 @@
+{
+  "bitrate_kbps": 6500,
+  "h264_nvenc": {
+    "options": {
+      "preset": "p6",
+      "tune": "hq",
+      "rc": "cbr",
+      "profile": "high"
+    }
+  },
+  "libx264": {
+    "options": {
+      "preset": "ultrafast",
+      "tune": "zerolatency",
+      "sc_threshold": "0"
+    }
+  },
+  "h264_amf": {
+    "options": {
+      "rc": "cbr",
+      "quality": "speed"
+    }
+  },
+  "h264_qsv": {
+    "options": {
+      "look_ahead": "0"
+    }
+  }
+}

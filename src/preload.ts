@@ -218,4 +218,58 @@ contextBridge.exposeInMainWorld("electron", {
   removeOnStreamStatus: () => {
     ipcRenderer.removeAllListeners("onStreamStatus");
   },
+  initiateSpotifyAuth: async (): Promise<{
+    accessToken: string;
+    refreshToken: string;
+    expiresIn: number;
+  }> => {
+    return await ipcRenderer.invoke("initiateSpotifyAuth");
+  },
+
+  // ── Native preview (Phase 1) ──────────────────────────────────────────────
+  getPreviewSources: async (): Promise<
+    { id: string; name: string; kind: "monitor" | "window" }[]
+  > => {
+    return await ipcRenderer.invoke("getPreviewSources");
+  },
+  startPreviewCapture: async (sourceId: string): Promise<void> => {
+    await ipcRenderer.invoke("startPreviewCapture", sourceId);
+  },
+  stopPreviewCapture: async (): Promise<void> => {
+    await ipcRenderer.invoke("stopPreviewCapture");
+  },
+  onNativePreviewFrame: (
+    callback: (data: Uint8Array, width: number, height: number) => void,
+  ): void => {
+    ipcRenderer.on("onNativePreviewFrame", (_event, width, height, pixels) => {
+      callback(pixels as Uint8Array, width as number, height as number);
+    });
+  },
+  removeOnNativePreviewFrame: (): void => {
+    ipcRenderer.removeAllListeners("onNativePreviewFrame");
+  },
+  startNativeStream: async (
+    sourceId: string,
+    options: {
+      rtmpUrl: string;
+      bitrateKbps?: number;
+      fps?: number;
+      outputWidth?: number;
+      outputHeight?: number;
+      encoder?: string;
+    },
+  ): Promise<{ success: boolean; width: number; height: number }> => {
+    return await ipcRenderer.invoke("startNativeStream", sourceId, options);
+  },
+  stopNativeStream: async (): Promise<{ success: boolean }> => {
+    return await ipcRenderer.invoke("stopNativeStream");
+  },
+
+  // ── Encoder config ──────────────────────────────────────────────────────────
+  getEncoderConfig: async (): Promise<unknown> => {
+    return await ipcRenderer.invoke("getEncoderConfig");
+  },
+  setEncoderConfig: async (config: unknown): Promise<void> => {
+    await ipcRenderer.invoke("setEncoderConfig", config);
+  },
 });

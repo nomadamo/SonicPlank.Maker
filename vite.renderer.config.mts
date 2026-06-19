@@ -10,6 +10,11 @@ export default defineConfig({
   },
   server: {
     cors: true, // Enables CORS headers on the Vite local dev server
+    watch: {
+      // encoder-config.json is a runtime tuning file written by Electron.
+      // Vite must not watch it or every Apply/external edit triggers HMR.
+      ignored: ["**/encoder-config.json"],
+    },
   },
   plugins: [
     tailwindcss(),

@@ -124,7 +124,9 @@ function Timeline() {
   const [tracks, setTracks] = useAtom(timelineTracksAtom);
   const [timelineData] = useAtom(timelineDataAtom);
   const { categories, items: libraryItems } = useLibraryStore();
-  const displayLibraryItems = libraryItems.filter((item) => !item.isStream);
+  const displayLibraryItems = libraryItems.filter(
+    (item) => !item.isStream && !item.isSpotifyStream && !item.isSpotifyPlaylist,
+  );
   const { setHasUnsavedChanges } = useStateMachine();
   const { isPlaying, play, pause, togglePlay, seek } = useTimelinePlayback();
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -235,7 +237,7 @@ function Timeline() {
 
   const handleDropItem = useCallback(
     (trackId: string, item: any, xPosition: number) => {
-      if (item.isStream) return;
+      if (item.isStream || item.isSpotifyStream || item.isSpotifyPlaylist) return;
 
       // Calculate start time based on drop X coordinate
       const startTime = Math.max(0, xPosition / PIXELS_PER_SECOND);
