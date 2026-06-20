@@ -218,39 +218,34 @@ function PreviewComponent() {
       .catch(() => {});
   }, []);
 
-  // Receive compositor frames from editor via IPC relay (editor → main → preview).
-  // BroadcastChannel does not cross renderer-process boundaries in Electron,
-  // so frames are JPEG-encoded and sent via ipcRenderer.send / webContents.send.
+  // Receive composited JPEG frames from the editor compositor via MessagePort.
+  // These carry overlays already rendered — unlike onNativePreviewFrame which
+  // delivers raw unprocessed capture pixels with no overlay content.
   useEffect(() => {
-    (window.electron.onPreviewFrame as (cb: (buf: ArrayBuffer, w: number, h: number) => void) => void)(
-      (buf: ArrayBuffer, width: number, height: number) => {
-        // First frame: mount the canvas by setting hasFrame, then return.
-        // The canvas element is only in the DOM when hasFrame=true, so we can't
-        // draw on this frame — but the next frame will find canvasRef populated.
-        if (!hasFrameRef.current) {
-          hasFrameRef.current = true;
-          if (width > 0 && height > 0) setDynamicAspect(`${width}/${height}`);
-          (window.electron.notifyEditOverlayConnected as () => void)();
-          setHasFrame(true);
-          return;
-        }
-
-        const canvas = canvasRef.current;
-        if (!canvas) return;
-
-        const blob = new Blob([buf], { type: "image/jpeg" });
-        const url = URL.createObjectURL(blob);
-        const img = new Image();
-        img.onload = () => {
-          canvas.width = width;
-          canvas.height = height;
-          canvas.getContext("2d")?.drawImage(img, 0, 0);
-          URL.revokeObjectURL(url);
-        };
-        img.src = url;
+    window.electron.onPreviewFrame((data: ArrayBuffer, width: number, height: number) => {
+      if (!hasFrameRef.current) {
+        hasFrameRef.current = true;
+        if (width > 0 && height > 0) setDynamicAspect(`${width}/${height}`);
+        (window.electron.notifyEditOverlayConnected as () => void)();
+        setHasFrame(true);
       }
-    );
-    return () => { (window.electron.removeOnPreviewFrame as () => void)(); };
+
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
+      if (!ctx) return;
+
+      const blob = new Blob([data], { type: "image/jpeg" });
+      createImageBitmap(blob)
+        .then((bmp) => {
+          canvas.width = bmp.width;
+          canvas.height = bmp.height;
+          ctx.drawImage(bmp, 0, 0);
+          bmp.close();
+        })
+        .catch(() => {});
+    });
+    return () => { window.electron.removeOnPreviewFrame(); };
   }, []);
 
   const aspectValue = aspect === "auto" ? dynamicAspect : aspect;
@@ -260,10 +255,10 @@ function PreviewComponent() {
       {hasFrame ? (
         <div
           ref={containerRef}
-          className="relative max-w-full max-h-full flex items-center justify-center animate-fade-in"
+          className="relative max-w-full max-h-full animate-fade-in"
           style={{ aspectRatio: aspectValue }}
         >
-          <canvas ref={canvasRef} className="w-full h-full object-contain block" />
+          <canvas ref={canvasRef} className="w-full h-full block" />
 
           {/* Draggable overlay handles when unlocked */}
           {!isLocked && (

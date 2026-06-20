@@ -10,3 +10,4 @@ trigger: always_on
 6. No overuse of logging (i.e. console.log, console.debug, etc)
 7. Performance is always priority, unless is significantly sacrifices quality.
 8. Post edit build tests are required. tsx, vite, lint, whatever is relevant for the edit made.
+9. The UI is Electron, which means it should not do any heavy lifting if the core is capable. Offload expensive processing to the Rust core whenever possible.

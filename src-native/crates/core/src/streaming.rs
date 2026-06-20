@@ -234,7 +234,7 @@ impl StreamSession {
     ) -> Self {
         let (stop_tx, stop_rx) = std::sync::mpsc::sync_channel::<()>(1);
 
-        // Bridge: async broadcast receiver → bounded sync channel for the encoder thread.
+        // Bridge: async broadcast receiver  bounded sync channel for the encoder thread.
         let (bridge_tx, bridge_rx) = std::sync::mpsc::sync_channel::<Arc<RawFrame>>(8);
         let bridge_evt = event_tx.clone();
         tokio::spawn(async move {
@@ -440,8 +440,8 @@ unsafe fn run_encoder_unsafe(
             .join(", ");
 
         tracing::info!(
-            "Encoder config → encoder={} bitrate={}kbps fps={} gop={} \
-             size={}x{}→{}x{} rc_max_rate={}kbps rc_buf={}kbps max_b={} \
+            "Encoder config  encoder={} bitrate={}kbps fps={} gop={} \
+             size={}x{}{}x{} rc_max_rate={}kbps rc_buf={}kbps max_b={} \
              opts=[{}]",
             opts.encoder,
             opts.bitrate_kbps,
@@ -476,7 +476,7 @@ unsafe fn run_encoder_unsafe(
           "avformat_write_header - RTMP server rejected connection")?;
 
     tracing::info!(
-        "Stream started: {}x{} (mode: {}) → {}x{} @{}fps via {} at {}kbps",
+        "Stream started: {}x{} (mode: {})  {}x{} @{}fps via {} at {}kbps",
         src_w, src_h, fit_mode, out_w, out_h, target_fps, opts.encoder, opts.bitrate_kbps
     );
     event_tx.send(StreamEvent::Started { width: out_w as u32, height: out_h as u32 }).ok();
@@ -536,7 +536,7 @@ unsafe fn run_encoder_unsafe(
                 let ms = t.elapsed().as_millis();
                 total_pkts += 1;
                 if ms > 50 { slow_writes += 1; }
-                // owned drops here → av_packet_free called
+                // owned drops here  av_packet_free called
             }
 
             tracing::info!("RTMP writer done: {total_pkts} pkts written, {slow_writes} slow (>50ms)");
@@ -548,7 +548,7 @@ unsafe fn run_encoder_unsafe(
         })
         .expect("failed to spawn rtmp-writer thread");
 
-    // ── Scaling context (BGRA → YUV420P) ─────────────────────────────────────
+    // ── Scaling context (BGRA  YUV420P) ─────────────────────────────────────
     let sws = sws_getContext(
         crop_w, crop_h, AVPixelFormat::AV_PIX_FMT_BGRA,
         dst_w, dst_h, AVPixelFormat::AV_PIX_FMT_YUV420P,

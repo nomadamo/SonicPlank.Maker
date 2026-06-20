@@ -5,9 +5,9 @@
 //!
 //! | Channel  | Direction          | Content                        |
 //! |----------|--------------------|--------------------------------|
-//! | stdin    | Electron → Core    | Auth (once), Commands, Overlay |
-//! | stdout   | Core → Electron    | Ready (once), Events, Status   |
-//! | data pipe| Core → Electron    | Binary video frames (Phase 1+) |
+//! | stdin    | Electron  Core    | Auth (once), Commands, Overlay |
+//! | stdout   | Core  Electron    | Ready (once), Events, Status   |
+//! | data pipe| Core  Electron    | Binary video frames (Phase 1+) |
 //!
 //! ## Control-plane framing
 //!
@@ -38,7 +38,7 @@ use thiserror::Error;
 /// Wire protocol version. Bump on any breaking change to the message schema.
 pub const PROTOCOL_VERSION: u32 = 1;
 
-// ── Commands (Electron → Core) ────────────────────────────────────────────────
+// ── Commands (Electron  Core) ────────────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -66,9 +66,11 @@ pub enum Command {
     /// Core responds with [`Event::Sources`].
     GetSources,
     /// Begin capturing the source with the given id.
-    /// Core responds with [`Event::CaptureStarted`] or [`Event::Error`].
-    StartCapture { source_id: String },
-    /// Stop the active capture session.
+    StartCapture { 
+        source_id: String,
+        #[serde(default)]
+        overlay_hwnd: Option<String>,
+    },
     /// Core responds with [`Event::CaptureStopped`].
     StopCapture,
     /// Allow the data pipe to deliver preview frames to Electron.
@@ -92,7 +94,7 @@ pub enum Command {
     StopStream,
 }
 
-// ── Events (Core → Electron) ──────────────────────────────────────────────────
+// ── Events (Core  Electron) ──────────────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -164,6 +166,7 @@ pub struct CaptureSource {
 pub enum CaptureSourceKind {
     Monitor,
     Window,
+    Webcam,
 }
 
 // ── Data-plane binary framing ─────────────────────────────────────────────────

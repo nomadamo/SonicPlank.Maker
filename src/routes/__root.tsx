@@ -11,13 +11,14 @@ import { useEffect } from "react";
 function RootComponent() {
   const location = useLocation();
   const isPreview = location.pathname === "/preview";
+  const isOverlay = location.pathname === "/overlay";
 
   const initSpotify = useSetAtom(initSpotifyFromStorage);
   useEffect(() => {
     void initSpotify();
   }, []);
 
-  if (isPreview) {
+  if (isPreview || isOverlay) {
     return (
       <StateMachineProvider>
         <Outlet />

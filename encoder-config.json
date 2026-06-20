@@ -1,8 +1,8 @@
 {
-  "bitrate_kbps": 6500,
+  "bitrate_kbps": 7000,
   "h264_nvenc": {
     "options": {
-      "preset": "p6",
+      "preset": "p7",
       "tune": "hq",
       "rc": "cbr",
       "profile": "high"

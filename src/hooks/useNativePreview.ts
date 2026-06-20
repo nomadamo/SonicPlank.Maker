@@ -7,7 +7,7 @@ export interface UseNativePreviewResult {
   loadSources: () => Promise<void>;
   startCapture: (sourceId: string) => Promise<void>;
   stopCapture: () => Promise<void>;
-  /** Attach to a <canvas> element to receive live BGRA frames. */
+  /** Off-DOM canvas that receives RGBA frames from the native preview pipe. */
   canvasRef: React.RefObject<HTMLCanvasElement | null>;
 }
 
@@ -17,6 +17,8 @@ export function useNativePreview(): UseNativePreviewResult {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
+    canvasRef.current = document.createElement("canvas");
+
     window.electron.onNativePreviewFrame((data, width, height) => {
       const canvas = canvasRef.current;
       if (!canvas) return;
@@ -24,20 +26,14 @@ export function useNativePreview(): UseNativePreviewResult {
       canvas.height = height;
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
-      // BGRA → RGBA: swap B and R channels in-place on a copy.
-      const rgba = new Uint8ClampedArray(data.buffer, data.byteOffset, data.byteLength);
-      const swapped = new Uint8ClampedArray(rgba.length);
-      for (let i = 0; i < rgba.length; i += 4) {
-        swapped[i] = rgba[i + 2]; // R ← B
-        swapped[i + 1] = rgba[i + 1]; // G
-        swapped[i + 2] = rgba[i]; // B ← R
-        swapped[i + 3] = rgba[i + 3]; // A
-      }
-      ctx.putImageData(new ImageData(swapped, width, height), 0, 0);
+      // Rust converts BGRA→RGBA before sending; pass directly as RGBA.
+      const rgba = new Uint8ClampedArray(data.buffer as ArrayBuffer, data.byteOffset, data.byteLength);
+      ctx.putImageData(new ImageData(rgba, width, height), 0, 0);
     });
 
     return () => {
       window.electron.removeOnNativePreviewFrame();
+      canvasRef.current = null;
     };
   }, []);
 

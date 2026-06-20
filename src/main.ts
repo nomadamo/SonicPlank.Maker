@@ -67,6 +67,69 @@ app.commandLine.appendSwitch("webrtc-max-cpu-consumption-percentage", "75");
 let ffmpegProcess: any = null;
 let activeOverlays: any[] = [];
 let previewWin: BrowserWindow | null = null;
+let overlayWindow: BrowserWindow | null = null;
+
+async function ensureOverlayWindow(): Promise<void> {
+  if (!overlayWindow || overlayWindow.isDestroyed()) {
+    overlayWindow = new BrowserWindow({
+      width: 1920,
+      height: 1080,
+      transparent: true,
+      frame: false,
+      show: false,
+      skipTaskbar: true,
+      webPreferences: {
+        offscreen: true,
+        devTools: inDevelopment,
+        preload: path.join(__dirname, "preload.js"),
+        webSecurity: false,
+        backgroundThrottling: false,
+      },
+    });
+
+    // Limit repaint rate — 1080p BGRA is ~8 MB/frame; 10fps keeps pipe pressure manageable.
+    overlayWindow.webContents.setFrameRate(10);
+
+    // Forward each paint as a type-2 overlay frame to the Rust core.
+    // Format: [u8=2][u32 w LE][u32 h LE][BGRA premultiplied pixels]
+    // Belt-and-suspenders JS throttle in case Chromium fires events faster than setFrameRate.
+    let lastOverlaySendMs = 0;
+    overlayWindow.webContents.on("paint", (_event, _dirty, image) => {
+      if (!coreDataSocket) return;
+      const now = Date.now();
+      if (now - lastOverlaySendMs < 100) return; // max 10 fps; bail before toBitmap()
+      lastOverlaySendMs = now;
+
+      const size = image.getSize();
+      const bgra = image.toBitmap();
+      const w = size.width;
+      const h = size.height;
+      if (bgra.length !== w * h * 4) return;
+
+      const header = Buffer.alloc(9);
+      header.writeUInt8(2, 0);
+      header.writeUInt32LE(w, 1);
+      header.writeUInt32LE(h, 5);
+
+      try {
+        // Two writes avoids a concat allocation equal to the full frame size.
+        coreDataSocket.write(header);
+        coreDataSocket.write(bgra);
+      } catch {
+        // pipe closed; ignore
+      }
+    });
+
+    if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
+      void overlayWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL + "/#/overlay");
+    } else {
+      void overlayWindow.loadFile(
+        path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`),
+        { hash: "overlay" }
+      );
+    }
+  }
+}
 
 // Stream delay buffer. When streamDelayMs > 0, encoded H.264 chunks are held
 // here before being written to FFmpeg stdin. Each entry records wall-clock
@@ -196,6 +259,18 @@ function startCoreEventLoop(): void {
         coreEventListeners.delete(type);
         cb(ev);
       }
+      
+      // If there's an error event, reject all waiting promises that aren't specifically waiting for "error"
+      if (type === "error") {
+        console.error("[Core] Emitted error:", ev);
+        for (const [key, listener] of coreEventListeners.entries()) {
+          if (key !== "error") {
+             // Pass the error event so the listener can reject
+             listener(ev);
+             coreEventListeners.delete(key);
+          }
+        }
+      }
     } catch {
       console.warn("[Core] unparseable stdout line:", line);
     }
@@ -217,7 +292,11 @@ function waitForCoreEvent<T extends Record<string, unknown>>(
     }, timeoutMs);
     coreEventListeners.set(type, (ev) => {
       clearTimeout(tid);
-      resolve(ev as T);
+      if (ev.type === "error" && type !== "error") {
+        reject(new Error(`[Core] Error: ${ev.message || "Unknown error"}`));
+      } else {
+        resolve(ev as T);
+      }
     });
   });
 }
@@ -234,7 +313,7 @@ function parseDataPipeFrame(chunk: Buffer): void {
 
     if (coreFrameBuffer.length < totalLen) break;
 
-    // frameType 1 = VideoPreview: [u32 width][u32 height][BGRA pixels]
+    // frameType 1 = VideoPreview: [u32 width][u32 height][RGBA pixels] (Rust converts BGRA→RGBA before sending)
     if (frameType === 1 && payloadLen >= 8) {
       const width = coreFrameBuffer.readUInt32LE(8);
       const height = coreFrameBuffer.readUInt32LE(12);
@@ -390,21 +469,17 @@ function sendCoreCommand(cmd: Record<string, unknown>): void {
 }
 
 function stopCore(): void {
-  // Shutdown travels on the control plane (stdin).
+  if (!coreProcess) return;
+  // Signal Rust to start graceful shutdown (FFmpeg flush, close sockets).
   sendCoreCommand({ type: "shutdown" });
-  coreProcess?.stdin?.end();
+  coreProcess.stdin?.end();
 
   if (coreDataSocket) {
     coreDataSocket.destroy();
     coreDataSocket = null;
   }
-
-  if (coreProcess) {
-    setTimeout(() => {
-      coreProcess?.kill();
-      coreProcess = null;
-    }, 2000);
-  }
+  // Do NOT null coreProcess here — will-quit uses it as a backstop kill.
+  // The process exit event clears coreProcess once it actually terminates.
 }
 
 // Themes directory settings
@@ -1115,8 +1190,9 @@ const registerIpcHandlers = () => {
       activeCaptureSourceId = null;
     }
 
+    await ensureOverlayWindow();
     sendCoreCommand({ type: "start_capture", source_id: sourceId });
-    await waitForCoreEvent("capture_started");
+    await waitForCoreEvent("capture_started", 15000);
     captureRefCount = 1;
     activeCaptureSourceId = sourceId;
     sendCoreCommand({ type: "enable_preview" });
@@ -1164,8 +1240,9 @@ const registerIpcHandlers = () => {
           captureRefCount = 0;
           activeCaptureSourceId = null;
         }
+        await ensureOverlayWindow();
         sendCoreCommand({ type: "start_capture", source_id: sourceId });
-        await waitForCoreEvent("capture_started");
+        await waitForCoreEvent("capture_started", 15000);
         captureRefCount = 1;
         activeCaptureSourceId = sourceId;
       }
@@ -1445,6 +1522,19 @@ app.on("ready", () => {
 
 app.on("before-quit", () => {
   stopCore();
+});
+
+// Force-kill the core as a backstop: the 300 ms timeout in stopCore() may not
+// fire before Node.js exits, so this synchronous kill ensures no orphan process.
+app.on("will-quit", () => {
+  if (coreProcess) {
+    coreProcess.kill();
+    coreProcess = null;
+  }
+  if (coreDataSocket) {
+    coreDataSocket.destroy();
+    coreDataSocket = null;
+  }
 });
 
 app.on("window-all-closed", () => {

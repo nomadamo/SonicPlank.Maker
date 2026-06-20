@@ -16,7 +16,7 @@ import {
 import { FlowNodeType, OverlayElement } from "@/types/flow-node";
 import { chatMessagesStore, type ChatMessage } from "@/store/chatMessagesStore";
 import { useCallback, useEffect, useRef, useState, useMemo } from "react";
-import { useScreenCapture } from "@/hooks/useScreenCapture";
+import { useNativePreview } from "@/hooks/useNativePreview";
 import { isValidConnection } from "@/utils/flow-connections";
 import { useSetAtom } from "jotai";
 import { updateNodeDataAtom } from "@/store/flowStore";
@@ -216,7 +216,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
   // WebCodecs streaming state, held in refs so the compositor loop can encode
   // each composited frame without re-creating the render callback.
   const isStreamingRef = useRef<boolean>(false);
-  const streamFpsRef = useRef<number>(30);
+  const streamFpsRef = useRef<number>(60);
   const streamFrameIndexRef = useRef<number>(0);
   // Locked canvas dimensions for the active stream. Set at stream-start from the
   // encoder-configured size and held constant so the canvas never resizes while
@@ -241,7 +241,11 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
   const cardImageCacheRef = useRef<Record<string, HTMLImageElement>>({});
 
   // Fetch the active capture stream hook
-  const { stream, startCapture, stopCapture } = useScreenCapture();
+  const {
+    canvasRef: nativePreviewCanvasRef,
+    startCapture: startNativePreviewCapture,
+    stopCapture: stopNativePreviewCapture,
+  } = useNativePreview();
 
   // Retrieve React Flow layout context (reactively updating when connections change)
   const edges = useEdges();
@@ -310,9 +314,13 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
 
   // Extract source parameters
   const captureSourceId = sourceNode?.data.captureSourceId;
+  // True when D2D in Rust is compositing overlays (WGC sources: monitor/window/screen).
+  // The canvas compositor must skip overlay drawing to avoid doubling them.
+  const isNativeOverlayCompositeRef = useRef(false);
+  isNativeOverlayCompositeRef.current = !!(captureSourceId && !captureSourceId.startsWith("webcam:"));
   const captureAudio = !!sourceNode?.data.captureAudio;
   const captureResolution = sourceNode?.data.captureResolution || "original";
-  const captureFrameRate = Number(sourceNode?.data.maxCaptureFrameRate) || 30;
+  const captureFrameRate = Number(sourceNode?.data.maxCaptureFrameRate) || 60;
 
   // Build resolutionPresets mapping based on screen bounds
   const [displays, setDisplays] = useState<any[]>([]);
@@ -600,22 +608,13 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
 
       if (hasChanged) {
         console.log(
-          `[TargetOutputNode] Starting/restarting stream with target: ${captureSourceId}`,
+          `[TargetOutputNode] Starting/restarting native stream with target: ${captureSourceId}`,
         );
         lastCaptureParamsRef.current = currentParams;
         if (editOverlayOpen && !isPreviewActive) {
           editOverlayOwnsCaptureRef.current = true;
         }
-        startCapture(captureSourceId, captureAudio, captureFrameRate, {
-          maxWidth: nativeCaptureDims.width,
-          maxHeight: nativeCaptureDims.height,
-        }).then((activeStream) => {
-          if (!activeStream) {
-            setIsPreviewActive(false);
-            lastCaptureParamsRef.current = null;
-            editOverlayOwnsCaptureRef.current = false;
-          }
-        });
+        startNativePreviewCapture(captureSourceId).catch(console.error);
       }
     } else if (!isPreviewActive && !editOverlayOpen) {
       lastCaptureParamsRef.current = null;
@@ -628,7 +627,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
     nativeCaptureDims.height,
     isPreviewActive,
     editOverlayOpen,
-    startCapture,
+    startNativePreviewCapture,
     setIsPreviewActive,
   ]);
 
@@ -637,42 +636,8 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
   // the video is ready before the canvas-ready poll starts. Without the guard
   // a second assignment (with the same MediaStream object) would tear down the
   // WGC texture handle and break capture.
-  useEffect(() => {
-    if (videoRef.current && stream) {
-      if (videoRef.current.srcObject !== stream) {
-        videoRef.current.srcObject = stream;
-      }
-      videoRef.current.play().catch((err) => {
-        console.error("[TargetOutputNode] Video playback failed:", err);
-      });
-    }
-  }, [stream]);
 
-  // Audio Analyser Setup for visualizer overlays in the card preview
-  useEffect(() => {
-    if (stream && stream.getAudioTracks().length > 0) {
-      try {
-        const AudioContextClass =
-          window.AudioContext || (window as any).webkitAudioContext;
-        const audioContext = new AudioContextClass();
-        const source = audioContext.createMediaStreamSource(stream);
-        const analyser = audioContext.createAnalyser();
-        analyser.fftSize = 256;
-        source.connect(analyser);
-        cardAudioContextRef.current = audioContext;
-        cardAnalyserRef.current = analyser;
-      } catch (err) {
-        console.error("[TargetOutputNode] Audio analyser setup failed:", err);
-      }
-    }
-    return () => {
-      if (cardAudioContextRef.current) {
-        cardAudioContextRef.current.close();
-        cardAudioContextRef.current = null;
-        cardAnalyserRef.current = null;
-      }
-    };
-  }, [stream]);
+  // Audio stream is now handled by the native compositor/audio nodes
 
   // Compositor canvas render loop
   const renderCardCompositor = useCallback(() => {
@@ -681,9 +646,14 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
       cardRequestRef.current = null;
       return;
     }
-    const video = videoRef.current;
+    const srcCanvas = nativePreviewCanvasRef.current;
     const canvas = canvasRef.current;
-    if (!canvas || !video || video.readyState < 2) {
+    if (
+      !canvas ||
+      !srcCanvas ||
+      srcCanvas.width === 0 ||
+      srcCanvas.height === 0
+    ) {
       cardRequestRef.current = requestAnimationFrame(renderCardCompositor);
       return;
     }
@@ -712,10 +682,10 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
     const streamLocked = isStreamingRef.current && streamDimsRef.current;
     const rawWidth = streamLocked
       ? streamDimsRef.current!.width
-      : activePreset.width || video.videoWidth || 1280;
+      : activePreset.width || srcCanvas.width || 1280;
     const rawHeight = streamLocked
       ? streamDimsRef.current!.height
-      : activePreset.height || video.videoHeight || 720;
+      : activePreset.height || srcCanvas.height || 720;
     // Force even dimensions — H.264 (yuv420p) requires width/height divisible by 2.
     const targetWidth = rawWidth - (rawWidth % 2);
     const targetHeight = rawHeight - (rawHeight % 2);
@@ -735,12 +705,12 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
     ctx.fillStyle = "#000000";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    const vw = video.videoWidth;
-    const vh = video.videoHeight;
+    const vw = srcCanvas.width;
+    const vh = srcCanvas.height;
     if (vw > 0 && vh > 0) {
       const fm = fitModeRef.current || "contain";
       if (fm === "stretch") {
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        ctx.drawImage(srcCanvas, 0, 0, canvas.width, canvas.height);
       } else {
         const scale =
           fm === "contain"
@@ -750,7 +720,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
         const dh = vh * scale;
         const dx = (canvas.width - dw) / 2;
         const dy = (canvas.height - dh) / 2;
-        ctx.drawImage(video, dx, dy, dw, dh);
+        ctx.drawImage(srcCanvas, dx, dy, dw, dh);
       }
     }
 
@@ -759,8 +729,9 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
     const broadcastAudio = now - lastAudioBroadcastRef.current >= 40;
     if (broadcastAudio) lastAudioBroadcastRef.current = now;
 
-    // 2. Draw overlays sequentially
-    overlaysRef.current.forEach((overlay) => {
+    // 2. Draw overlays sequentially — skipped for WGC sources where D2D in Rust
+    // has already composited them into the captured frame.
+    if (!isNativeOverlayCompositeRef.current) overlaysRef.current.forEach((overlay) => {
       ctx.save();
       ctx.globalAlpha = overlay.opacity ?? 1;
 
@@ -1020,7 +991,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
         if (needsRedraw) {
           const npCanvas = needsNewCanvas
             ? new OffscreenCanvas(W, H)
-            : npCache.canvas;
+            : npCache!.canvas;
           const oc = npCanvas.getContext("2d");
           if (oc) {
             const pad = H * 0.12;
@@ -1230,7 +1201,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
       }
 
       ctx.restore();
-    });
+    }); // end overlays forEach
 
     // 3. Send composited frame to Edit Overlay window at ~10fps via IPC relay.
     // We scale down to 640×360 on an offscreen canvas before JPEG encoding —
@@ -1246,11 +1217,27 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
           previewScaleCanvasRef.current = document.createElement("canvas");
         }
         const sc = previewScaleCanvasRef.current;
-        const PW = 640,
-          PH = 360;
+
+        // For 'contain' (FIT) mode, crop to the video-content rect so overlay
+        // handles in the editor land on video pixels, not letterbox areas.
+        // For 'cover' and 'stretch' the canvas IS the video area, use it whole.
+        const vw = srcCanvas.width;
+        const vh = srcCanvas.height;
+        let sX = 0, sY = 0, sW = canvas.width, sH = canvas.height;
+        if (fitModeRef.current === "contain" && vw > 0 && vh > 0) {
+          const s = Math.min(canvas.width / vw, canvas.height / vh);
+          const dw = Math.round(vw * s);
+          const dh = Math.round(vh * s);
+          const dx = Math.round((canvas.width - dw) / 2);
+          const dy = Math.round((canvas.height - dh) / 2);
+          if (dx > 0 || dy > 0) { sX = dx; sY = dy; sW = dw; sH = dh; }
+        }
+        const previewScale = Math.min(1280 / sW, 720 / sH);
+        const PW = (Math.round(sW * previewScale) & ~1) || 2;
+        const PH = (Math.round(sH * previewScale) & ~1) || 2;
         if (sc.width !== PW) sc.width = PW;
         if (sc.height !== PH) sc.height = PH;
-        sc.getContext("2d")?.drawImage(canvas, 0, 0, PW, PH);
+        sc.getContext("2d")?.drawImage(canvas, sX, sY, sW, sH, 0, 0, PW, PH);
 
         sc.toBlob(
           (blob) => {
@@ -1291,7 +1278,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
 
   // Handle compositor loop activation — runs when preview, streaming, or edit overlay is active
   useEffect(() => {
-    if ((isPreviewActive || isStreaming || editOverlayOpen) && stream) {
+    if (isPreviewActive || isStreaming || editOverlayOpen) {
       compositorActiveRef.current = true;
       if (cardRequestRef.current === null) {
         cardRequestRef.current = requestAnimationFrame(renderCardCompositor);
@@ -1304,13 +1291,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
         cardRequestRef.current = null;
       }
     };
-  }, [
-    isPreviewActive,
-    isStreaming,
-    editOverlayOpen,
-    stream,
-    renderCardCompositor,
-  ]);
+  }, [isPreviewActive, isStreaming, editOverlayOpen, renderCardCompositor]);
 
   const handleEditOverlay = useCallback(async () => {
     if (!captureSourceId) return;
@@ -1328,21 +1309,21 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
       setEditOverlayDialogProgress(0);
       previewCapturePendingRef.current = false;
       if (editOverlayOwnsCaptureRef.current && !isStreamingRef.current) {
-        stopCapture();
         editOverlayOwnsCaptureRef.current = false;
       }
+      stopNativePreviewCapture().catch(console.error);
     });
     return () => {
       window.electron.removeOnEditOverlayClosed();
     };
-  }, [stopCapture]);
+  }, [stopNativePreviewCapture]);
 
   // Advance dialog to 66% when stream becomes ready, then listen for first frame confirmation
   useEffect(() => {
-    if (editOverlayOpen && stream) {
+    if (editOverlayOpen) {
       setEditOverlayDialogProgress(66);
     }
-  }, [editOverlayOpen, stream]);
+  }, [editOverlayOpen]);
 
   useEffect(() => {
     window.electron.onEditOverlayConnected(() => {
@@ -1357,13 +1338,20 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
 
   const handleTogglePreview = useCallback(() => {
     if (isPreviewActive) {
-      stopCapture();
+      stopNativePreviewCapture().catch(console.error);
       setIsPreviewActive(false);
     } else {
       if (!captureSourceId) return;
+      startNativePreviewCapture(captureSourceId).catch(console.error);
       setIsPreviewActive(true);
     }
-  }, [isPreviewActive, captureSourceId, setIsPreviewActive, stopCapture]);
+  }, [
+    isPreviewActive,
+    captureSourceId,
+    setIsPreviewActive,
+    stopNativePreviewCapture,
+    startNativePreviewCapture,
+  ]);
 
   const handleVideoLoadedMetadata = useCallback(
     (e: React.SyntheticEvent<HTMLVideoElement>) => {
@@ -1381,17 +1369,14 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
     if (!canvas) return;
 
     const streamToRecord = (canvas as any).captureStream
-      ? (canvas as any).captureStream(60)
-      : null;
+      ? (canvas as any).captureStream(settings.streamFps ?? 60)
+      : (canvas as any).captureStream
+        ? (canvas as any).captureStream(settings.streamFps ?? 60)
+        : null;
+
     if (!streamToRecord) {
       console.error("Canvas captureStream is not supported.");
       return;
-    }
-
-    if (stream) {
-      stream.getAudioTracks().forEach((track) => {
-        streamToRecord.addTrack(track);
-      });
     }
 
     const recordBitrate = (settings.recordingBitrateKbps || 12000) * 1000;
@@ -1448,7 +1433,11 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
     recorder.start(100);
     mediaRecorderRef.current = recorder;
     setIsRecording(true);
-  }, [stream]);
+  }, [
+    settings.recordingBitrateKbps,
+    settings.recordingPath,
+    settings.streamFps,
+  ]);
 
   const stopRecording = useCallback(() => {
     if (mediaRecorderRef.current) {
@@ -1468,269 +1457,248 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
 
     setIsStarting(true);
     try {
-    // ── Native WGC path — bypass Chromium capture + WebCodecs entirely ─────────
-    if (
-      captureSourceId.startsWith("monitor:") ||
-      captureSourceId.startsWith("window:")
-    ) {
-      const streamFps = settings.streamFps ?? 30;
+      // ── Native WGC path — bypass Chromium capture + WebCodecs entirely ─────────
+      if (
+        captureSourceId.startsWith("monitor:") ||
+        captureSourceId.startsWith("window:")
+      ) {
+        const streamFps = settings.streamFps ?? 60;
+        const presetW =
+          typeof activePreset.width === "number" && activePreset.width > 0
+            ? activePreset.width
+            : undefined;
+        const presetH =
+          typeof activePreset.height === "number" && activePreset.height > 0
+            ? activePreset.height
+            : undefined;
+        try {
+          await window.electron.startNativeStream(captureSourceId, {
+            rtmpUrl,
+            fps: streamFps,
+            outputWidth: presetW,
+            outputHeight: presetH,
+            fitMode: fitMode,
+            encoder: (settings.streamEncoder as string) || "libx264",
+          });
+        } catch (err: any) {
+          console.error(
+            "[TargetOutputNode] Failed to start native stream:",
+            err,
+          );
+          showToast("Failed to start native stream.");
+          return;
+        }
+        setIsStreaming(true);
+        setShowStreamInput(false);
+        return;
+      }
+
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+
+      // If no native capture is active (preview not open), start one silently
+      if (!isPreviewActive && !editOverlayOpen) {
+        await startNativePreviewCapture(captureSourceId).catch(console.error);
+        streamOwnsCaptureRef.current = true;
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      }
+
+      // Kick the compositor loop so it starts compositing and sizes the canvas to
+      // the real capture resolution. The isStreaming effect also activates it, but
+      // we start it here so the canvas is sized before we configure the encoder.
+      compositorActiveRef.current = true;
+      if (cardRequestRef.current === null) {
+        cardRequestRef.current = requestAnimationFrame(renderCardCompositor);
+      }
+
+      // Determine encoder dimensions. For fixed presets (1080p, 720p, etc.) we
+      // know the target immediately — no need to wait for the video element.
+      // For "original" we need the actual video dimensions: poll for up to 5s.
+      // Either way we explicitly size the canvas so the compositor loop is never
+      // given a mismatched frame (avoids the old circular dependency where the
+      // compositor refused to size the canvas until readyState>=2, while the
+      // canvas-ready poll was waiting for the compositor to size it).
+      let encW: number;
+      let encH: number;
+      if (activePreset.width > 0 && activePreset.height > 0) {
+        encW = activePreset.width;
+        encH = activePreset.height;
+      } else {
+        const dims = await new Promise<{ w: number; h: number }>((resolve) => {
+          const deadline = performance.now() + 5000;
+          const poll = () => {
+            const nc = nativePreviewCanvasRef.current;
+            if (nc && nc.width > 0 && nc.height > 0) {
+              resolve({ w: nc.width, h: nc.height });
+            } else if (performance.now() >= deadline) {
+              console.warn(
+                "[TargetOutputNode] Native canvas dimensions not available — falling back to 1280x720",
+              );
+              resolve({ w: 1280, h: 720 });
+            } else {
+              requestAnimationFrame(poll);
+            }
+          };
+          poll();
+        });
+        encW = dims.w;
+        encH = dims.h;
+      }
+      // H.264 (yuv420p) requires even dimensions.
+      const encWidth = encW - (encW % 2);
+      const encHeight = encH - (encH % 2);
+      // Force the canvas to encoder dims now so every frame the compositor
+      // submits is the right size from the very first encoded frame.
+      canvas.width = encWidth;
+      canvas.height = encHeight;
+
+      const streamFps = settings.streamFps ?? 60;
+      const frameDurationMs = 1000 / streamFps;
+      const bitrateKbps = settings.streamBitrateKbps || 6000;
+
+      // ── Preferred: WebCodecs hardware H.264 → FFmpeg copy-mux ─────────────────
+      console.log(
+        `[TargetOutputNode] Configuring encoder at ${encWidth}x${encHeight}`,
+      );
+      const encoderHandle = await createH264CanvasEncoder({
+        width: encWidth,
+        height: encHeight,
+        fps: streamFps,
+        bitrateKbps,
+        onChunk: (buffer) => {
+          window.electron.pushStreamData(buffer);
+          //console.log(" --- Chunk pushed --- ");
+        },
+        onError: (err) =>
+          console.error("[TargetOutputNode] H.264 encoder:", err),
+      });
+
+      if (encoderHandle) {
+        console.log(
+          `[TargetOutputNode] WebCodecs H.264 (${encoderHandle.codec}) at ${canvas.width}x${canvas.height} ${streamFps}fps → FFmpeg copy-mux`,
+        );
+        try {
+          const initRes = await window.electron.startStream(rtmpUrl, {
+            mode: "h264",
+            fps: streamFps,
+            bitrateKbps,
+            streamDelayMs: settings.streamDelayMs ?? 0,
+          });
+          if (!initRes.success) {
+            console.error(
+              "[TargetOutputNode] Failed to initialize FFmpeg muxer.",
+            );
+            await encoderHandle.close();
+            return;
+          }
+        } catch (err) {
+          console.error("[TargetOutputNode] Failed to start stream:", err);
+          await encoderHandle.close();
+          return;
+        }
+
+        // Drive encoding from the single compositor loop (renderCardCompositor)
+        // rather than a second rAF loop — one composite+encode per frame, no
+        // contention. The compositor reads these refs each frame.
+        h264EncoderRef.current = encoderHandle;
+        streamFpsRef.current = streamFps;
+        streamFrameIndexRef.current = 0;
+        streamDimsRef.current = { width: encWidth, height: encHeight };
+        isStreamingRef.current = true;
+
+        setIsStreaming(true);
+        setShowStreamInput(false);
+        return;
+      }
+
+      // ── Fallback: canvas → JPEG → FFmpeg transcode ────────────────────────────
+      console.warn(
+        "[TargetOutputNode] WebCodecs H.264 unavailable — falling back to JPEG transcode pipeline.",
+      );
+
+      // Cap the compositor to the stream fps too (encode block stays inert here
+      // since h264EncoderRef is null — the JPEG captureLoop does the work).
+      streamFpsRef.current = streamFps;
+      streamDimsRef.current = { width: canvas.width, height: canvas.height };
+      isStreamingRef.current = true;
+
       const presetW =
         typeof activePreset.width === "number" && activePreset.width > 0
           ? activePreset.width
-          : undefined;
+          : null;
       const presetH =
         typeof activePreset.height === "number" && activePreset.height > 0
           ? activePreset.height
-          : undefined;
-      try {
-        await window.electron.startNativeStream(captureSourceId, {
-          rtmpUrl,
-          fps: streamFps,
-          outputWidth: presetW,
-          outputHeight: presetH,
-          fitMode: fitModeRef.current,
-          encoder: settings.streamEncoder || "libx264",
-        });
-      } catch (err) {
-        console.error("[TargetOutputNode] Failed to start native stream:", err);
-        showToast("Failed to start native stream.");
-        return;
-      }
-      setIsStreaming(true);
-      setShowStreamInput(false);
-      return;
-    }
+          : null;
 
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    // If no capture stream is active (preview not open), start one silently
-    let activeStream = stream;
-    if (!activeStream) {
-      activeStream = await startCapture(
-        captureSourceId,
-        captureAudio,
-        captureFrameRate,
-        {
-          maxWidth: nativeCaptureDims.width,
-          maxHeight: nativeCaptureDims.height,
-        },
-      );
-      if (!activeStream) {
-        showToast(`Unable to acquire target for capture: ${captureSourceId}`);
-        console.error(
-          "[TargetOutputNode] Failed to start capture for streaming.",
-        );
-        return;
-      }
-      streamOwnsCaptureRef.current = true;
-      // Set srcObject directly so the video starts before the canvas-ready poll.
-      // The useEffect([stream]) guard (srcObject !== stream) prevents a second
-      // assignment when React later commits the setStream state update — that
-      // double-assignment would tear down the WGC texture handle.
-      if (videoRef.current && videoRef.current.srcObject !== activeStream) {
-        videoRef.current.srcObject = activeStream;
-        videoRef.current.play().catch(() => {});
-      }
-      // Still yield so React can commit setStream (needed for stream-dependent
-      // code elsewhere in the component, e.g. the compositor activation effect).
-      await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    }
-
-    // Kick the compositor loop so it starts compositing and sizes the canvas to
-    // the real capture resolution. The isStreaming effect also activates it, but
-    // we start it here so the canvas is sized before we configure the encoder.
-    compositorActiveRef.current = true;
-    if (cardRequestRef.current === null) {
-      cardRequestRef.current = requestAnimationFrame(renderCardCompositor);
-    }
-
-    // Determine encoder dimensions. For fixed presets (1080p, 720p, etc.) we
-    // know the target immediately — no need to wait for the video element.
-    // For "original" we need the actual video dimensions: poll for up to 5s.
-    // Either way we explicitly size the canvas so the compositor loop is never
-    // given a mismatched frame (avoids the old circular dependency where the
-    // compositor refused to size the canvas until readyState>=2, while the
-    // canvas-ready poll was waiting for the compositor to size it).
-    let encW: number;
-    let encH: number;
-    if (activePreset.width > 0 && activePreset.height > 0) {
-      encW = activePreset.width;
-      encH = activePreset.height;
-    } else {
-      const dims = await new Promise<{ w: number; h: number }>((resolve) => {
-        const deadline = performance.now() + 5000;
-        const poll = () => {
-          const v = videoRef.current;
-          if (v && v.videoWidth > 0 && v.videoHeight > 0) {
-            resolve({ w: v.videoWidth, h: v.videoHeight });
-          } else if (performance.now() >= deadline) {
-            console.warn(
-              "[TargetOutputNode] Video dimensions not available — falling back to 1280x720",
-            );
-            resolve({ w: 1280, h: 720 });
-          } else {
-            requestAnimationFrame(poll);
-          }
-        };
-        poll();
-      });
-      encW = dims.w;
-      encH = dims.h;
-    }
-    // H.264 (yuv420p) requires even dimensions.
-    const encWidth = encW - (encW % 2);
-    const encHeight = encH - (encH % 2);
-    // Force the canvas to encoder dims now so every frame the compositor
-    // submits is the right size from the very first encoded frame.
-    canvas.width = encWidth;
-    canvas.height = encHeight;
-
-    const streamFps = settings.streamFps ?? 30;
-    const frameDurationMs = 1000 / streamFps;
-    const bitrateKbps = settings.streamBitrateKbps || 6000;
-
-    // ── Preferred: WebCodecs hardware H.264 → FFmpeg copy-mux ─────────────────
-    console.log(
-      `[TargetOutputNode] Configuring encoder at ${encWidth}x${encHeight}`,
-    );
-    const encoderHandle = await createH264CanvasEncoder({
-      width: encWidth,
-      height: encHeight,
-      fps: streamFps,
-      bitrateKbps,
-      onChunk: (buffer) => {
-        window.electron.pushStreamData(buffer);
-        //console.log(" --- Chunk pushed --- ");
-      },
-      onError: (err) => console.error("[TargetOutputNode] H.264 encoder:", err),
-    });
-
-    if (encoderHandle) {
-      console.log(
-        `[TargetOutputNode] WebCodecs H.264 (${encoderHandle.codec}) at ${canvas.width}x${canvas.height} ${streamFps}fps → FFmpeg copy-mux`,
-      );
       try {
         const initRes = await window.electron.startStream(rtmpUrl, {
-          mode: "h264",
-          fps: streamFps,
+          mode: "mjpeg",
+          encoder: settings.streamEncoder || "libx264",
           bitrateKbps,
+          fps: streamFps,
           streamDelayMs: settings.streamDelayMs ?? 0,
+          ...(presetW && presetH ? { width: presetW, height: presetH } : {}),
         });
         if (!initRes.success) {
           console.error(
-            "[TargetOutputNode] Failed to initialize FFmpeg muxer.",
+            "[TargetOutputNode] Failed to initialize FFmpeg stream.",
           );
-          await encoderHandle.close();
           return;
         }
       } catch (err) {
         console.error("[TargetOutputNode] Failed to start stream:", err);
-        await encoderHandle.close();
         return;
       }
 
-      // Drive encoding from the single compositor loop (renderCardCompositor)
-      // rather than a second rAF loop — one composite+encode per frame, no
-      // contention. The compositor reads these refs each frame.
-      h264EncoderRef.current = encoderHandle;
-      streamFpsRef.current = streamFps;
-      streamFrameIndexRef.current = 0;
-      streamDimsRef.current = { width: encWidth, height: encHeight };
-      isStreamingRef.current = true;
+      let lastFrameTime = 0;
+      let capturing = false;
 
-      setIsStreaming(true);
-      setShowStreamInput(false);
-      return;
-    }
+      const captureLoop = (now: number) => {
+        if (!frameIntervalRef.current) return;
 
-    // ── Fallback: canvas → JPEG → FFmpeg transcode ────────────────────────────
-    console.warn(
-      "[TargetOutputNode] WebCodecs H.264 unavailable — falling back to JPEG transcode pipeline.",
-    );
+        frameIntervalRef.current = requestAnimationFrame(captureLoop) as any;
 
-    // Cap the compositor to the stream fps too (encode block stays inert here
-    // since h264EncoderRef is null — the JPEG captureLoop does the work).
-    streamFpsRef.current = streamFps;
-    streamDimsRef.current = { width: canvas.width, height: canvas.height };
-    isStreamingRef.current = true;
+        // Rate-limit to target fps (more precise than setInterval on Windows)
+        if (now - lastFrameTime < frameDurationMs) return;
+        lastFrameTime = now;
 
-    const presetW =
-      typeof activePreset.width === "number" && activePreset.width > 0
-        ? activePreset.width
-        : null;
-    const presetH =
-      typeof activePreset.height === "number" && activePreset.height > 0
-        ? activePreset.height
-        : null;
+        if (capturing) return; // skip if previous encode still in flight
+        capturing = true;
 
-    try {
-      const initRes = await window.electron.startStream(rtmpUrl, {
-        mode: "mjpeg",
-        encoder: settings.streamEncoder || "libx264",
-        bitrateKbps,
-        fps: streamFps,
-        streamDelayMs: settings.streamDelayMs ?? 0,
-        ...(presetW && presetH ? { width: presetW, height: presetH } : {}),
-      });
-      if (!initRes.success) {
-        console.error("[TargetOutputNode] Failed to initialize FFmpeg stream.");
-        return;
-      }
-    } catch (err) {
-      console.error("[TargetOutputNode] Failed to start stream:", err);
-      return;
-    }
-
-    let lastFrameTime = 0;
-    let capturing = false;
-
-    const captureLoop = (now: number) => {
-      if (!frameIntervalRef.current) return;
+        canvas.toBlob(
+          (blob) => {
+            capturing = false;
+            if (blob && blob.size > 0) {
+              blob.arrayBuffer().then((buffer) => {
+                window.electron.pushStreamData(buffer);
+              });
+            }
+          },
+          "image/jpeg",
+          0.92, // Higher quality reduces generation loss when FFmpeg re-encodes
+        );
+      };
 
       frameIntervalRef.current = requestAnimationFrame(captureLoop) as any;
 
-      // Rate-limit to target fps (more precise than setInterval on Windows)
-      if (now - lastFrameTime < frameDurationMs) return;
-      lastFrameTime = now;
-
-      if (capturing) return; // skip if previous encode still in flight
-      capturing = true;
-
-      canvas.toBlob(
-        (blob) => {
-          capturing = false;
-          if (blob && blob.size > 0) {
-            blob.arrayBuffer().then((buffer) => {
-              window.electron.pushStreamData(buffer);
-            });
-          }
-        },
-        "image/jpeg",
-        0.92, // Higher quality reduces generation loss when FFmpeg re-encodes
-      );
-    };
-
-    frameIntervalRef.current = requestAnimationFrame(captureLoop) as any;
-
-    setIsStreaming(true);
-    setShowStreamInput(false);
+      setIsStreaming(true);
+      setShowStreamInput(false);
     } finally {
       setIsStarting(false);
     }
   }, [
-    stream,
     rtmpUrl,
     captureSourceId,
-    captureAudio,
-    captureFrameRate,
     activePreset,
-    nativeCaptureDims,
-    startCapture,
+    startNativePreviewCapture,
     renderCardCompositor,
     settings.streamEncoder,
     settings.streamFps,
     settings.streamDelayMs,
+    settings.streamBitrateKbps,
+    isPreviewActive,
+    editOverlayOpen,
   ]);
 
   const stopStreaming = useCallback(async () => {
@@ -1762,14 +1730,23 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
       await window.electron.stopStream();
       setIsStreaming(false);
       // If streaming auto-started the capture (preview wasn't open), stop it now
-      if (streamOwnsCaptureRef.current && !isPreviewActive) {
-        stopCapture();
+      if (
+        streamOwnsCaptureRef.current &&
+        !isPreviewActive &&
+        !editOverlayOpen
+      ) {
+        stopNativePreviewCapture().catch(console.error);
         streamOwnsCaptureRef.current = false;
       }
     } finally {
       setIsStopping(false);
     }
-  }, [captureSourceId, isPreviewActive, stopCapture]);
+  }, [
+    captureSourceId,
+    isPreviewActive,
+    editOverlayOpen,
+    stopNativePreviewCapture,
+  ]);
 
   // Subscribe to live FFmpeg stream stats while streaming is active
   useEffect(() => {
@@ -1788,10 +1765,10 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
   // Clean up recording if preview is toggled off.
   // Streaming is NOT stopped here — it manages its own capture lifecycle.
   useEffect(() => {
-    if (!isPreviewActive || !stream) {
+    if (!isPreviewActive) {
       if (isRecording) stopRecording();
     }
-  }, [isPreviewActive, stream, isRecording, stopRecording]);
+  }, [isPreviewActive, isRecording, stopRecording]);
 
   return (
     <>
@@ -1933,12 +1910,12 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
                   style={{
                     // Only show canvas visually when preview is explicitly enabled.
                     // Streaming uses the canvas via captureStream() even when hidden.
-                    display: isPreviewActive && stream ? "block" : "none",
+                    display: isPreviewActive ? "block" : "none",
                   }}
                 />
               </>
             )}
-            {!(isPreviewActive && stream) && !isStreaming && (
+            {!isPreviewActive && !isStreaming && (
               <div className="flex flex-col items-center gap-2 text-zinc-500 text-center px-4 py-8">
                 <MonitorIcon className="w-8 h-8 text-zinc-700 stroke-[1.5]" />
                 <span className="text-[10px]">
@@ -1957,17 +1934,17 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
             <div className="flex items-center gap-2 justify-between mt-1">
               <button
                 onClick={isRecording ? stopRecording : startRecording}
-                disabled={!isPreviewActive || !stream}
+                disabled={!isPreviewActive}
                 title={
-                  !isPreviewActive || !stream
-                    ? "Enable Preview to record"
+                  !isPreviewActive
+                    ? "Recording requires active stream preview"
                     : undefined
                 }
                 className={cn(
                   "flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-[10px] font-semibold uppercase tracking-wider border transition-all",
                   isRecording
                     ? "bg-red-500/10 text-red-400 border-red-500/20 hover:bg-red-500/20 animate-pulse cursor-pointer"
-                    : !isPreviewActive || !stream
+                    : !isPreviewActive
                       ? "bg-zinc-900/50 text-zinc-600 border-zinc-800/50 cursor-not-allowed"
                       : "bg-zinc-900 text-zinc-300 border-zinc-800 hover:bg-zinc-800 hover:text-white cursor-pointer",
                 )}
@@ -2076,7 +2053,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
                     FPS
                   </span>
                   <select
-                    value={settings.streamFps ?? 30}
+                    value={settings.streamFps ?? 60}
                     onChange={(e) =>
                       updateSettings({
                         streamFps: Number(e.target.value) as 30 | 60,
@@ -2239,7 +2216,9 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
             {/* Expanded detail grid */}
             {statsExpanded && (
               <div className="grid grid-cols-[3.5rem_1fr] gap-x-3 gap-y-0.5 px-2.5 py-2 bg-zinc-950 border border-zinc-800 rounded-lg text-[9px] font-mono">
-                <span className="text-zinc-600 uppercase tracking-wider text-[8px] self-center">FPS</span>
+                <span className="text-zinc-600 uppercase tracking-wider text-[8px] self-center">
+                  FPS
+                </span>
                 <span
                   className={cn(
                     "tabular-nums font-semibold",
@@ -2253,22 +2232,30 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
                   {streamStats.fps?.toFixed(1) ?? "—"}
                 </span>
 
-                <span className="text-zinc-600 uppercase tracking-wider text-[8px] self-center">Frames</span>
+                <span className="text-zinc-600 uppercase tracking-wider text-[8px] self-center">
+                  Frames
+                </span>
                 <span className="text-zinc-300 tabular-nums">
                   {streamStats.frame?.toLocaleString() ?? "—"}
                 </span>
 
-                <span className="text-zinc-600 uppercase tracking-wider text-[8px] self-center">Uptime</span>
+                <span className="text-zinc-600 uppercase tracking-wider text-[8px] self-center">
+                  Uptime
+                </span>
                 <span className="text-zinc-300 tabular-nums">
                   {streamStats.time ?? "—"}
                 </span>
 
-                <span className="text-zinc-600 uppercase tracking-wider text-[8px] self-center">Bitrate</span>
+                <span className="text-zinc-600 uppercase tracking-wider text-[8px] self-center">
+                  Bitrate
+                </span>
                 <span className="text-zinc-300 tabular-nums">
                   {streamStats.bitrate ?? "—"}
                 </span>
 
-                <span className="text-zinc-600 uppercase tracking-wider text-[8px] self-center">Dropped</span>
+                <span className="text-zinc-600 uppercase tracking-wider text-[8px] self-center">
+                  Dropped
+                </span>
                 <span
                   className={cn(
                     "tabular-nums",
@@ -2282,7 +2269,9 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
 
                 {streamStats.speed && (
                   <>
-                    <span className="text-zinc-600 uppercase tracking-wider text-[8px] self-center">Speed</span>
+                    <span className="text-zinc-600 uppercase tracking-wider text-[8px] self-center">
+                      Speed
+                    </span>
                     <span
                       className={cn(
                         "tabular-nums",

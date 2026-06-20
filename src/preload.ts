@@ -256,6 +256,7 @@ contextBridge.exposeInMainWorld("electron", {
       fps?: number;
       outputWidth?: number;
       outputHeight?: number;
+      fitMode?: string;
       encoder?: string;
     },
   ): Promise<{ success: boolean; width: number; height: number }> => {

@@ -22,6 +22,7 @@ pub fn enumerate() -> Vec<CaptureSource> {
     let mut sources = Vec::new();
     sources.extend(enumerate_monitors());
     sources.extend(enumerate_windows());
+    sources.extend(enumerate_webcams());
     sources
 }
 
@@ -129,6 +130,99 @@ unsafe extern "system" fn window_enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
     });
 
     BOOL(1) // continue
+}
+
+// ── Webcams (Media Foundation) ────────────────────────────────────────────────
+
+fn enumerate_webcams() -> Vec<CaptureSource> {
+    let mut webcams = Vec::new();
+
+    unsafe {
+        // Ensure MF is initialized before enumerating. Safe to call multiple times.
+        let _ = windows::Win32::Media::MediaFoundation::MFStartup(
+            windows::Win32::Media::MediaFoundation::MF_VERSION,
+            windows::Win32::Media::MediaFoundation::MFSTARTUP_NOSOCKET,
+        );
+
+        let mut attrs: Option<windows::Win32::Media::MediaFoundation::IMFAttributes> = None;
+        if windows::Win32::Media::MediaFoundation::MFCreateAttributes(&mut attrs, 1).is_err() {
+            return webcams;
+        }
+        let attrs = attrs.unwrap();
+        if attrs
+            .SetGUID(
+                &windows::Win32::Media::MediaFoundation::MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE,
+                &windows::Win32::Media::MediaFoundation::MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID,
+            )
+            .is_err()
+        {
+            return webcams;
+        }
+
+        let mut devices_ptr: *mut Option<windows::Win32::Media::MediaFoundation::IMFActivate> =
+            std::ptr::null_mut();
+        let mut count = 0;
+        if windows::Win32::Media::MediaFoundation::MFEnumDeviceSources(
+            &attrs,
+            &mut devices_ptr,
+            &mut count,
+        )
+        .is_err()
+        {
+            return webcams;
+        }
+
+        if devices_ptr.is_null() || count == 0 {
+            return webcams;
+        }
+
+        let devices = std::slice::from_raw_parts(devices_ptr, count as usize);
+        for dev in devices {
+            if let Some(activate) = dev {
+                // Get Friendly Name
+                let mut name_ptr = windows::core::PWSTR::null();
+                let mut name_len = 0;
+                if activate
+                    .GetAllocatedString(
+                        &windows::Win32::Media::MediaFoundation::MF_DEVSOURCE_ATTRIBUTE_FRIENDLY_NAME,
+                        &mut name_ptr,
+                        &mut name_len,
+                    )
+                    .is_ok()
+                    && !name_ptr.is_null()
+                {
+                    let name = unsafe { name_ptr.to_string().unwrap_or_default() };
+                    windows::Win32::System::Com::CoTaskMemFree(Some(name_ptr.as_ptr() as _));
+
+                    // Get Symbolic Link (used for opening it later)
+                    let mut sym_ptr = windows::core::PWSTR::null();
+                    let mut sym_len = 0;
+                    if activate
+                        .GetAllocatedString(
+                            &windows::Win32::Media::MediaFoundation::MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK,
+                            &mut sym_ptr,
+                            &mut sym_len,
+                        )
+                        .is_ok()
+                        && !sym_ptr.is_null()
+                    {
+                        let sym_link = unsafe { sym_ptr.to_string().unwrap_or_default() };
+                        windows::Win32::System::Com::CoTaskMemFree(Some(sym_ptr.as_ptr() as _));
+
+                        webcams.push(CaptureSource {
+                            id: format!("webcam:{}", sym_link),
+                            name,
+                            kind: CaptureSourceKind::Webcam,
+                        });
+                    }
+                }
+            }
+        }
+
+        windows::Win32::System::Com::CoTaskMemFree(Some(devices_ptr as _));
+    }
+
+    webcams
 }
 
 // ── Capture item construction ─────────────────────────────────────────────────

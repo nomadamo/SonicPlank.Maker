@@ -1,22 +1,24 @@
 mod capture;
+mod capture_mf;
+mod d2d;
 mod sources;
 mod streaming;
 
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc,
+    Arc, Mutex,
 };
 
 use anyhow::{anyhow, Context, Result};
 use sonicplank_ipc::{
     decode_command, encode_event, CaptureSource, Command, ErrorCode, Event, PROTOCOL_VERSION,
 };
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::windows::named_pipe::ServerOptions;
 use tokio::sync::broadcast;
 use tracing::{error, info, warn};
 
-use capture::RawFrame;
+use capture::{RawFrame, SharedOverlay};
 use streaming::{StreamEvent, StreamOptions, StreamSession};
 
 // ── Startup ───────────────────────────────────────────────────────────────────
@@ -54,26 +56,30 @@ async fn main() -> Result<()> {
         })?
     );
 
-    // Broadcast channel for raw frames: WGC → preview pipe and/or encoder.
+    // Broadcast channel for raw frames: WGC  preview pipe and/or encoder.
     // Capacity 4: if a subscriber falls behind, old frames are dropped rather
     // than backing up the WGC callback.
     let (frame_tx, _) = broadcast::channel::<Arc<RawFrame>>(4);
 
-    // Preview gate — only set when Electron has sent EnablePreview.
+    // Preview gate - only set when Electron has sent EnablePreview.
     let preview_enabled = Arc::new(AtomicBool::new(false));
 
-    // Channel for events produced by the stream encoder thread → stdout.
+    // Channel for events produced by the stream encoder thread  stdout.
     let (stream_evt_tx, stream_evt_rx) =
         tokio::sync::mpsc::unbounded_channel::<StreamEvent>();
 
+    // Shared slot for overlay BGRA frames received from the offscreen BrowserWindow.
+    // `run_data_pipe` writes here; `capture::process_frame` reads and uploads to D2D.
+    let shared_overlay: SharedOverlay = Arc::new(Mutex::new(None));
+
     tokio::select! {
-        result = run_stdin_commands(frame_tx.clone(), Arc::clone(&preview_enabled), stream_evt_tx, stream_evt_rx) => {
+        result = run_stdin_commands(frame_tx.clone(), Arc::clone(&preview_enabled), stream_evt_tx, stream_evt_rx, Arc::clone(&shared_overlay)) => {
             if let Err(e) = result {
                 error!("Control plane error: {e:#}");
                 std::process::exit(1);
             }
         }
-        result = run_data_pipe(data_pipe, token, frame_tx.subscribe(), preview_enabled) => {
+        result = run_data_pipe(data_pipe, token, frame_tx.subscribe(), preview_enabled, shared_overlay) => {
             if let Err(e) = result {
                 error!("Data pipe error: {e:#}");
             }
@@ -120,24 +126,25 @@ async fn read_auth_from_stdin() -> Result<(String, String)> {
     }
 }
 
-// ── Control plane (stdin → stdout) ───────────────────────────────────────────
+// ── Control plane (stdin  stdout) ───────────────────────────────────────────
 
 async fn run_stdin_commands(
     frame_tx: broadcast::Sender<Arc<RawFrame>>,
     preview_enabled: Arc<AtomicBool>,
     stream_evt_tx: tokio::sync::mpsc::UnboundedSender<StreamEvent>,
     mut stream_evt_rx: tokio::sync::mpsc::UnboundedReceiver<StreamEvent>,
+    shared_overlay: SharedOverlay,
 ) -> Result<()> {
     let mut stdin = BufReader::new(tokio::io::stdin());
     let mut stdout = tokio::io::stdout();
     let mut line = String::new();
-    let mut active_session: Option<capture::CaptureSession> = None;
+    let mut active_session: Option<Box<dyn CaptureSessionTrait>> = None;
     let mut active_stream: Option<StreamSession> = None;
 
     loop {
         line.clear();
         tokio::select! {
-            // ── Stream events from the encoder thread → stdout ────────────────
+            // ── Stream events from the encoder thread  stdout ────────────────
             Some(evt) = stream_evt_rx.recv() => {
                 match evt {
                     StreamEvent::Started { width, height } => {
@@ -172,11 +179,11 @@ async fn run_stdin_commands(
                 match read_result {
                     Ok(0) => {
                         info!("stdin closed - Electron exited");
-                        break;
+                        std::process::exit(0);
                     }
                     Err(e) => {
                         error!("stdin read error: {e}");
-                        break;
+                        std::process::exit(1);
                     }
                     Ok(_) => {}
                 }
@@ -197,7 +204,7 @@ async fn run_stdin_commands(
                     }
                     Ok(Command::Shutdown) => {
                         info!("Shutdown command received");
-                        break;
+                        std::process::exit(0);
                     }
                     Ok(Command::GetSources) => {
                         let items: Vec<CaptureSource> = sources::enumerate();
@@ -205,41 +212,42 @@ async fn run_stdin_commands(
                         stdout.write_all(&frame).await?;
                         stdout.flush().await?;
                     }
-                    Ok(Command::StartCapture { source_id }) => {
-                        if let Some(prev) = active_session.take() {
+                    Ok(Command::StartCapture { source_id, overlay_hwnd }) => {
+                        if let Some(mut prev) = active_session.take() {
                             if let Err(e) = prev.stop() {
                                 warn!("Failed to stop previous capture: {e}");
                             }
                         }
 
-                        match sources::capture_item_for_id(&source_id) {
-                            Ok(item) => {
-                                match capture::CaptureSession::new(item, frame_tx.clone()) {
-                                    Ok(session) => {
-                                        active_session = Some(session);
-                                        let frame = encode_event(&Event::CaptureStarted {
-                                            source_id: source_id.clone(),
-                                        })?;
-                                        stdout.write_all(&frame).await?;
-                                        stdout.flush().await?;
-                                        info!(source = %source_id, "Capture started");
-                                    }
-                                    Err(e) => {
-                                        warn!("Failed to start capture for {source_id}: {e}");
-                                        let frame = encode_event(&Event::Error {
-                                            code: ErrorCode::CaptureError,
-                                            message: format!("StartCapture failed: {e}"),
-                                        })?;
-                                        stdout.write_all(&frame).await?;
-                                        stdout.flush().await?;
-                                    }
-                                }
+                        let session_result: Result<Box<dyn CaptureSessionTrait>> = if source_id.starts_with("webcam:") {
+                            let sym_link = source_id.trim_start_matches("webcam:");
+                            capture_mf::MFCaptureSession::new(sym_link, frame_tx.clone())
+                                .map(|s| Box::new(s) as Box<dyn CaptureSessionTrait>)
+                        } else {
+                            sources::capture_item_for_id(&source_id)
+                                .map_err(Into::into)
+                                .and_then(|item| {
+                                    let _ = overlay_hwnd; // no longer used; overlay arrives via data pipe
+                                    capture::CaptureSession::new(item, frame_tx.clone(), Arc::clone(&shared_overlay))
+                                        .map(|s| Box::new(s) as Box<dyn CaptureSessionTrait>)
+                                })
+                        };
+
+                        match session_result {
+                            Ok(session) => {
+                                active_session = Some(session);
+                                let frame = encode_event(&Event::CaptureStarted {
+                                    source_id: source_id.clone(),
+                                })?;
+                                stdout.write_all(&frame).await?;
+                                stdout.flush().await?;
+                                info!(source = %source_id, "Capture started");
                             }
                             Err(e) => {
-                                warn!("Unknown source id {source_id}: {e}");
+                                warn!("Failed to start capture for {source_id}: {e}");
                                 let frame = encode_event(&Event::Error {
-                                    code: ErrorCode::Unknown,
-                                    message: format!("Unknown source: {source_id}"),
+                                    code: ErrorCode::CaptureError,
+                                    message: format!("StartCapture failed: {e}"),
                                 })?;
                                 stdout.write_all(&frame).await?;
                                 stdout.flush().await?;
@@ -248,7 +256,7 @@ async fn run_stdin_commands(
                     }
                     Ok(Command::StopCapture) => {
                         preview_enabled.store(false, Ordering::Relaxed);
-                        if let Some(session) = active_session.take() {
+                        if let Some(mut session) = active_session.take() {
                             if let Err(e) = session.stop() {
                                 warn!("Failed to stop capture: {e}");
                             }
@@ -334,7 +342,7 @@ async fn run_stdin_commands(
     if let Some(mut s) = active_stream.take() {
         s.stop();
     }
-    if let Some(session) = active_session {
+    if let Some(mut session) = active_session {
         let _ = session.stop();
     }
 
@@ -343,29 +351,36 @@ async fn run_stdin_commands(
 
 // ── Data pipe (preview-only frame transport) ──────────────────────────────────
 
-/// Accept one connection, verify Hello, then forward serialized preview frames
-/// to Electron — but only while `preview_enabled` is set. Frames are always
-/// consumed from the broadcast receiver so the channel never backs up.
+/// Accept one connection, verify Hello, then:
+/// - Spawn a reader task that pulls type-2 overlay frames from JS and stores them
+///   in `shared_overlay` for `process_frame` to pick up.
+/// - Forward serialized preview frames (type 1) to Electron while `preview_enabled` is set.
 async fn run_data_pipe(
     server: tokio::net::windows::named_pipe::NamedPipeServer,
     expected_token: String,
     mut frame_rx: broadcast::Receiver<Arc<RawFrame>>,
     preview_enabled: Arc<AtomicBool>,
+    shared_overlay: SharedOverlay,
 ) -> Result<()> {
     server.connect().await.context("Data pipe accept failed")?;
     info!("Data pipe client connected");
 
     let (reader, mut writer) = tokio::io::split(server);
-    let mut lines = BufReader::new(reader).lines();
+    let mut buf_reader = BufReader::new(reader);
 
-    let first_line = tokio::time::timeout(
+    // Read the Hello authentication line.
+    let mut first_line = String::new();
+    let bytes_read = tokio::time::timeout(
         std::time::Duration::from_secs(5),
-        lines.next_line(),
+        buf_reader.read_line(&mut first_line),
     )
     .await
     .map_err(|_| anyhow!("Timed out waiting for Hello on data pipe"))?
-    .context("Data pipe read error")?
-    .ok_or_else(|| anyhow!("Data pipe closed before Hello was received"))?;
+    .context("Data pipe read error")?;
+
+    if bytes_read == 0 {
+        return Err(anyhow!("Data pipe closed before Hello was received"));
+    }
 
     match decode_command(first_line.trim()) {
         Ok(Command::Hello { token }) => {
@@ -384,7 +399,41 @@ async fn run_data_pipe(
         }
     }
 
-    info!("Data pipe ready — waiting for preview to be enabled");
+    // Spawn a task that reads incoming overlay frames from Electron.
+    // Format: [u8 type=2][u32 width LE][u32 height LE][BGRA pixels]
+    tokio::spawn(async move {
+        loop {
+            let mut type_byte = [0u8; 1];
+            if buf_reader.read_exact(&mut type_byte).await.is_err() {
+                break;
+            }
+            if type_byte[0] != 2 {
+                tracing::warn!("Unexpected byte on data pipe from Electron: {}", type_byte[0]);
+                break;
+            }
+            let mut dims = [0u8; 8];
+            if buf_reader.read_exact(&mut dims).await.is_err() {
+                break;
+            }
+            let width  = u32::from_le_bytes([dims[0], dims[1], dims[2], dims[3]]);
+            let height = u32::from_le_bytes([dims[4], dims[5], dims[6], dims[7]]);
+            let pixel_count = (width as usize).saturating_mul(height as usize).saturating_mul(4);
+            if pixel_count == 0 || pixel_count > 64 * 1024 * 1024 {
+                tracing::warn!("Overlay frame size out of range: {width}×{height}");
+                break;
+            }
+            let mut pixels = vec![0u8; pixel_count];
+            if buf_reader.read_exact(&mut pixels).await.is_err() {
+                break;
+            }
+            *shared_overlay.lock().unwrap() = Some((pixels, width, height));
+        }
+    });
+
+    info!("Data pipe ready -> waiting for preview to be enabled");
+
+    let mut last_preview_time = tokio::time::Instant::now();
+    let preview_interval = std::time::Duration::from_millis(66); // ~15 FPS
 
     loop {
         let raw = match frame_rx.recv().await {
@@ -403,8 +452,32 @@ async fn run_data_pipe(
             continue;
         }
 
+        if last_preview_time.elapsed() < preview_interval {
+            continue;
+        }
+        last_preview_time = tokio::time::Instant::now();
+
+        let scale = 3;
+        let scaled_w = raw.width / scale;
+        let scaled_h = raw.height / scale;
+        let mut scaled_pixels = Vec::with_capacity((scaled_w * scaled_h * 4) as usize);
+
+        for y in 0..scaled_h {
+            for x in 0..scaled_w {
+                let src_idx = ((y * scale * raw.width + x * scale) * 4) as usize;
+                let b = raw.pixels[src_idx];
+                let g = raw.pixels[src_idx + 1];
+                let r = raw.pixels[src_idx + 2];
+                let a = raw.pixels[src_idx + 3];
+                scaled_pixels.push(r); // R
+                scaled_pixels.push(g); // G
+                scaled_pixels.push(b); // B
+                scaled_pixels.push(a); // A
+            }
+        }
+
         // Serialize: FrameHeader(8) + u32 width + u32 height + BGRA pixels.
-        let payload_len = 8u32 + raw.pixels.len() as u32;
+        let payload_len = 8u32 + scaled_pixels.len() as u32;
         let mut frame_bytes =
             Vec::with_capacity(8 + payload_len as usize);
         frame_bytes.extend_from_slice(&sonicplank_ipc::encode_frame_header(
@@ -413,9 +486,9 @@ async fn run_data_pipe(
                 payload_len,
             },
         ));
-        frame_bytes.extend_from_slice(&raw.width.to_le_bytes());
-        frame_bytes.extend_from_slice(&raw.height.to_le_bytes());
-        frame_bytes.extend_from_slice(&raw.pixels);
+        frame_bytes.extend_from_slice(&scaled_w.to_le_bytes());
+        frame_bytes.extend_from_slice(&scaled_h.to_le_bytes());
+        frame_bytes.extend_from_slice(&scaled_pixels);
 
         if let Err(e) = writer.write_all(&frame_bytes).await {
             warn!("Preview pipe write failed: {e}");
@@ -511,5 +584,21 @@ mod tests {
     fn frame_error_display() {
         let e = FrameError::UnknownFrameType(42);
         assert!(e.to_string().contains("42"));
+    }
+}
+
+pub trait CaptureSessionTrait: Send + Sync {
+    fn stop(&mut self) -> anyhow::Result<()>;
+}
+
+impl CaptureSessionTrait for capture::CaptureSession {
+    fn stop(&mut self) -> anyhow::Result<()> {
+        capture::CaptureSession::stop(self)
+    }
+}
+
+impl CaptureSessionTrait for capture_mf::MFCaptureSession {
+    fn stop(&mut self) -> anyhow::Result<()> {
+        capture_mf::MFCaptureSession::stop(self)
     }
 }
