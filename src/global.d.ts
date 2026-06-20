@@ -84,13 +84,12 @@ declare global {
       // Native preview (Phase 1)
       getPreviewSources: () => Promise<NativeCaptureSource[]>;
       startPreviewCapture: (sourceId: string) => Promise<void>;
-      stopPreviewCapture: () => Promise<void>;
+      stopPreviewCapture: (sourceId: string) => Promise<void>;
       onNativePreviewFrame: (
-        callback: (data: Uint8Array, width: number, height: number) => void,
+        callback: (sourceId: string, width: number, height: number, data: Uint8Array) => void,
       ) => void;
       removeOnNativePreviewFrame: () => void;
       startNativeStream: (
-        sourceId: string,
         options: {
           rtmpUrl: string;
           bitrateKbps?: number;
@@ -99,6 +98,14 @@ declare global {
           outputHeight?: number;
           fitMode?: string;
           encoder?: string;
+          sources: {
+            source_id: string;
+            is_primary: boolean;
+            x_percent: number;
+            y_percent: number;
+            w_percent: number;
+            h_percent: number;
+          }[];
         },
       ) => Promise<{ success: boolean; width: number; height: number }>;
       stopNativeStream: () => Promise<{ success: boolean }>;

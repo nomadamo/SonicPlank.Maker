@@ -298,19 +298,60 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
       .filter(Boolean) as FlowNodeType[];
   }, [edges, nodes, node.id]);
 
-  // Locate the Capture Source selection node connected to the source handle
-  const sourceNode = useMemo(() => {
+  // Capture Source directly connected to this node's source handle (legacy / single-source fallback)
+  const directSourceNode = useMemo(() => {
     const sourceEdge = edges.find(
       (e) =>
         e.target === node.id &&
         e.targetHandle === `handle_${node.id}_source_target`,
     );
     if (!sourceEdge) return null;
-    const foundNode = nodes.find(
-      (n) => n.id === sourceEdge.source && n.type === "captureSourceNode",
+    return (
+      (nodes.find(
+        (n) => n.id === sourceEdge.source && n.type === "captureSourceNode",
+      ) as FlowNodeType) || null
     );
-    return (foundNode as FlowNodeType) || null;
   }, [edges, nodes, node.id]);
+
+  // Overlay Compositor node — may carry capture source role config
+  const connectedOverlayGroupNode = useMemo(() => {
+    const overlayEdge = edges.find(
+      (e) =>
+        e.target === node.id &&
+        e.targetHandle === `handle_${node.id}_overlay_target`,
+    );
+    if (!overlayEdge) return null;
+    return (
+      (nodes.find(
+        (n) => n.id === overlayEdge.source && n.type === "overlayGroupNode",
+      ) as FlowNodeType) || null
+    );
+  }, [edges, nodes, node.id]);
+
+  // Resolve the primary capture source: prefer the source marked "primary" in the
+  // Overlay Compositor's sourceRoles config; fall back to the direct connection.
+  const sourceNode = useMemo(() => {
+    if (connectedOverlayGroupNode) {
+      const storedRoles =
+        (connectedOverlayGroupNode.data.sourceRoles as Record<
+          string,
+          { role: string }
+        >) || {};
+      const groupSources = edges
+        .filter((e) => e.target === connectedOverlayGroupNode.id)
+        .map((e) =>
+          nodes.find((n) => n.id === e.source && n.type === "captureSourceNode"),
+        )
+        .filter(Boolean) as FlowNodeType[];
+      if (groupSources.length > 0) {
+        return (
+          groupSources.find((s) => storedRoles[s.id]?.role === "primary") ||
+          groupSources[0]
+        );
+      }
+    }
+    return directSourceNode;
+  }, [edges, nodes, connectedOverlayGroupNode, directSourceNode]);
 
   // Extract source parameters
   const captureSourceId = sourceNode?.data.captureSourceId;
@@ -422,10 +463,9 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
 
   // How the source is fit into the (possibly differently-shaped) output canvas.
   const fitMode = node.data.fitMode || "contain";
-  // Ref so the running compositor rAF loop always sees the current fitMode
-  // without needing to restart (async useEffect chain is too slow / fragile).
   const fitModeRef = useRef(fitMode);
   fitModeRef.current = fitMode;
+
   const setFitMode = useCallback(
     (mode: "contain" | "cover" | "stretch") => {
       updateNodeData({ id: node.id, patch: { fitMode: mode } });
@@ -444,20 +484,6 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
     }),
     [resolutionPresets],
   );
-
-  // Locate the Overlay Compositor node connected to the overlays target handle
-  const connectedOverlayGroupNode = useMemo(() => {
-    const overlayEdge = edges.find(
-      (e) =>
-        e.target === node.id &&
-        e.targetHandle === `handle_${node.id}_overlay_target`,
-    );
-    if (!overlayEdge) return null;
-    const foundNode = nodes.find(
-      (n) => n.id === overlayEdge.source && n.type === "overlayGroupNode",
-    );
-    return (foundNode as FlowNodeType) || null;
-  }, [edges, nodes, node.id]);
 
   // Extract and compile all overlay configurations connected to the Overlay Compositor node
   const overlays = useMemo(() => {
@@ -1471,14 +1497,78 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
           typeof activePreset.height === "number" && activePreset.height > 0
             ? activePreset.height
             : undefined;
+        const streamSources: {
+          source_id: string;
+          is_primary: boolean;
+          x_percent: number;
+          y_percent: number;
+          w_percent: number;
+          h_percent: number;
+        }[] = [];
+
+        if (connectedOverlayGroupNode) {
+          const storedRoles =
+            (connectedOverlayGroupNode.data.sourceRoles as Record<
+              string,
+              { role: string; pipX: number; pipY: number; pipW: number; pipH: number }
+            >) || {};
+          const groupSources = edges
+            .filter((e) => e.target === connectedOverlayGroupNode.id)
+            .map((e) =>
+              nodes.find((n) => n.id === e.source && n.type === "captureSourceNode"),
+            )
+            .filter(Boolean) as FlowNodeType[];
+
+          let hasPrimary = false;
+          for (const s of groupSources) {
+            const sid = s.data.captureSourceId as string;
+            if (!sid) continue;
+            
+            const r = storedRoles[s.id];
+            if (r) {
+              const isPrimary = r.role === "primary";
+              if (isPrimary) hasPrimary = true;
+              streamSources.push({
+                source_id: sid,
+                is_primary: isPrimary,
+                x_percent: r.pipX ?? 0,
+                y_percent: r.pipY ?? 0,
+                w_percent: r.pipW ?? 100,
+                h_percent: r.pipH ?? 100,
+              });
+            } else {
+              streamSources.push({
+                source_id: sid,
+                is_primary: !hasPrimary,
+                x_percent: 70,
+                y_percent: 70,
+                w_percent: 25,
+                h_percent: 14,
+              });
+              hasPrimary = true;
+            }
+          }
+        } else {
+          // Direct fallback
+          streamSources.push({
+            source_id: captureSourceId,
+            is_primary: true,
+            x_percent: 0,
+            y_percent: 0,
+            w_percent: 100,
+            h_percent: 100,
+          });
+        }
+
         try {
-          await window.electron.startNativeStream(captureSourceId, {
+          await window.electron.startNativeStream({
             rtmpUrl,
             fps: streamFps,
             outputWidth: presetW,
             outputHeight: presetH,
             fitMode: fitMode,
             encoder: (settings.streamEncoder as string) || "libx264",
+            sources: streamSources,
           });
         } catch (err: any) {
           console.error(

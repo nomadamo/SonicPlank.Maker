@@ -72,7 +72,9 @@ pub enum Command {
         overlay_hwnd: Option<String>,
     },
     /// Core responds with [`Event::CaptureStopped`].
-    StopCapture,
+    StopCapture {
+        source_id: String,
+    },
     /// Allow the data pipe to deliver preview frames to Electron.
     /// Must be sent after [`Command::StartCapture`] for preview to appear.
     EnablePreview,
@@ -89,6 +91,7 @@ pub enum Command {
         fit_mode: Option<String>,
         /// Codec name: "libx264", "h264_nvenc", "h264_amf", "h264_qsv"
         encoder: String,
+        sources: Vec<StreamSourceDef>,
     },
     /// Stop the active stream. Core responds with [`Event::StreamStopped`].
     StopStream,
@@ -137,6 +140,16 @@ pub enum Event {
         bitrate_kbps: u32,
         dropped: u64,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StreamSourceDef {
+    pub source_id: String,
+    pub is_primary: bool,
+    pub x_percent: f32,
+    pub y_percent: f32,
+    pub w_percent: f32,
+    pub h_percent: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -293,7 +306,7 @@ mod tests {
 
     #[test]
     fn stop_capture_round_trips() {
-        let cmd = Command::StopCapture;
+        let cmd = Command::StopCapture { source_id: "monitor:0".into() };
         let encoded = encode_command(&cmd).unwrap();
         let line = std::str::from_utf8(&encoded[..encoded.len() - 1]).unwrap();
         assert_eq!(decode_command(line).unwrap(), cmd);

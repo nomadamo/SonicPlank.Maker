@@ -14,12 +14,15 @@ export interface UseNativePreviewResult {
 export function useNativePreview(): UseNativePreviewResult {
   const [sources, setSources] = useState<NativeCaptureSource[]>([]);
   const [activeSourceId, setActiveSourceId] = useState<string | null>(null);
+  const activeSourceIdRef = useRef<string | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
     canvasRef.current = document.createElement("canvas");
 
-    window.electron.onNativePreviewFrame((data, width, height) => {
+    window.electron.onNativePreviewFrame((sourceId, width, height, data) => {
+      if (sourceId !== activeSourceIdRef.current) return;
+
       const canvas = canvasRef.current;
       if (!canvas) return;
       canvas.width = width;
@@ -45,11 +48,15 @@ export function useNativePreview(): UseNativePreviewResult {
   const startCapture = useCallback(async (sourceId: string) => {
     await window.electron.startPreviewCapture(sourceId);
     setActiveSourceId(sourceId);
+    activeSourceIdRef.current = sourceId;
   }, []);
 
   const stopCapture = useCallback(async () => {
-    await window.electron.stopPreviewCapture();
-    setActiveSourceId(null);
+    if (activeSourceIdRef.current) {
+      await window.electron.stopPreviewCapture(activeSourceIdRef.current);
+      setActiveSourceId(null);
+      activeSourceIdRef.current = null;
+    }
   }, []);
 
   return { sources, activeSourceId, loadSources, startCapture, stopCapture, canvasRef };

@@ -20,6 +20,7 @@ export const CONNECTION_RULES: Record<string, Record<string, HandleConnectionRul
   overlayGroupNode: {
     target: {
       allowedSourceTypes: [
+        "captureSourceNode",
         "textOverlayNode",
         "colorOverlayNode",
         "imageOverlayNode",

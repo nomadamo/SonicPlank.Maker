@@ -28,6 +28,7 @@ pub struct MFCaptureSession {
 
 impl MFCaptureSession {
     pub fn new(
+        source_id: String,
         sym_link: &str,
         tx: tokio::sync::broadcast::Sender<Arc<RawFrame>>,
     ) -> Result<Self> {
@@ -36,7 +37,7 @@ impl MFCaptureSession {
         let thread_flag = stop_flag.clone();
 
         let handle = thread::spawn(move || {
-            if let Err(e) = run_capture_loop(&sym_link, thread_flag, tx) {
+            if let Err(e) = run_capture_loop(&source_id, &sym_link, thread_flag, tx) {
                 tracing::warn!("Webcam capture loop exited with error: {:?}", e);
             }
         });
@@ -57,6 +58,7 @@ impl MFCaptureSession {
 }
 
 fn run_capture_loop(
+    source_id: &str,
     sym_link: &str,
     stop_flag: Arc<AtomicBool>,
     tx: tokio::sync::broadcast::Sender<Arc<RawFrame>>,
@@ -136,6 +138,7 @@ fn run_capture_loop(
                     if size >= expected_size {
                         let slice = std::slice::from_raw_parts(data_ptr, expected_size);
                         let raw = RawFrame {
+                            source_id: source_id.to_string(),
                             width,
                             height,
                             pixels: slice.to_vec(),

@@ -47,6 +47,7 @@ pub type SharedOverlay = Arc<Mutex<Option<(Vec<u8>, u32, u32)>>>;
 /// Raw BGRA video frame from WGC. Shared between the preview pipe writer and
 /// the stream encoder via `Arc` to avoid copies.
 pub struct RawFrame {
+    pub source_id: String,
     pub width: u32,
     pub height: u32,
     /// BGRA pixels, row-major, `width * height * 4` bytes.
@@ -83,6 +84,7 @@ impl CaptureSession {
     /// `shared_overlay` is polled each frame for fresh pixels from the offscreen
     /// overlay BrowserWindow — no WGC session for the overlay is needed.
     pub fn new(
+        source_id: String,
         item: GraphicsCaptureItem,
         tx: tokio::sync::broadcast::Sender<Arc<RawFrame>>,
         shared_overlay: SharedOverlay,
@@ -145,7 +147,7 @@ impl CaptureSession {
                         tracing::info!("First frame arrived from WGC");
                     }
 
-                    match process_frame(&device_arc, &gpu_arc_main, &shared_overlay, &frame) {
+                    match process_frame(&device_arc, &gpu_arc_main, &shared_overlay, &frame, &source_id) {
                         Ok(raw) => {
                             let _ = tx.send(Arc::new(raw));
                         }
@@ -232,6 +234,7 @@ fn process_frame(
     gpu: &Mutex<GpuState>,
     shared_overlay: &SharedOverlay,
     frame: &Direct3D11CaptureFrame,
+    source_id: &str,
 ) -> Result<RawFrame> {
     let surface: IDirect3DSurface = frame.Surface().context("Frame had no surface")?;
     let dxgi_access: IDirect3DDxgiInterfaceAccess = surface
@@ -315,5 +318,5 @@ fn process_frame(
         gpu.ctx.Unmap(&gpu.staging, 0);
     }
 
-    Ok(RawFrame { width, height, pixels })
+    Ok(RawFrame { source_id: source_id.to_string(), width, height, pixels })
 }

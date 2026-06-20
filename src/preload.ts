@@ -235,21 +235,21 @@ contextBridge.exposeInMainWorld("electron", {
   startPreviewCapture: async (sourceId: string): Promise<void> => {
     await ipcRenderer.invoke("startPreviewCapture", sourceId);
   },
-  stopPreviewCapture: async (): Promise<void> => {
-    await ipcRenderer.invoke("stopPreviewCapture");
+  stopPreviewCapture: (sourceId: string) => {
+    return ipcRenderer.invoke("stopPreviewCapture", sourceId);
   },
   onNativePreviewFrame: (
-    callback: (data: Uint8Array, width: number, height: number) => void,
-  ): void => {
-    ipcRenderer.on("onNativePreviewFrame", (_event, width, height, pixels) => {
-      callback(pixels as Uint8Array, width as number, height as number);
-    });
+    callback: (sourceId: string, width: number, height: number, data: Uint8Array) => void,
+  ) => {
+    ipcRenderer.on(
+      "onNativePreviewFrame",
+      (_event, sourceId, width, height, data) => callback(sourceId, width, height, data),
+    );
   },
   removeOnNativePreviewFrame: (): void => {
     ipcRenderer.removeAllListeners("onNativePreviewFrame");
   },
   startNativeStream: async (
-    sourceId: string,
     options: {
       rtmpUrl: string;
       bitrateKbps?: number;
@@ -258,9 +258,17 @@ contextBridge.exposeInMainWorld("electron", {
       outputHeight?: number;
       fitMode?: string;
       encoder?: string;
+      sources: {
+        source_id: string;
+        is_primary: boolean;
+        x_percent: number;
+        y_percent: number;
+        w_percent: number;
+        h_percent: number;
+      }[];
     },
   ): Promise<{ success: boolean; width: number; height: number }> => {
-    return await ipcRenderer.invoke("startNativeStream", sourceId, options);
+    return await ipcRenderer.invoke("startNativeStream", options);
   },
   stopNativeStream: async (): Promise<{ success: boolean }> => {
     return await ipcRenderer.invoke("stopNativeStream");

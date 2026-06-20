@@ -1,5 +1,6 @@
 import { motion } from "motion/react";
 import { useEffect, useState } from "react";
+import appIcon from "@/img/icon.png";
 
 export function SplashOverlay({ visible }: { visible: boolean }) {
   const [mounted, setMounted] = useState(true);
@@ -27,7 +28,7 @@ export function SplashOverlay({ visible }: { visible: boolean }) {
     >
       {/* App icon */}
       <motion.img
-        src="/img/icon.png"
+        src={appIcon}
         width={52}
         height={52}
         draggable={false}

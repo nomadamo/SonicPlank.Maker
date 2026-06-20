@@ -204,15 +204,11 @@ let coreStdoutRl: readline.Interface | null = null;
 // Accumulates partial binary frames arriving from the data pipe.
 let coreFrameBuffer = Buffer.alloc(0);
 
-// Reference count for the Rust WGC capture session. Multiple callers (preview
-// and streaming) may share a single session; StartCapture is sent only when
-// going from 0→1, StopCapture only when going from 1→0.
-let captureRefCount = 0;
+let captureRefCount = 0; // Deprecated, remove later
+let activeCaptures = new Map<string, number>();
+let activeStreamSources: { source_id: string }[] = [];
 let activeCaptureSourceId: string | null = null;
 let nativeStreamStartAt: number | null = null;
-// Set when the renderer has explicitly requested native preview frames.
-// Rust is told via enable_preview/disable_preview commands; this mirrors it
-// on the JS side so parseDataPipeFrame can gate the IPC broadcast.
 let nativePreviewActive = false;
 
 // Set up a persistent readline on core stdout. Must be called after coreProcess
@@ -313,18 +309,22 @@ function parseDataPipeFrame(chunk: Buffer): void {
 
     if (coreFrameBuffer.length < totalLen) break;
 
-    // frameType 1 = VideoPreview: [u32 width][u32 height][RGBA pixels] (Rust converts BGRA→RGBA before sending)
-    if (frameType === 1 && payloadLen >= 8) {
-      const width = coreFrameBuffer.readUInt32LE(8);
-      const height = coreFrameBuffer.readUInt32LE(12);
-      const pixelBytes = width * height * 4;
-      if (16 + pixelBytes <= totalLen && nativePreviewActive) {
-        const pixels = coreFrameBuffer.subarray(16, 16 + pixelBytes);
-        BrowserWindow.getAllWindows().forEach((win) => {
-          if (!win.isDestroyed()) {
-            win.webContents.send("onNativePreviewFrame", width, height, pixels);
-          }
-        });
+    // frameType 1 = VideoPreview: [u8 source_id_len] [source_id_bytes] [u32 width] [u32 height] [RGBA pixels]
+    if (frameType === 1 && payloadLen >= 9) {
+      const sourceIdLen = coreFrameBuffer.readUInt8(8);
+      if (payloadLen >= 9 + sourceIdLen + 8) {
+        const sourceId = coreFrameBuffer.subarray(9, 9 + sourceIdLen).toString("utf8");
+        const width = coreFrameBuffer.readUInt32LE(9 + sourceIdLen);
+        const height = coreFrameBuffer.readUInt32LE(13 + sourceIdLen);
+        const pixelBytes = width * height * 4;
+        if (17 + sourceIdLen + pixelBytes <= totalLen && nativePreviewActive) {
+          const pixels = coreFrameBuffer.subarray(17 + sourceIdLen, 17 + sourceIdLen + pixelBytes);
+          BrowserWindow.getAllWindows().forEach((win) => {
+            if (!win.isDestroyed()) {
+              win.webContents.send("onNativePreviewFrame", sourceId, width, height, pixels);
+            }
+          });
+        }
       }
     }
 
@@ -1174,50 +1174,41 @@ const registerIpcHandlers = () => {
   ipcMain.handle("startPreviewCapture", async (_event, sourceId: string) => {
     if (!coreProcess) throw new Error("Core not running");
 
-    if (captureRefCount > 0 && activeCaptureSourceId === sourceId) {
-      // Streaming already holds an active session for this source — reuse it.
-      captureRefCount++;
-      sendCoreCommand({ type: "enable_preview" });
-      nativePreviewActive = true;
-      return;
+    const count = activeCaptures.get(sourceId) || 0;
+    activeCaptures.set(sourceId, count + 1);
+
+    if (count === 0) {
+      await ensureOverlayWindow();
+      sendCoreCommand({ type: "start_capture", source_id: sourceId });
     }
 
-    // Different source currently active — stop the old session first.
-    if (captureRefCount > 0) {
-      sendCoreCommand({ type: "stop_capture" });
-      await waitForCoreEvent("capture_stopped").catch(() => {});
-      captureRefCount = 0;
-      activeCaptureSourceId = null;
-    }
-
-    await ensureOverlayWindow();
-    sendCoreCommand({ type: "start_capture", source_id: sourceId });
-    await waitForCoreEvent("capture_started", 15000);
-    captureRefCount = 1;
-    activeCaptureSourceId = sourceId;
     sendCoreCommand({ type: "enable_preview" });
     nativePreviewActive = true;
   });
 
-  ipcMain.handle("stopPreviewCapture", async () => {
+  ipcMain.handle("stopPreviewCapture", async (_event, sourceId: string) => {
     if (!coreProcess) return;
 
-    nativePreviewActive = false;
-    sendCoreCommand({ type: "disable_preview" });
-    captureRefCount = Math.max(0, captureRefCount - 1);
-    if (captureRefCount === 0) {
-      sendCoreCommand({ type: "stop_capture" });
-      await waitForCoreEvent("capture_stopped").catch(() => {});
-      activeCaptureSourceId = null;
+    let count = activeCaptures.get(sourceId) || 0;
+    count = Math.max(0, count - 1);
+    
+    if (count === 0) {
+      activeCaptures.delete(sourceId);
+      sendCoreCommand({ type: "stop_capture", source_id: sourceId });
+    } else {
+      activeCaptures.set(sourceId, count);
     }
-    // else: streaming is still holding the session open — leave it running.
+    
+    if (activeCaptures.size === 0) {
+      nativePreviewActive = false;
+      sendCoreCommand({ type: "disable_preview" });
+    }
   });
 
   ipcMain.handle(
     "startNativeStream",
     async (
       _event,
-      sourceId: string,
       options: {
         rtmpUrl: string;
         bitrateKbps?: number;
@@ -1226,25 +1217,26 @@ const registerIpcHandlers = () => {
         outputHeight?: number;
         fitMode?: string;
         encoder?: string;
+        sources: {
+          source_id: string;
+          is_primary: boolean;
+          x_percent: number;
+          y_percent: number;
+          w_percent: number;
+          h_percent: number;
+        }[];
       },
     ) => {
       if (!coreProcess) throw new Error("Core not running");
 
-      // Ensure a capture session is running for this source.
-      if (captureRefCount > 0 && activeCaptureSourceId === sourceId) {
-        captureRefCount++;
-      } else {
-        if (captureRefCount > 0) {
-          sendCoreCommand({ type: "stop_capture" });
-          await waitForCoreEvent("capture_stopped").catch(() => {});
-          captureRefCount = 0;
-          activeCaptureSourceId = null;
+      activeStreamSources = options.sources.map(s => ({ source_id: s.source_id }));
+      for (const src of options.sources) {
+        const count = activeCaptures.get(src.source_id) || 0;
+        activeCaptures.set(src.source_id, count + 1);
+        if (count === 0) {
+          await ensureOverlayWindow();
+          sendCoreCommand({ type: "start_capture", source_id: src.source_id });
         }
-        await ensureOverlayWindow();
-        sendCoreCommand({ type: "start_capture", source_id: sourceId });
-        await waitForCoreEvent("capture_started", 15000);
-        captureRefCount = 1;
-        activeCaptureSourceId = sourceId;
       }
 
       // Read bitrate from encoder config; fall back to 6000 kbps.
@@ -1264,6 +1256,7 @@ const registerIpcHandlers = () => {
         output_height: options.outputHeight ?? null,
         fit_mode: options.fitMode ?? null,
         encoder: options.encoder ?? "libx264",
+        sources: options.sources,
       });
 
       const ev = await waitForCoreEvent<{
@@ -1284,12 +1277,20 @@ const registerIpcHandlers = () => {
       await waitForCoreEvent("stream_stopped", 5_000).catch(() => {});
     }
 
-    captureRefCount = Math.max(0, captureRefCount - 1);
-    if (captureRefCount === 0 && coreProcess) {
-      sendCoreCommand({ type: "stop_capture" });
-      await waitForCoreEvent("capture_stopped").catch(() => {});
-      activeCaptureSourceId = null;
+    for (const src of activeStreamSources) {
+      let count = activeCaptures.get(src.source_id) || 0;
+      count = Math.max(0, count - 1);
+      
+      if (count === 0) {
+        activeCaptures.delete(src.source_id);
+        if (coreProcess) {
+          sendCoreCommand({ type: "stop_capture", source_id: src.source_id });
+        }
+      } else {
+        activeCaptures.set(src.source_id, count);
+      }
     }
+    activeStreamSources = [];
 
     return { success: true };
   });

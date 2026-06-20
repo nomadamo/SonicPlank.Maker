@@ -13,6 +13,13 @@ use serde::Deserialize;
 use tokio::sync::{broadcast, mpsc};
 
 use crate::capture::RawFrame;
+use sonicplank_ipc::StreamSourceDef;
+
+#[derive(Clone)]
+pub struct CompositeFrame {
+    pub primary: Arc<RawFrame>,
+    pub pips: Vec<(StreamSourceDef, Arc<RawFrame>)>,
+}
 
 // ── Encoder config file ───────────────────────────────────────────────────────
 
@@ -200,6 +207,22 @@ impl FormatCtxSend {
     fn into_raw(self) -> *mut AVFormatContext { self.0 }
 }
 
+struct PipScaler {
+    sws: *mut SwsContext,
+    src_w: i32,
+    src_h: i32,
+    dst_w: i32,
+    dst_h: i32,
+}
+
+impl Drop for PipScaler {
+    fn drop(&mut self) {
+        if !self.sws.is_null() {
+            unsafe { sws_freeContext(self.sws); }
+        }
+    }
+}
+
 // ── Public interface ──────────────────────────────────────────────────────────
 
 pub struct StreamOptions {
@@ -211,6 +234,7 @@ pub struct StreamOptions {
     pub fit_mode: Option<String>,
     /// "libx264" | "h264_nvenc" | "h264_amf" | "h264_qsv"
     pub encoder: String,
+    pub sources: Vec<StreamSourceDef>,
 }
 
 #[derive(Debug)]
@@ -234,16 +258,37 @@ impl StreamSession {
     ) -> Self {
         let (stop_tx, stop_rx) = std::sync::mpsc::sync_channel::<()>(1);
 
-        // Bridge: async broadcast receiver  bounded sync channel for the encoder thread.
-        let (bridge_tx, bridge_rx) = std::sync::mpsc::sync_channel::<Arc<RawFrame>>(8);
+        // Bridge: async broadcast receiver -> bounded sync channel for the encoder thread.
+        let (bridge_tx, bridge_rx) = std::sync::mpsc::sync_channel::<CompositeFrame>(8);
         let bridge_evt = event_tx.clone();
+
+        let primary_source_id = opts.sources.iter().find(|s| s.is_primary).map(|s| s.source_id.clone());
+        let pip_defs: Vec<StreamSourceDef> = opts.sources.iter().filter(|s| !s.is_primary).cloned().collect();
+
         tokio::spawn(async move {
             let mut rx = frame_rx;
+            let mut latest_pips: HashMap<String, Arc<RawFrame>> = HashMap::new();
+
             loop {
                 match rx.recv().await {
                     Ok(frame) => {
-                        if bridge_tx.try_send(frame).is_err() {
-                            tracing::trace!("encoder lagging - frame dropped");
+                        let sid = &frame.source_id;
+                        if Some(sid) == primary_source_id.as_ref() {
+                            let mut current_pips = Vec::new();
+                            for def in &pip_defs {
+                                if let Some(pip_frame) = latest_pips.get(&def.source_id) {
+                                    current_pips.push((def.clone(), Arc::clone(pip_frame)));
+                                }
+                            }
+                            let composite = CompositeFrame {
+                                primary: frame,
+                                pips: current_pips,
+                            };
+                            if bridge_tx.try_send(composite).is_err() {
+                                tracing::trace!("encoder lagging - frame dropped");
+                            }
+                        } else {
+                            latest_pips.insert(sid.clone(), frame);
                         }
                     }
                     Err(broadcast::error::RecvError::Lagged(n)) => {
@@ -286,7 +331,7 @@ impl Drop for StreamSession {
 
 fn run_encoder(
     opts: StreamOptions,
-    frame_rx: std::sync::mpsc::Receiver<Arc<RawFrame>>,
+    frame_rx: std::sync::mpsc::Receiver<CompositeFrame>,
     stop_rx: std::sync::mpsc::Receiver<()>,
     event_tx: &mpsc::UnboundedSender<StreamEvent>,
 ) -> Result<()> {
@@ -301,7 +346,7 @@ fn run_encoder(
 unsafe fn run_encoder_unsafe(
     opts: StreamOptions,
     enc_cfg: EncoderConfig,
-    frame_rx: std::sync::mpsc::Receiver<Arc<RawFrame>>,
+    frame_rx: std::sync::mpsc::Receiver<CompositeFrame>,
     stop_rx: std::sync::mpsc::Receiver<()>,
     event_tx: &mpsc::UnboundedSender<StreamEvent>,
 ) -> Result<()> {
@@ -312,10 +357,10 @@ unsafe fn run_encoder_unsafe(
         .recv_timeout(Duration::from_secs(5))
         .map_err(|_| anyhow!("timed out waiting for first frame before stream start"))?;
 
-    let src_w = first.width as i32;
-    let src_h = first.height as i32;
-    let out_w = (opts.output_width.unwrap_or(first.width) & !1) as i32;
-    let out_h = (opts.output_height.unwrap_or(first.height) & !1) as i32;
+    let src_w = first.primary.width as i32;
+    let src_h = first.primary.height as i32;
+    let out_w = (opts.output_width.unwrap_or(first.primary.width) & !1) as i32;
+    let out_h = (opts.output_height.unwrap_or(first.primary.height) & !1) as i32;
     let fit_mode = opts.fit_mode.unwrap_or_else(|| "contain".to_string());
 
     let out_aspect = out_w as f32 / out_h as f32;
@@ -592,14 +637,15 @@ unsafe fn run_encoder_unsafe(
     // Encode the first frame.
     calls_this_interval += 1;
     let mut first_pts = 0;
+    let mut pip_scalers: HashMap<String, PipScaler> = HashMap::new();
     encode_frame(codec_ctx, sws, yuv_frame, pkt,
-                 crop_h, crop_x, crop_y, dst_h, dst_x, dst_y, &first, &mut frames_this_interval, &mut bytes_since_status,
+                 crop_h, crop_x, crop_y, dst_h, dst_x, dst_y, &first, &mut pip_scalers, &mut frames_this_interval, &mut bytes_since_status,
                  &mut first_pts, &mut sws_ms_acc, &mut nvenc_ms_acc, &mut recv_ms_acc,
                  &pkt_tx, codec_tb, out_stream_tb, out_stream_idx,
                  &mut pkts_dropped, &queue_depth)?;
     last_pts = 0;
     total_frames += 1;
-    let mut last_frame: Arc<RawFrame> = first;
+    let mut last_frame: CompositeFrame = first;
 
     let mut forced_stop = false;
     loop {
@@ -610,7 +656,7 @@ unsafe fn run_encoder_unsafe(
         // CBR bitrate filled and prevent Twitch's receive buffer from draining.
         let raw = {
             // Consume everything currently queued, keeping the newest.
-            let mut newest: Option<Arc<RawFrame>> = None;
+            let mut newest: Option<CompositeFrame> = None;
             loop {
                 match frame_rx.try_recv() {
                     Ok(f) => { newest = Some(f); }
@@ -668,7 +714,7 @@ unsafe fn run_encoder_unsafe(
             calls_this_interval += 1;
             let mut enc_pts = current_pts;
             encode_frame(codec_ctx, sws, yuv_frame, pkt,
-                         crop_h, crop_x, crop_y, dst_h, dst_x, dst_y, &raw, &mut frames_this_interval,
+                         crop_h, crop_x, crop_y, dst_h, dst_x, dst_y, &raw, &mut pip_scalers, &mut frames_this_interval,
                          &mut bytes_since_status, &mut enc_pts,
                          &mut sws_ms_acc, &mut nvenc_ms_acc, &mut recv_ms_acc,
                          &pkt_tx, codec_tb, out_stream_tb, out_stream_idx,
@@ -756,7 +802,8 @@ unsafe fn encode_frame(
     _dst_h: i32,
     dst_x: i32,
     dst_y: i32,
-    raw: &RawFrame,
+    raw: &CompositeFrame,
+    pip_scalers: &mut HashMap<String, PipScaler>,
     frame_count: &mut u64,
     bytes_since_status: &mut u64,
     pts: &mut i64,
@@ -772,12 +819,12 @@ unsafe fn encode_frame(
 ) -> Result<()> {
     let t0 = Instant::now();
 
-    let start_offset = (crop_y * raw.width as i32 + crop_x) * 4;
+    let start_offset = (crop_y * raw.primary.width as i32 + crop_x) * 4;
     let src_data: [*const u8; 4] = [
-        raw.pixels.as_ptr().add(start_offset as usize),
+        raw.primary.pixels.as_ptr().add(start_offset as usize),
         ptr::null(), ptr::null(), ptr::null()
     ];
-    let src_stride: [i32; 4] = [raw.width as i32 * 4, 0, 0, 0];
+    let src_stride: [i32; 4] = [raw.primary.width as i32 * 4, 0, 0, 0];
 
     let dst_offset_y = dst_y * (*yuv_frame).linesize[0] + dst_x;
     let dst_offset_u = (dst_y / 2) * (*yuv_frame).linesize[1] + (dst_x / 2);
@@ -798,6 +845,66 @@ unsafe fn encode_frame(
         dst_data.as_mut_ptr(),
         (*yuv_frame).linesize.as_ptr(),
     );
+
+    let out_w = (*codec_ctx).width;
+    let out_h = (*codec_ctx).height;
+
+    for (def, pip_raw) in &raw.pips {
+        let pw = (def.w_percent / 100.0 * out_w as f32).round() as i32 & !1;
+        let ph = (def.h_percent / 100.0 * out_h as f32).round() as i32 & !1;
+        let px = (def.x_percent / 100.0 * out_w as f32).round() as i32 & !1;
+        let py = (def.y_percent / 100.0 * out_h as f32).round() as i32 & !1;
+
+        if pw <= 0 || ph <= 0 { continue; }
+
+        let src_w = pip_raw.width as i32;
+        let src_h = pip_raw.height as i32;
+
+        let scaler = pip_scalers.entry(def.source_id.clone()).or_insert_with(|| {
+            let s = sws_getContext(
+                src_w, src_h, AVPixelFormat::AV_PIX_FMT_BGRA,
+                pw, ph, AVPixelFormat::AV_PIX_FMT_YUV420P,
+                SWS_BILINEAR as i32, ptr::null_mut(), ptr::null_mut(), ptr::null()
+            );
+            PipScaler { sws: s, src_w, src_h, dst_w: pw, dst_h: ph }
+        });
+
+        if scaler.dst_w != pw || scaler.dst_h != ph || scaler.src_w != src_w || scaler.src_h != src_h {
+            sws_freeContext(scaler.sws);
+            scaler.sws = sws_getContext(
+                src_w, src_h, AVPixelFormat::AV_PIX_FMT_BGRA,
+                pw, ph, AVPixelFormat::AV_PIX_FMT_YUV420P,
+                SWS_BILINEAR as i32, ptr::null_mut(), ptr::null_mut(), ptr::null()
+            );
+            scaler.src_w = src_w;
+            scaler.src_h = src_h;
+            scaler.dst_w = pw;
+            scaler.dst_h = ph;
+        }
+
+        let pip_src_data: [*const u8; 4] = [pip_raw.pixels.as_ptr(), ptr::null(), ptr::null(), ptr::null()];
+        let pip_src_stride: [i32; 4] = [src_w * 4, 0, 0, 0];
+
+        let pip_dst_y = py * (*yuv_frame).linesize[0] + px;
+        let pip_dst_u = (py / 2) * (*yuv_frame).linesize[1] + (px / 2);
+        let pip_dst_v = (py / 2) * (*yuv_frame).linesize[2] + (px / 2);
+
+        let mut pip_dst_data: [*mut u8; 4] = [
+            (*yuv_frame).data[0].add(pip_dst_y as usize),
+            (*yuv_frame).data[1].add(pip_dst_u as usize),
+            (*yuv_frame).data[2].add(pip_dst_v as usize),
+            ptr::null_mut()
+        ];
+
+        sws_scale(
+            scaler.sws,
+            pip_src_data.as_ptr(),
+            pip_src_stride.as_ptr(),
+            0, src_h,
+            pip_dst_data.as_mut_ptr(),
+            (*yuv_frame).linesize.as_ptr()
+        );
+    }
 
     let t1 = Instant::now();
 

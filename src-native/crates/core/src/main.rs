@@ -138,7 +138,7 @@ async fn run_stdin_commands(
     let mut stdin = BufReader::new(tokio::io::stdin());
     let mut stdout = tokio::io::stdout();
     let mut line = String::new();
-    let mut active_session: Option<Box<dyn CaptureSessionTrait>> = None;
+    let mut active_sessions: std::collections::HashMap<String, Box<dyn CaptureSessionTrait>> = std::collections::HashMap::new();
     let mut active_stream: Option<StreamSession> = None;
 
     loop {
@@ -213,29 +213,23 @@ async fn run_stdin_commands(
                         stdout.flush().await?;
                     }
                     Ok(Command::StartCapture { source_id, overlay_hwnd }) => {
-                        if let Some(mut prev) = active_session.take() {
-                            if let Err(e) = prev.stop() {
-                                warn!("Failed to stop previous capture: {e}");
-                            }
-                        }
-
                         let session_result: Result<Box<dyn CaptureSessionTrait>> = if source_id.starts_with("webcam:") {
                             let sym_link = source_id.trim_start_matches("webcam:");
-                            capture_mf::MFCaptureSession::new(sym_link, frame_tx.clone())
+                            capture_mf::MFCaptureSession::new(source_id.clone(), sym_link, frame_tx.clone())
                                 .map(|s| Box::new(s) as Box<dyn CaptureSessionTrait>)
                         } else {
                             sources::capture_item_for_id(&source_id)
                                 .map_err(Into::into)
                                 .and_then(|item| {
                                     let _ = overlay_hwnd; // no longer used; overlay arrives via data pipe
-                                    capture::CaptureSession::new(item, frame_tx.clone(), Arc::clone(&shared_overlay))
+                                    capture::CaptureSession::new(source_id.clone(), item, frame_tx.clone(), Arc::clone(&shared_overlay))
                                         .map(|s| Box::new(s) as Box<dyn CaptureSessionTrait>)
                                 })
                         };
 
                         match session_result {
                             Ok(session) => {
-                                active_session = Some(session);
+                                active_sessions.insert(source_id.clone(), session);
                                 let frame = encode_event(&Event::CaptureStarted {
                                     source_id: source_id.clone(),
                                 })?;
@@ -254,17 +248,19 @@ async fn run_stdin_commands(
                             }
                         }
                     }
-                    Ok(Command::StopCapture) => {
-                        preview_enabled.store(false, Ordering::Relaxed);
-                        if let Some(mut session) = active_session.take() {
+                    Ok(Command::StopCapture { source_id }) => {
+                        if let Some(mut session) = active_sessions.remove(&source_id) {
                             if let Err(e) = session.stop() {
-                                warn!("Failed to stop capture: {e}");
+                                warn!("Failed to stop capture {source_id}: {e}");
                             }
+                        }
+                        if active_sessions.is_empty() {
+                            preview_enabled.store(false, Ordering::Relaxed);
                         }
                         let frame = encode_event(&Event::CaptureStopped)?;
                         stdout.write_all(&frame).await?;
                         stdout.flush().await?;
-                        info!("Capture stopped");
+                        info!("Capture stopped: {source_id}");
                     }
                     Ok(Command::EnablePreview) => {
                         preview_enabled.store(true, Ordering::Relaxed);
@@ -282,11 +278,12 @@ async fn run_stdin_commands(
                         output_height,
                         fit_mode,
                         encoder,
+                        sources,
                     }) => {
-                        if active_session.is_none() {
+                        if active_sessions.is_empty() {
                             let frame = encode_event(&Event::Error {
                                 code: ErrorCode::EncoderError,
-                                message: "StartStream requires an active capture session".into(),
+                                message: "StartStream requires at least one active capture session".into(),
                             })?;
                             stdout.write_all(&frame).await?;
                             stdout.flush().await?;
@@ -303,6 +300,7 @@ async fn run_stdin_commands(
                                 output_height,
                                 fit_mode,
                                 encoder,
+                                sources,
                             };
                             active_stream = Some(StreamSession::start(
                                 opts,
@@ -342,7 +340,7 @@ async fn run_stdin_commands(
     if let Some(mut s) = active_stream.take() {
         s.stop();
     }
-    if let Some(mut session) = active_session {
+    for (_, mut session) in active_sessions {
         let _ = session.stop();
     }
 
@@ -476,8 +474,10 @@ async fn run_data_pipe(
             }
         }
 
-        // Serialize: FrameHeader(8) + u32 width + u32 height + BGRA pixels.
-        let payload_len = 8u32 + scaled_pixels.len() as u32;
+        // Serialize: FrameHeader(8) + u8 source_id_len + [source_id_bytes] + u32 width + u32 height + BGRA pixels.
+        let source_id_bytes = raw.source_id.as_bytes();
+        let source_id_len = source_id_bytes.len() as u8;
+        let payload_len = 1 + source_id_len as u32 + 8 + scaled_pixels.len() as u32;
         let mut frame_bytes =
             Vec::with_capacity(8 + payload_len as usize);
         frame_bytes.extend_from_slice(&sonicplank_ipc::encode_frame_header(
@@ -486,6 +486,8 @@ async fn run_data_pipe(
                 payload_len,
             },
         ));
+        frame_bytes.push(source_id_len);
+        frame_bytes.extend_from_slice(source_id_bytes);
         frame_bytes.extend_from_slice(&scaled_w.to_le_bytes());
         frame_bytes.extend_from_slice(&scaled_h.to_le_bytes());
         frame_bytes.extend_from_slice(&scaled_pixels);

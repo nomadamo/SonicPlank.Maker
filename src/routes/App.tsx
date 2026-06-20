@@ -47,6 +47,7 @@ import { useStateMachine } from "@/store/stateMachine";
 import { useSettings } from "@/store/settingsStore";
 import { SettingsDialog } from "@/components/settings-dialog";
 import { inDevelopment } from "@/constants";
+import appIcon from "@/img/icon.png";
 
 interface TitleBarButtonProps extends ComponentProps<typeof Button> {
   message?: AppControlProps;
@@ -174,7 +175,7 @@ export default function App() {
             render={
               <button className="flex items-center justify-center h-[35px] w-[35px] hover:bg-zinc-800/40 transition-colors duration-150 outline-none cursor-pointer">
                 <img
-                  src="/img/icon.png"
+                  src={appIcon}
                   width={"20px"}
                   height={"20px"}
                   className="opacity-90"
