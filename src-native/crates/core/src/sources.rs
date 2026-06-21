@@ -95,7 +95,7 @@ fn enumerate_windows() -> Vec<CaptureSource> {
 unsafe extern "system" fn window_enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
     let windows = &mut *(lparam.0 as *mut Vec<CaptureSource>);
 
-    // Skip invisible, minimized, and tool windows.
+    // Skip invisible and minimized windows
     if !IsWindowVisible(hwnd).as_bool() {
         return BOOL(1);
     }
@@ -103,25 +103,70 @@ unsafe extern "system" fn window_enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
     if style & WS_MINIMIZE.0 != 0 {
         return BOOL(1);
     }
-    let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
-    if ex_style & WS_EX_TOOLWINDOW.0 != 0 {
+
+    // Skip DWM cloaked windows (e.g. suspended UWP apps or apps on other virtual desktops)
+    use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
+    let mut cloaked: u32 = 0;
+    let _ = DwmGetWindowAttribute(
+        hwnd,
+        DWMWA_CLOAKED,
+        &mut cloaked as *mut _ as _,
+        std::mem::size_of::<u32>() as u32,
+    );
+    if cloaked != 0 {
         return BOOL(1);
     }
 
-    // Skip windows with no title.
+    // Get the title
     let title_len = GetWindowTextLengthW(hwnd);
-    if title_len == 0 {
+    let mut title = String::new();
+    if title_len > 0 {
+        let mut buf = vec![0u16; title_len as usize + 1];
+        GetWindowTextW(hwnd, &mut buf);
+        title = String::from_utf16_lossy(&buf[..buf.iter().position(|&c| c == 0).unwrap_or(0)]);
+    }
+
+    // Get process name for fallback
+    let mut pid = 0;
+    let mut process_name = String::new();
+    use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+    use windows::Win32::System::ProcessStatus::GetModuleBaseNameW;
+    use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
+    use windows::Win32::Foundation::CloseHandle;
+
+    GetWindowThreadProcessId(hwnd, Some(&mut pid));
+    if pid != 0 {
+        if let Ok(process) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) {
+            let mut name_buf = [0u16; 256];
+            let len = GetModuleBaseNameW(process, None, &mut name_buf);
+            if len > 0 {
+                process_name = String::from_utf16_lossy(&name_buf[..len as usize]);
+            }
+            let _ = CloseHandle(process);
+        }
+    }
+
+    let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
+    let is_tool = ex_style & WS_EX_TOOLWINDOW.0 != 0;
+
+    // Filter out completely generic, invisible tool windows to avoid 100+ junk entries.
+    // If it has a title, or it is a normal window (not tool window), we keep it.
+    if title.is_empty() && is_tool {
         return BOOL(1);
+    }
+
+    // If still empty but valid, label it with the process name
+    if title.trim().is_empty() {
+        if process_name.is_empty() {
+            return BOOL(1);
+        }
+        title = format!("[Untitled] ({})", process_name);
     }
 
     // Verify WGC supports capturing this window.
     if capture_item_for_hwnd(hwnd).is_err() {
         return BOOL(1);
     }
-
-    let mut buf = vec![0u16; title_len as usize + 1];
-    GetWindowTextW(hwnd, &mut buf);
-    let title = String::from_utf16_lossy(&buf[..buf.iter().position(|&c| c == 0).unwrap_or(0)]);
 
     windows.push(CaptureSource {
         id: format!("window:{:#010x}", hwnd.0 as usize),

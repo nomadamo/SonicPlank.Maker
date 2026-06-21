@@ -1,29 +1,139 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, Lock, Unlock } from "lucide-react";
 import { OverlayElement } from "@/types/flow-node";
 
 export const Route = createFileRoute("/preview")({
-  validateSearch: (search: Record<string, unknown>): { aspect: string } => ({
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): { aspect: string; fitMode: string } => ({
     aspect: typeof search.aspect === "string" ? search.aspect : "16/9",
+    fitMode: typeof search.fitMode === "string" ? search.fitMode : "contain",
   }),
   component: PreviewComponent,
 });
 
 function PreviewComponent() {
-  const { aspect } = Route.useSearch() as unknown as { aspect: string };
+  const search = Route.useSearch() as unknown as { aspect: string; fitMode: string };
+  const aspect = search.aspect;
+  const [fitMode, setFitMode] = useState(search.fitMode);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const videoBoxRef = useRef<HTMLDivElement | null>(null);
 
-  // True once the first compositor frame arrives via IPC from the editor
   const [hasFrame, setHasFrame] = useState(false);
   const hasFrameRef = useRef(false);
-  const [dynamicAspect, setDynamicAspect] = useState<string>(aspect);
-
   const [overlays, setOverlays] = useState<OverlayElement[]>([]);
-
-  // Draggable overlays state & refs
   const [isLocked, setIsLocked] = useState(true);
+  const [dynamicAspect, setDynamicAspect] = useState(aspect);
+
+  const [videoDims, setVideoDims] = useState({ width: 0, height: 0 });
+  const [containerDims, setContainerDims] = useState({ width: 0, height: 0 });
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setContainerDims({
+          width: entry.contentRect.width,
+          height: entry.contentRect.height,
+        });
+      }
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [hasFrame]);
+
+  useEffect(() => {
+    window.electron.onFitModeUpdated((newFitMode) => {
+      setFitMode(newFitMode);
+    });
+    return () => window.electron.removeOnFitModeUpdated();
+  }, []);
+
+  const lastValidStyleRef = useRef<{ left: string; top: string; width: string; height: string } | null>(null);
+
+  const videoBoxStyle = useMemo(() => {
+    const cW = containerDims.width;
+    const cH = containerDims.height;
+    const vW = videoDims.width;
+    const vH = videoDims.height;
+
+    const aspectC = cW / cH;
+    const aspectV = vW / vH;
+
+    if (cW === 0 || cH === 0 || vW === 0 || vH === 0) {
+      return lastValidStyleRef.current || { left: "0%", top: "0%", width: "100%", height: "100%" };
+    }
+
+    if (fitMode === "stretch") {
+      const style = { left: "0%", top: "0%", width: "100%", height: "100%" };
+      lastValidStyleRef.current = style;
+      return style;
+    }
+
+    if (fitMode === "contain") {
+      if (aspectV > aspectC) {
+        const actualH = cW / aspectV;
+        const topPercent = ((cH - actualH) / 2 / cH) * 100;
+        const hPercent = (actualH / cH) * 100;
+        const style = {
+          left: "0%",
+          top: `${topPercent}%`,
+          width: "100%",
+          height: `${hPercent}%`,
+        };
+        lastValidStyleRef.current = style;
+        return style;
+      } else {
+        const actualW = cH * aspectV;
+        const leftPercent = ((cW - actualW) / 2 / cW) * 100;
+        const wPercent = (actualW / cW) * 100;
+        const style = {
+          left: `${leftPercent}%`,
+          top: "0%",
+          width: `${wPercent}%`,
+          height: "100%",
+        };
+        lastValidStyleRef.current = style;
+        return style;
+      }
+    }
+
+    if (fitMode === "cover") {
+      if (aspectV > aspectC) {
+        const actualW = cH * aspectV;
+        const leftPercent = ((cW - actualW) / 2 / cW) * 100;
+        const wPercent = (actualW / cW) * 100;
+        const style = {
+          left: `${leftPercent}%`,
+          top: "0%",
+          width: `${wPercent}%`,
+          height: "100%",
+        };
+        lastValidStyleRef.current = style;
+        return style;
+      } else {
+        const actualH = cW / aspectV;
+        const topPercent = ((cH - actualH) / 2 / cH) * 100;
+        const hPercent = (actualH / cH) * 100;
+        const style = {
+          left: "0%",
+          top: `${topPercent}%`,
+          width: "100%",
+          height: `${hPercent}%`,
+        };
+        lastValidStyleRef.current = style;
+        return style;
+      }
+    }
+
+    const style = { left: "0%", top: "0%", width: "100%", height: "100%" };
+    lastValidStyleRef.current = style;
+    return style;
+  }, [videoDims, containerDims, fitMode]);
+
   const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const dragStartRef = useRef<{
     offsetX: number;
@@ -32,7 +142,6 @@ function PreviewComponent() {
     height: number;
   }>({ offsetX: 0, offsetY: 0, width: 0, height: 0 });
 
-  // Resizable overlays
   const [activeResizeId, setActiveResizeId] = useState<string | null>(null);
   const [activeHandle, setActiveHandle] = useState<string | null>(null);
   const resizeStartRef = useRef<{
@@ -45,10 +154,13 @@ function PreviewComponent() {
     aspectRatio: number;
   }>({ x: 0, y: 0, width: 0, height: 0, clickX: 0, clickY: 0, aspectRatio: 1 });
 
-  const handleMouseDown = (e: React.MouseEvent, overlay: OverlayElement) => {
+  const handleMouseDownDrag = (
+    e: React.MouseEvent,
+    overlay: OverlayElement,
+  ) => {
     e.preventDefault();
     e.stopPropagation();
-    const container = containerRef.current;
+    const container = videoBoxRef.current;
     if (!container) return;
     const rect = container.getBoundingClientRect();
     const clickX = ((e.clientX - rect.left) / rect.width) * 100;
@@ -62,14 +174,14 @@ function PreviewComponent() {
     setActiveDragId(overlay.id);
   };
 
-  const handleResizeMouseDown = (
+  const handleMouseDownResize = (
     e: React.MouseEvent,
     overlay: OverlayElement,
     handle: string,
   ) => {
     e.preventDefault();
     e.stopPropagation();
-    const container = containerRef.current;
+    const container = videoBoxRef.current;
     if (!container) return;
     const rect = container.getBoundingClientRect();
     const clickX = ((e.clientX - rect.left) / rect.width) * 100;
@@ -90,7 +202,7 @@ function PreviewComponent() {
   useEffect(() => {
     if (!activeDragId) return;
     const handleMouseMove = (e: MouseEvent) => {
-      const container = containerRef.current;
+      const container = videoBoxRef.current;
       if (!container) return;
       const rect = container.getBoundingClientRect();
       const currentX = ((e.clientX - rect.left) / rect.width) * 100;
@@ -103,7 +215,9 @@ function PreviewComponent() {
       newX = Math.round(newX * 10) / 10;
       newY = Math.round(newY * 10) / 10;
       setOverlays((prev) =>
-        prev.map((o) => (o.id === activeDragId ? { ...o, x: newX, y: newY } : o)),
+        prev.map((o) =>
+          o.id === activeDragId ? { ...o, x: newX, y: newY } : o,
+        ),
       );
     };
     const handleMouseUp = () => setActiveDragId(null);
@@ -118,7 +232,7 @@ function PreviewComponent() {
   useEffect(() => {
     if (!activeResizeId || !activeHandle) return;
     const handleMouseMove = (e: MouseEvent) => {
-      const container = containerRef.current;
+      const container = videoBoxRef.current;
       if (!container) return;
       const rect = container.getBoundingClientRect();
       const currentX = ((e.clientX - rect.left) / rect.width) * 100;
@@ -133,33 +247,108 @@ function PreviewComponent() {
       const R = start.aspectRatio;
       const maintainAspect = e.ctrlKey;
       switch (activeHandle) {
-        case "r": newWidth = start.width + dx; if (maintainAspect) newHeight = newWidth / R; break;
-        case "l": newWidth = start.width - dx; if (maintainAspect) newHeight = newWidth / R; newX = start.x + (start.width - newWidth); break;
-        case "b": newHeight = start.height + dy; if (maintainAspect) newWidth = newHeight * R; break;
-        case "t": newHeight = start.height - dy; if (maintainAspect) newWidth = newHeight * R; newY = start.y + (start.height - newHeight); break;
-        case "br": newWidth = start.width + dx; newHeight = start.height + dy; if (maintainAspect) { if (Math.abs(dx) > Math.abs(dy)) newHeight = newWidth / R; else newWidth = newHeight * R; } break;
-        case "bl": newWidth = start.width - dx; newHeight = start.height + dy; if (maintainAspect) { if (Math.abs(dx) > Math.abs(dy)) newHeight = newWidth / R; else newWidth = newHeight * R; } newX = start.x + (start.width - newWidth); break;
-        case "tr": newWidth = start.width + dx; newHeight = start.height - dy; if (maintainAspect) { if (Math.abs(dx) > Math.abs(dy)) newHeight = newWidth / R; else newWidth = newHeight * R; } newY = start.y + (start.height - newHeight); break;
-        case "tl": newWidth = start.width - dx; newHeight = start.height - dy; if (maintainAspect) { if (Math.abs(dx) > Math.abs(dy)) newHeight = newWidth / R; else newWidth = newHeight * R; } newX = start.x + (start.width - newWidth); newY = start.y + (start.height - newHeight); break;
+        case "r":
+          newWidth = start.width + dx;
+          if (maintainAspect) newHeight = newWidth / R;
+          break;
+        case "l":
+          newWidth = start.width - dx;
+          if (maintainAspect) newHeight = newWidth / R;
+          newX = start.x + (start.width - newWidth);
+          break;
+        case "b":
+          newHeight = start.height + dy;
+          if (maintainAspect) newWidth = newHeight * R;
+          break;
+        case "t":
+          newHeight = start.height - dy;
+          if (maintainAspect) newWidth = newHeight * R;
+          newY = start.y + (start.height - newHeight);
+          break;
+        case "br":
+          newWidth = start.width + dx;
+          newHeight = start.height + dy;
+          if (maintainAspect) {
+            if (Math.abs(dx) > Math.abs(dy)) newHeight = newWidth / R;
+            else newWidth = newHeight * R;
+          }
+          break;
+        case "bl":
+          newWidth = start.width - dx;
+          newHeight = start.height + dy;
+          if (maintainAspect) {
+            if (Math.abs(dx) > Math.abs(dy)) newHeight = newWidth / R;
+            else newWidth = newHeight * R;
+          }
+          newX = start.x + (start.width - newWidth);
+          break;
+        case "tr":
+          newWidth = start.width + dx;
+          newHeight = start.height - dy;
+          if (maintainAspect) {
+            if (Math.abs(dx) > Math.abs(dy)) newHeight = newWidth / R;
+            else newWidth = newHeight * R;
+          }
+          newY = start.y + (start.height - newHeight);
+          break;
+        case "tl":
+          newWidth = start.width - dx;
+          newHeight = start.height - dy;
+          if (maintainAspect) {
+            if (Math.abs(dx) > Math.abs(dy)) newHeight = newWidth / R;
+            else newWidth = newHeight * R;
+          }
+          newX = start.x + (start.width - newWidth);
+          newY = start.y + (start.height - newHeight);
+          break;
       }
       const minSize = 2;
-      if (newWidth < minSize) { if (["l","bl","tl"].includes(activeHandle)) newX = start.x + start.width - minSize; newWidth = minSize; if (maintainAspect) newHeight = minSize / R; }
-      if (newHeight < minSize) { if (["t","tr","tl"].includes(activeHandle)) newY = start.y + start.height - minSize; newHeight = minSize; if (maintainAspect) newWidth = minSize * R; }
-      if (newX < 0) { newWidth = newWidth + newX; newX = 0; if (maintainAspect) newHeight = newWidth / R; }
-      if (newY < 0) { newHeight = newHeight + newY; newY = 0; if (maintainAspect) newWidth = newHeight * R; }
-      if (newX + newWidth > 100) { newWidth = 100 - newX; if (maintainAspect) newHeight = newWidth / R; }
-      if (newY + newHeight > 100) { newHeight = 100 - newY; if (maintainAspect) newWidth = newHeight * R; }
+      if (newWidth < minSize) {
+        if (["l", "bl", "tl"].includes(activeHandle))
+          newX = start.x + start.width - minSize;
+        newWidth = minSize;
+        if (maintainAspect) newHeight = minSize / R;
+      }
+      if (newHeight < minSize) {
+        if (["t", "tr", "tl"].includes(activeHandle))
+          newY = start.y + start.height - minSize;
+        newHeight = minSize;
+        if (maintainAspect) newWidth = minSize * R;
+      }
+      if (newX < 0) {
+        newWidth = newWidth + newX;
+        newX = 0;
+        if (maintainAspect) newHeight = newWidth / R;
+      }
+      if (newY < 0) {
+        newHeight = newHeight + newY;
+        newY = 0;
+        if (maintainAspect) newWidth = newHeight * R;
+      }
+      if (newX + newWidth > 100) {
+        newWidth = 100 - newX;
+        if (maintainAspect) newHeight = newWidth / R;
+      }
+      if (newY + newHeight > 100) {
+        newHeight = 100 - newY;
+        if (maintainAspect) newWidth = newHeight * R;
+      }
       newX = Math.round(newX * 10) / 10;
       newY = Math.round(newY * 10) / 10;
       newWidth = Math.round(newWidth * 10) / 10;
       newHeight = Math.round(newHeight * 10) / 10;
       setOverlays((prev) =>
         prev.map((o) =>
-          o.id === activeResizeId ? { ...o, x: newX, y: newY, width: newWidth, height: newHeight } : o,
+          o.id === activeResizeId
+            ? { ...o, x: newX, y: newY, width: newWidth, height: newHeight }
+            : o,
         ),
       );
     };
-    const handleMouseUp = () => { setActiveResizeId(null); setActiveHandle(null); };
+    const handleMouseUp = () => {
+      setActiveResizeId(null);
+      setActiveHandle(null);
+    };
     window.addEventListener("mousemove", handleMouseMove);
     window.addEventListener("mouseup", handleMouseUp);
     return () => {
@@ -175,35 +364,52 @@ function PreviewComponent() {
 
   // Audio analyser data from editor (via IPC broadcast)
   const audioDataMapRef = useRef<Record<string, number[]>>({});
-  const audioTimesRef = useRef<Record<string, { currentTime: number; duration: number }>>({});
+  const audioTimesRef = useRef<
+    Record<string, { currentTime: number; duration: number }>
+  >({});
 
   // Subscribe to overlay updates from main process
   useEffect(() => {
-    window.electron.getOverlays()
-      .then((initial) => { if (initial) setOverlays(initial); })
+    window.electron
+      .getOverlays()
+      .then((initial) => {
+        if (initial) setOverlays(initial);
+      })
       .catch(() => {});
     window.electron.onOverlaysUpdated((updated) => setOverlays(updated ?? []));
-    return () => { window.electron.removeOnOverlaysUpdated(() => {}); };
+    return () => {
+      window.electron.removeOnOverlaysUpdated(() => {});
+    };
   }, []);
 
   // Subscribe to audio data and time updates
   useEffect(() => {
-    window.electron.onAudioDataUpdated((id, data) => { audioDataMapRef.current[id] = data; });
-    return () => { window.electron.removeOnAudioDataUpdated(); };
+    window.electron.onAudioDataUpdated((id, data) => {
+      audioDataMapRef.current[id] = data;
+    });
+    return () => {
+      window.electron.removeOnAudioDataUpdated();
+    };
   }, []);
 
   useEffect(() => {
     window.electron.onAudioTimeUpdated((nodeId, currentTime) => {
-      const overlay = overlays.find((o) => o.audioNodeId === nodeId && o.type === "nowPlaying");
-      const duration = overlay?.duration !== undefined ? Number(overlay.duration) : 0;
+      const overlay = overlays.find(
+        (o) => o.audioNodeId === nodeId && o.type === "nowPlaying",
+      );
+      const duration =
+        overlay?.duration !== undefined ? Number(overlay.duration) : 0;
       audioTimesRef.current[nodeId] = { currentTime, duration };
     });
-    return () => { window.electron.removeOnAudioTimeUpdated(); };
+    return () => {
+      window.electron.removeOnAudioTimeUpdated();
+    };
   }, [overlays]);
 
   // Load theme styles
   useEffect(() => {
-    window.electron.getAvailableThemes()
+    window.electron
+      .getAvailableThemes()
       .then((themes) => {
         const theme = themes.find((t) => t.id === "default") ?? themes[0];
         if (!theme) return;
@@ -212,7 +418,11 @@ function PreviewComponent() {
       .then((styles) => {
         if (!styles) return;
         let tag = document.getElementById("preview-theme-styles");
-        if (!tag) { tag = document.createElement("style"); tag.id = "preview-theme-styles"; document.head.appendChild(tag); }
+        if (!tag) {
+          tag = document.createElement("style");
+          tag.id = "preview-theme-styles";
+          document.head.appendChild(tag);
+        }
         tag.textContent = styles;
       })
       .catch(() => {});
@@ -222,30 +432,41 @@ function PreviewComponent() {
   // These carry overlays already rendered — unlike onNativePreviewFrame which
   // delivers raw unprocessed capture pixels with no overlay content.
   useEffect(() => {
-    window.electron.onPreviewFrame((data: ArrayBuffer, width: number, height: number) => {
-      if (!hasFrameRef.current) {
-        hasFrameRef.current = true;
-        if (width > 0 && height > 0) setDynamicAspect(`${width}/${height}`);
-        (window.electron.notifyEditOverlayConnected as () => void)();
-        setHasFrame(true);
-      }
+    window.electron.onPreviewFrame(
+      (data: ArrayBuffer, width: number, height: number) => {
+        if (!hasFrameRef.current) {
+          hasFrameRef.current = true;
+          if (width > 0 && height > 0) setDynamicAspect(`${width}/${height}`);
+          (window.electron.notifyEditOverlayConnected as () => void)();
+          setHasFrame(true);
+        }
 
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-      const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
-      if (!ctx) return;
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const ctx = canvas.getContext("2d", {
+          alpha: false,
+          desynchronized: true,
+        });
+        if (!ctx) return;
 
-      const blob = new Blob([data], { type: "image/jpeg" });
-      createImageBitmap(blob)
-        .then((bmp) => {
-          canvas.width = bmp.width;
-          canvas.height = bmp.height;
-          ctx.drawImage(bmp, 0, 0);
-          bmp.close();
-        })
-        .catch(() => {});
-    });
-    return () => { window.electron.removeOnPreviewFrame(); };
+        const blob = new Blob([data], { type: "image/jpeg" });
+        createImageBitmap(blob)
+          .then((bmp) => {
+            canvas.width = bmp.width;
+            canvas.height = bmp.height;
+            setVideoDims((prev) => {
+              if (prev.width === bmp.width && prev.height === bmp.height) return prev;
+              return { width: bmp.width, height: bmp.height };
+            });
+            ctx.drawImage(bmp, 0, 0);
+            bmp.close();
+          })
+          .catch(() => {});
+      },
+    );
+    return () => {
+      window.electron.removeOnPreviewFrame();
+    };
   }, []);
 
   const aspectValue = aspect === "auto" ? dynamicAspect : aspect;
@@ -258,15 +479,22 @@ function PreviewComponent() {
           className="relative max-w-full max-h-full animate-fade-in"
           style={{ aspectRatio: aspectValue }}
         >
-          <canvas ref={canvasRef} className="w-full h-full block" />
+          <canvas
+            ref={canvasRef}
+            className={`w-full h-full block ${fitMode === "cover" ? "object-cover" : fitMode === "stretch" ? "object-fill" : "object-contain"}`}
+          />
 
           {/* Draggable overlay handles when unlocked */}
           {!isLocked && (
-            <div className="absolute inset-0 z-50 pointer-events-none">
+            <div
+              ref={videoBoxRef}
+              className="absolute z-50 pointer-events-none"
+              style={videoBoxStyle}
+            >
               {overlays.map((overlay) => (
                 <div
                   key={overlay.id}
-                  onMouseDown={(e) => handleMouseDown(e, overlay)}
+                  onMouseDown={(e) => handleMouseDownDrag(e, overlay)}
                   className="absolute pointer-events-auto border-2 border-dashed border-indigo-500 bg-indigo-500/10 cursor-move rounded flex flex-col justify-between p-1.5 select-none hover:bg-indigo-500/20 hover:border-indigo-400 transition-colors"
                   style={{
                     left: `${overlay.x}%`,
@@ -276,18 +504,25 @@ function PreviewComponent() {
                   }}
                 >
                   <div className="bg-indigo-600/90 backdrop-blur-sm text-[9px] font-bold text-white px-1.5 py-0.5 rounded shadow self-start uppercase tracking-wider font-mono">
-                    {overlay.type?.replace("OverlayNode", "").replace("Node", "") ?? overlay.type}
+                    {overlay.type
+                      ?.replace("OverlayNode", "")
+                      .replace("Node", "") ?? overlay.type}
                   </div>
                   <div className="text-[9px] text-indigo-200 bg-zinc-950/80 px-1 py-0.5 rounded self-end font-mono">
                     {overlay.x}%, {overlay.y}%
                   </div>
 
                   {/* Corner handles */}
-                  {(["tl","tr","bl","br"] as const).map((h) => (
-                    <div key={h} onMouseDown={(e) => handleResizeMouseDown(e, overlay, h)}
+                  {(["tl", "tr", "bl", "br"] as const).map((h) => (
+                    <div
+                      key={h}
+                      onMouseDown={(e) => handleMouseDownResize(e, overlay, h)}
                       className="absolute w-2.5 h-2.5 bg-white border-2 border-indigo-600 rounded-full shadow z-50 hover:bg-indigo-400"
                       style={{
-                        cursor: h === "tl" || h === "br" ? "nwse-resize" : "nesw-resize",
+                        cursor:
+                          h === "tl" || h === "br"
+                            ? "nwse-resize"
+                            : "nesw-resize",
                         top: h.startsWith("t") ? "-5px" : undefined,
                         bottom: h.startsWith("b") ? "-5px" : undefined,
                         left: h.endsWith("l") ? "-5px" : undefined,
@@ -297,10 +532,42 @@ function PreviewComponent() {
                   ))}
 
                   {/* Side handles */}
-                  <div onMouseDown={(e) => handleResizeMouseDown(e, overlay, "t")} className="absolute w-2.5 h-2.5 bg-white border-2 border-indigo-600 rounded-full shadow z-50 hover:bg-indigo-400 cursor-ns-resize" style={{ top: "-5px", left: "50%", transform: "translateX(-50%)" }} />
-                  <div onMouseDown={(e) => handleResizeMouseDown(e, overlay, "b")} className="absolute w-2.5 h-2.5 bg-white border-2 border-indigo-600 rounded-full shadow z-50 hover:bg-indigo-400 cursor-ns-resize" style={{ bottom: "-5px", left: "50%", transform: "translateX(-50%)" }} />
-                  <div onMouseDown={(e) => handleResizeMouseDown(e, overlay, "l")} className="absolute w-2.5 h-2.5 bg-white border-2 border-indigo-600 rounded-full shadow z-50 hover:bg-indigo-400 cursor-ew-resize" style={{ top: "50%", left: "-5px", transform: "translateY(-50%)" }} />
-                  <div onMouseDown={(e) => handleResizeMouseDown(e, overlay, "r")} className="absolute w-2.5 h-2.5 bg-white border-2 border-indigo-600 rounded-full shadow z-50 hover:bg-indigo-400 cursor-ew-resize" style={{ top: "50%", right: "-5px", transform: "translateY(-50%)" }} />
+                  <div
+                    onMouseDown={(e) => handleMouseDownResize(e, overlay, "t")}
+                    className="absolute w-2.5 h-2.5 bg-white border-2 border-indigo-600 rounded-full shadow z-50 hover:bg-indigo-400 cursor-ns-resize"
+                    style={{
+                      top: "-5px",
+                      left: "50%",
+                      transform: "translateX(-50%)",
+                    }}
+                  />
+                  <div
+                    onMouseDown={(e) => handleMouseDownResize(e, overlay, "b")}
+                    className="absolute w-2.5 h-2.5 bg-white border-2 border-indigo-600 rounded-full shadow z-50 hover:bg-indigo-400 cursor-ns-resize"
+                    style={{
+                      bottom: "-5px",
+                      left: "50%",
+                      transform: "translateX(-50%)",
+                    }}
+                  />
+                  <div
+                    onMouseDown={(e) => handleMouseDownResize(e, overlay, "l")}
+                    className="absolute w-2.5 h-2.5 bg-white border-2 border-indigo-600 rounded-full shadow z-50 hover:bg-indigo-400 cursor-ew-resize"
+                    style={{
+                      top: "50%",
+                      left: "-5px",
+                      transform: "translateY(-50%)",
+                    }}
+                  />
+                  <div
+                    onMouseDown={(e) => handleMouseDownResize(e, overlay, "r")}
+                    className="absolute w-2.5 h-2.5 bg-white border-2 border-indigo-600 rounded-full shadow z-50 hover:bg-indigo-400 cursor-ew-resize"
+                    style={{
+                      top: "50%",
+                      right: "-5px",
+                      transform: "translateY(-50%)",
+                    }}
+                  />
                 </div>
               ))}
             </div>
@@ -309,9 +576,12 @@ function PreviewComponent() {
       ) : (
         <div className="flex flex-col items-center gap-3 text-zinc-400 text-center">
           <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
-          <span className="text-sm font-medium tracking-wide">Connecting to Compositor...</span>
+          <span className="text-sm font-medium tracking-wide">
+            Connecting to Compositor...
+          </span>
           <span className="text-xs text-zinc-600 max-w-xs">
-            Waiting for the editor to send frames. Ensure a capture source is selected and the output node is active.
+            Waiting for the editor to send frames. Ensure a capture source is
+            selected and the output node is active.
           </span>
         </div>
       )}
@@ -334,7 +604,15 @@ function PreviewComponent() {
                 : "bg-zinc-900 text-zinc-300 border-zinc-800 hover:bg-zinc-800 hover:text-white"
             }`}
           >
-            {!isLocked ? <><Unlock className="w-3.5 h-3.5" /> Lock Layout</> : <><Lock className="w-3.5 h-3.5" /> Move Overlays</>}
+            {!isLocked ? (
+              <>
+                <Unlock className="w-3.5 h-3.5" /> Lock Layout
+              </>
+            ) : (
+              <>
+                <Lock className="w-3.5 h-3.5" /> Move Overlays
+              </>
+            )}
           </button>
         </div>
       )}

@@ -58,10 +58,18 @@ pub enum Command {
     Hello {
         token: String,
     },
-    /// Liveness probe — core must respond with [`Event::Pong`].
+    /// Liveness probe --- core must respond with [`Event::Pong`].
     Ping,
     /// Request graceful shutdown of the core process.
     Shutdown,
+    /// Explicit exit command to gracefully terminate the process.
+    Exit,
+    /// Send configuration of sources (e.g. PiP layout).
+    Config {
+        sources: Vec<StreamSourceDef>,
+    },
+    /// Keep-alive standby message from UI.
+    Standby,
     /// Request enumeration of capturable monitors and windows.
     /// Core responds with [`Event::Sources`].
     GetSources,
@@ -139,6 +147,10 @@ pub enum Event {
         fps: f32,
         bitrate_kbps: u32,
         dropped: u64,
+    },
+    /// Emitted when a command like Config or Standby is received, only if --verbose flag is used.
+    Acknowledge {
+        command: String,
     },
 }
 

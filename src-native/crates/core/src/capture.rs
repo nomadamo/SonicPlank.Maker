@@ -36,7 +36,7 @@ use windows::{
             CreateDirect3D11DeviceFromDXGIDevice, IDirect3DDxgiInterfaceAccess,
         },
     },
-    core::Interface,
+    core::{IInspectable, Interface},
 };
 
 /// Shared channel for overlay BGRA frames arriving from the offscreen BrowserWindow.
@@ -61,11 +61,6 @@ struct GpuState {
     staging:   ID3D11Texture2D,
     staging_w: u32,
     staging_h: u32,
-    d2d: Option<crate::d2d::D2DCompositor>,
-    render_target: Option<ID3D11Texture2D>,
-    /// Cached D2D bitmap from the latest offscreen overlay paint.
-    /// Replaced whenever a new OverlayFrame (type 2) arrives on the data pipe.
-    overlay_bmp: Option<ID2D1Bitmap1>,
 }
 
 // Safety: D3D11/D2D objects are COM interface pointers. All access is
@@ -87,7 +82,6 @@ impl CaptureSession {
         source_id: String,
         item: GraphicsCaptureItem,
         tx: tokio::sync::broadcast::Sender<Arc<RawFrame>>,
-        shared_overlay: SharedOverlay,
     ) -> Result<Self> {
         let (device, context) = create_d3d11_device()?;
         let d3d_device = wrap_as_direct3d_device(&device)?;
@@ -110,34 +104,29 @@ impl CaptureSession {
 
         let init_staging = create_staging_texture(&device, init_w, init_h)?;
 
-        // Always try to init D2D — if it fails (e.g. no GPU), overlay compositing
-        // is silently disabled and frames pass through unmodified.
-        let d2d = crate::d2d::D2DCompositor::new(&device)
-            .map_err(|e| tracing::warn!("D2D init failed: {e:#}"))
-            .ok();
-
         let device_arc = Arc::new(device.clone());
         let gpu_arc = Arc::new(Mutex::new(GpuState {
             ctx:          context,
             staging:      init_staging,
             staging_w:    init_w,
             staging_h:    init_h,
-            d2d,
-            render_target: None,
-            overlay_bmp:  None,
         }));
 
         let frame_count = Arc::new(std::sync::atomic::AtomicU64::new(0));
         let gpu_arc_main = gpu_arc.clone();
 
         pool.FrameArrived(
-            &TypedEventHandler::<Direct3D11CaptureFramePool, windows::core::IInspectable>::new(
-                move |pool_ref, _| {
-                    let Some(pool) = &*pool_ref else { return Ok(()) };
+            &TypedEventHandler::<Direct3D11CaptureFramePool, IInspectable>::new(
+                move |pool, _| {
+                    let pool = match pool.as_ref() {
+                        Some(p) => p,
+                        None => return Ok(()),
+                    };
+
                     let frame = match pool.TryGetNextFrame() {
                         Ok(f) => f,
                         Err(e) => {
-                            tracing::warn!("TryGetNextFrame failed: {e}");
+                            tracing::debug!("Failed to get next frame (pool might be closed): {e}");
                             return Ok(());
                         }
                     };
@@ -147,7 +136,7 @@ impl CaptureSession {
                         tracing::info!("First frame arrived from WGC");
                     }
 
-                    match process_frame(&device_arc, &gpu_arc_main, &shared_overlay, &frame, &source_id) {
+                    match process_frame(&device_arc, &gpu_arc_main, &frame, &source_id) {
                         Ok(raw) => {
                             let _ = tx.send(Arc::new(raw));
                         }
@@ -232,7 +221,6 @@ fn create_staging_texture(device: &ID3D11Device, width: u32, height: u32) -> Res
 fn process_frame(
     device: &ID3D11Device,
     gpu: &Mutex<GpuState>,
-    shared_overlay: &SharedOverlay,
     frame: &Direct3D11CaptureFrame,
     source_id: &str,
 ) -> Result<RawFrame> {
@@ -248,9 +236,6 @@ fn process_frame(
     let width  = src_desc.Width;
     let height = src_desc.Height;
 
-    // Pull pending overlay pixels (if any) before acquiring the GPU lock.
-    let pending_overlay = shared_overlay.lock().unwrap().take();
-
     let mut gpu = gpu.lock().unwrap();
 
     // Recreate staging texture only if display dimensions changed.
@@ -259,48 +244,13 @@ fn process_frame(
         gpu.staging   = create_staging_texture(device, width, height)?;
         gpu.staging_w = width;
         gpu.staging_h = height;
-        gpu.render_target = None;
-    }
-
-    // Upload fresh overlay BGRA pixels to a D2D bitmap.
-    if let Some((pixels, ow, oh)) = pending_overlay {
-        if let Some(d2d) = &gpu.d2d {
-            match d2d.create_bitmap_from_bgra(&pixels, ow, oh) {
-                Ok(bmp) => {
-                    tracing::trace!("Overlay bitmap updated: {ow}×{oh}");
-                    gpu.overlay_bmp = Some(bmp);
-                }
-                Err(e) => tracing::warn!("create_bitmap_from_bgra failed: {e:#}"),
-
-            }
-        }
     }
 
     let stride = width as usize * 4;
     let mut pixels: Vec<u8> = vec![0u8; height as usize * stride];
 
     unsafe {
-        let has_overlay = gpu.overlay_bmp.is_some() && gpu.d2d.is_some();
-        if has_overlay {
-            if gpu.render_target.is_none() {
-                gpu.render_target = Some(crate::d2d::create_render_target(device, width, height)?);
-                tracing::info!("D2D render target created: {}×{}", width, height);
-            }
-
-            let rt = gpu.render_target.as_ref().unwrap();
-            let overlay_bmp = gpu.overlay_bmp.as_ref().unwrap();
-            let d2d = gpu.d2d.as_ref().unwrap();
-
-            if let Err(e) = d2d.composite(&gpu.ctx, &texture, overlay_bmp, rt) {
-                tracing::warn!("D2D compositing failed: {e:#}");
-                gpu.ctx.CopyResource(&gpu.staging, &texture);
-            } else {
-                tracing::trace!("D2D composite OK");
-                gpu.ctx.CopyResource(&gpu.staging, rt);
-            }
-        } else {
-            gpu.ctx.CopyResource(&gpu.staging, &texture);
-        }
+        gpu.ctx.CopyResource(&gpu.staging, &texture);
 
         let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
         gpu.ctx

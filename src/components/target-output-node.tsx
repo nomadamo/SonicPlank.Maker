@@ -242,7 +242,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
 
   // Fetch the active capture stream hook
   const {
-    canvasRef: nativePreviewCanvasRef,
+    canvasesRef: nativePreviewCanvasesRef,
     startCapture: startNativePreviewCapture,
     stopCapture: stopNativePreviewCapture,
   } = useNativePreview();
@@ -353,12 +353,94 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
     return directSourceNode;
   }, [edges, nodes, connectedOverlayGroupNode, directSourceNode]);
 
+  const activeStreamSources = useMemo(() => {
+    const streamSources: {
+      node_id: string;
+      source_id: string;
+      is_primary: boolean;
+      x_percent: number;
+      y_percent: number;
+      w_percent: number;
+      h_percent: number;
+    }[] = [];
+
+    // The primary source is always the direct capture source if there is one
+    const primarySourceId = directSourceNode?.data.captureSourceId as string | undefined;
+
+    if (primarySourceId) {
+      streamSources.push({
+        node_id: directSourceNode!.id,
+        source_id: primarySourceId,
+        is_primary: true,
+        x_percent: 0,
+        y_percent: 0,
+        w_percent: 100,
+        h_percent: 100,
+      });
+    }
+
+    if (connectedOverlayGroupNode) {
+      const storedRoles =
+        (connectedOverlayGroupNode.data.sourceRoles as Record<
+          string,
+          { role: string; pipX: number; pipY: number; pipW: number; pipH: number }
+        >) || {};
+      const groupSources = edges
+        .filter((e) => e.target === connectedOverlayGroupNode.id)
+        .map((e) =>
+          nodes.find((n) => n.id === e.source && n.type === "captureSourceNode"),
+        )
+        .filter(Boolean) as FlowNodeType[];
+
+      let hasPrimary = !!primarySourceId;
+
+      for (const s of groupSources) {
+        const sid = s.data.captureSourceId as string;
+        if (!sid) continue;
+
+        // If this source is already added as the primary, skip adding it again as a PiP
+        if (sid === primarySourceId) {
+          continue;
+        }
+        
+        const r = storedRoles[s.id];
+        if (r) {
+          const isPrimary = !hasPrimary && r.role === "primary";
+          if (isPrimary) hasPrimary = true;
+          streamSources.push({
+            node_id: s.id,
+            source_id: sid,
+            is_primary: isPrimary,
+            x_percent: r.pipX ?? 0,
+            y_percent: r.pipY ?? 0,
+            w_percent: r.pipW ?? 100,
+            h_percent: r.pipH ?? 100,
+          });
+        } else {
+          streamSources.push({
+            node_id: s.id,
+            source_id: sid,
+            is_primary: !hasPrimary,
+            x_percent: 70,
+            y_percent: 70,
+            w_percent: 25,
+            h_percent: 14,
+          });
+          hasPrimary = true;
+        }
+      }
+    }
+
+    return streamSources;
+  }, [edges, nodes, connectedOverlayGroupNode, directSourceNode]);
+
+  // Keep the Rust core's compositor config in sync with the current UI layout
+  useEffect(() => {
+    window.electron.setCoreConfig(activeStreamSources).catch(console.error);
+  }, [activeStreamSources]);
+
   // Extract source parameters
   const captureSourceId = sourceNode?.data.captureSourceId;
-  // True when D2D in Rust is compositing overlays (WGC sources: monitor/window/screen).
-  // The canvas compositor must skip overlay drawing to avoid doubling them.
-  const isNativeOverlayCompositeRef = useRef(false);
-  isNativeOverlayCompositeRef.current = !!(captureSourceId && !captureSourceId.startsWith("webcam:"));
   const captureAudio = !!sourceNode?.data.captureAudio;
   const captureResolution = sourceNode?.data.captureResolution || "original";
   const captureFrameRate = Number(sourceNode?.data.maxCaptureFrameRate) || 60;
@@ -473,6 +555,10 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
     [updateNodeData, node.id],
   );
 
+  useEffect(() => {
+    window.electron.updateFitMode(fitMode).catch(() => {});
+  }, [fitMode]);
+
   // Capture at the source's native resolution (never the output preset). Pinning
   // capture to a mismatched-aspect preset makes Chromium pad the frame to that
   // box with uninitialised-YUV "green bars". We capture native and let the
@@ -484,6 +570,14 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
     }),
     [resolutionPresets],
   );
+
+  // Keep the offscreen overlay window's resolution in sync with the primary native capture
+  // so that percentage-based overlays are composited correctly by the Rust core.
+  useEffect(() => {
+    if (nativeCaptureDims.width > 0 && nativeCaptureDims.height > 0) {
+      window.electron.setOverlayResolution(nativeCaptureDims.width, nativeCaptureDims.height).catch(console.error);
+    }
+  }, [nativeCaptureDims.width, nativeCaptureDims.height]);
 
   // Extract and compile all overlay configurations connected to the Overlay Compositor node
   const overlays = useMemo(() => {
@@ -573,8 +667,40 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
       });
     });
 
+    // Inject PiP pseudo-overlays for the overlay editor
+    if (connectedOverlayGroupNode) {
+      activeStreamSources.forEach((src) => {
+        if (!src.is_primary) {
+          list.push({
+            id: `pip::${connectedOverlayGroupNode.id}::${src.node_id}`,
+            type: "pip" as any,
+            x: src.x_percent,
+            y: src.y_percent,
+            width: src.w_percent,
+            height: src.h_percent,
+            opacity: 1,
+            textContent: "",
+            fontSize: 0,
+            textColor: "",
+            backgroundColor: "",
+            imagePath: "",
+            visualizerType: "",
+            fontFamily: "",
+            fontWeight: "",
+            fontStyle: "",
+            albumArt: "",
+            title: "",
+            artist: "",
+            audioNodeId: "",
+            duration: 0,
+            maxMessages: 0,
+          });
+        }
+      });
+    }
+
     return list;
-  }, [edges, nodes, connectedOverlayGroupNode]);
+  }, [edges, nodes, connectedOverlayGroupNode, activeStreamSources]);
 
   // Refs so the compositor rAF loop always reads the latest overlays/edges without
   // being a dep of renderCardCompositor. Without this, any node update anywhere in
@@ -610,16 +736,18 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
 
   // Watch for preview state and parameter changes to manage screen capture stream declaratively
   const lastCaptureParamsRef = useRef<{
-    sourceId: string;
+    sourceIds: string;
     audio: boolean;
     width: number;
     height: number;
   } | null>(null);
 
+  const previewSourceIdsStr = useMemo(() => activeStreamSources.map(s => s.source_id).join(","), [activeStreamSources]);
+
   useEffect(() => {
-    if ((isPreviewActive || editOverlayOpen) && captureSourceId) {
+    if (isPreviewActive || editOverlayOpen) {
       const currentParams = {
-        sourceId: captureSourceId,
+        sourceIds: previewSourceIdsStr,
         audio: captureAudio,
         width: nativeCaptureDims.width,
         height: nativeCaptureDims.height,
@@ -627,26 +755,27 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
 
       const hasChanged =
         !lastCaptureParamsRef.current ||
-        lastCaptureParamsRef.current.sourceId !== currentParams.sourceId ||
+        lastCaptureParamsRef.current.sourceIds !== currentParams.sourceIds ||
         lastCaptureParamsRef.current.audio !== currentParams.audio ||
         lastCaptureParamsRef.current.width !== currentParams.width ||
         lastCaptureParamsRef.current.height !== currentParams.height;
 
       if (hasChanged) {
         console.log(
-          `[TargetOutputNode] Starting/restarting native stream with target: ${captureSourceId}`,
+          `[TargetOutputNode] Starting/restarting native stream with targets: ${previewSourceIdsStr}`,
         );
         lastCaptureParamsRef.current = currentParams;
-        if (editOverlayOpen && !isPreviewActive) {
-          editOverlayOwnsCaptureRef.current = true;
-        }
-        startNativePreviewCapture(captureSourceId).catch(console.error);
+        startNativePreviewCapture(activeStreamSources.map(s => s.source_id)).catch(console.error);
       }
-    } else if (!isPreviewActive && !editOverlayOpen) {
-      lastCaptureParamsRef.current = null;
+    } else {
+      if (lastCaptureParamsRef.current) {
+        stopNativePreviewCapture().catch(console.error);
+        lastCaptureParamsRef.current = null;
+      }
     }
   }, [
-    captureSourceId,
+    previewSourceIdsStr,
+    activeStreamSources,
     captureAudio,
     captureFrameRate,
     nativeCaptureDims.width,
@@ -667,642 +796,63 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
 
   // Compositor canvas render loop
   const renderCardCompositor = useCallback(() => {
-    // Single-loop guard: if deactivated, stop rescheduling so the chain dies.
     if (!compositorActiveRef.current) {
       cardRequestRef.current = null;
       return;
     }
-    const srcCanvas = nativePreviewCanvasRef.current;
     const canvas = canvasRef.current;
-    if (
-      !canvas ||
-      !srcCanvas ||
-      srcCanvas.width === 0 ||
-      srcCanvas.height === 0
-    ) {
+    if (!canvas) {
       cardRequestRef.current = requestAnimationFrame(renderCardCompositor);
       return;
     }
 
-    const ctx = canvas.getContext("2d");
+    // Read the single preview feed generated by Core
+    const srcCanvas = nativePreviewCanvasesRef.current.get("preview");
+    if (!srcCanvas || srcCanvas.width === 0 || srcCanvas.height === 0) {
+      cardRequestRef.current = requestAnimationFrame(renderCardCompositor);
+      return;
+    }
+
+    const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
     if (!ctx) {
       cardRequestRef.current = requestAnimationFrame(renderCardCompositor);
       return;
     }
 
-    // Cap the draw rate: target stream fps while streaming, otherwise 60fps for
-    // preview. Without this the loop composites at the monitor refresh rate
-    // (e.g. 144Hz) — wasting main-thread time and starving the encoder.
-    const now = performance.now();
-    const targetFps = isStreamingRef.current ? streamFpsRef.current : 60;
-    if (now - lastCompositeTimeRef.current < 1000 / targetFps) {
-      cardRequestRef.current = requestAnimationFrame(renderCardCompositor);
-      return;
-    }
-    lastCompositeTimeRef.current = now;
-
-    // While streaming, lock the canvas to the encoder-configured dimensions so
-    // a window resize (or any other change to videoWidth/Height) cannot give the
-    // encoder frames of a different size — that would cause encoder errors and
-    // stop the stream. For preview only, size dynamically from the video.
-    const streamLocked = isStreamingRef.current && streamDimsRef.current;
-    const rawWidth = streamLocked
-      ? streamDimsRef.current!.width
-      : activePreset.width || srcCanvas.width || 1280;
-    const rawHeight = streamLocked
-      ? streamDimsRef.current!.height
-      : activePreset.height || srcCanvas.height || 720;
-    // Force even dimensions — H.264 (yuv420p) requires width/height divisible by 2.
-    const targetWidth = rawWidth - (rawWidth % 2);
-    const targetHeight = rawHeight - (rawHeight % 2);
-    if (canvas.width !== targetWidth || canvas.height !== targetHeight) {
-      canvas.width = targetWidth;
-      canvas.height = targetHeight;
+    // Set size to match the incoming preview
+    if (canvas.width !== srcCanvas.width || canvas.height !== srcCanvas.height) {
+      canvas.width = srcCanvas.width;
+      canvas.height = srcCanvas.height;
     }
 
-    // High-quality scaling for the video downscale to the target resolution.
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(srcCanvas, 0, 0, canvas.width, canvas.height);
 
-    // 1. Draw base video frame with aspect-correct fit.
-    // Clear to black first so any letterbox/pillarbox area is clean black
-    // (drawn in RGBA → proper black after yuv420p encode), never the green
-    // "uninitialised YUV" bars Chromium produces when it pads a capture.
-    ctx.fillStyle = "#000000";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    const vw = srcCanvas.width;
-    const vh = srcCanvas.height;
-    if (vw > 0 && vh > 0) {
-      const fm = fitModeRef.current || "contain";
-      if (fm === "stretch") {
-        ctx.drawImage(srcCanvas, 0, 0, canvas.width, canvas.height);
-      } else {
-        const scale =
-          fm === "contain"
-            ? Math.min(canvas.width / vw, canvas.height / vh)
-            : Math.max(canvas.width / vw, canvas.height / vh);
-        const dw = vw * scale;
-        const dh = vh * scale;
-        const dx = (canvas.width - dw) / 2;
-        const dy = (canvas.height - dh) / 2;
-        ctx.drawImage(srcCanvas, dx, dy, dw, dh);
-      }
-    }
-
-    // Throttle the visualizer audio-data IPC broadcast to ~25fps — sending a
-    // fresh array per visualizer every frame is pure main-thread overhead.
-    const broadcastAudio = now - lastAudioBroadcastRef.current >= 40;
-    if (broadcastAudio) lastAudioBroadcastRef.current = now;
-
-    // 2. Draw overlays sequentially — skipped for WGC sources where D2D in Rust
-    // has already composited them into the captured frame.
-    if (!isNativeOverlayCompositeRef.current) overlaysRef.current.forEach((overlay) => {
-      ctx.save();
-      ctx.globalAlpha = overlay.opacity ?? 1;
-
-      // Map percentage bounds to absolute canvas coordinates
-      const xVal = (overlay.x / 100) * canvas.width;
-      const yVal = (overlay.y / 100) * canvas.height;
-      const wVal = (overlay.width / 100) * canvas.width;
-      const hVal = (overlay.height / 100) * canvas.height;
-
-      if (overlay.type === "color" && overlay.backgroundColor) {
-        ctx.fillStyle = overlay.backgroundColor;
-        ctx.fillRect(xVal, yVal, wVal, hVal);
-      } else if (overlay.type === "text" && overlay.textContent) {
-        const sizePx = Math.round(
-          (overlay.fontSize || 4) * (canvas.height / 100),
-        );
-        const fontKey = `${sizePx}|${overlay.fontStyle ?? "normal"}|${overlay.fontWeight ?? "normal"}|${overlay.fontFamily ?? "Inter, sans-serif"}`;
-        let fontEntry = textFontCacheRef.current.get(overlay.id);
-        if (!fontEntry || fontEntry.key !== fontKey) {
-          fontEntry = {
-            key: fontKey,
-            fontStr: `${overlay.fontStyle || "normal"} ${overlay.fontWeight || "normal"} ${sizePx}px ${overlay.fontFamily || "Inter, sans-serif"}`,
-          };
-          textFontCacheRef.current.set(overlay.id, fontEntry);
-        }
-        ctx.font = fontEntry.fontStr;
-        ctx.fillStyle = overlay.textColor || "#ffffff";
-        ctx.textBaseline = "top";
-        ctx.fillText(overlay.textContent, xVal, yVal);
-      } else if (overlay.type === "image" && overlay.imagePath) {
-        let img = cardImageCacheRef.current[overlay.imagePath];
-        if (!img) {
-          img = new Image();
-          img.src =
-            overlay.imagePath.startsWith("http") ||
-            overlay.imagePath.startsWith("file://")
-              ? overlay.imagePath
-              : `file:///${overlay.imagePath.replace(/\\/g, "/")}`;
-          cardImageCacheRef.current[overlay.imagePath] = img;
-        }
-        if (img.complete && img.naturalWidth > 0) {
-          ctx.drawImage(img, xVal, yVal, wVal, hVal);
-        }
-      } else if (overlay.type === "visualizer") {
-        // Find if this visualizer node has a connected audio node
-        const edgeToVisualizer = edgesRef.current.find(
-          (e) => e.target === overlay.id,
-        );
-        let analyser: AnalyserNode | null = null;
-        if (edgeToVisualizer) {
-          analyser = getFlowAudioAnalyser(edgeToVisualizer.source);
-        }
-        if (!analyser) {
-          analyser = cardAnalyserRef.current;
-        }
-
-        if (analyser) {
-          const vType = overlay.visualizerType || "bars";
-          const bufferLength = analyser.frequencyBinCount;
-
-          // ── OffscreenCanvas + dataArray cache ────────────────────────────
-          // Redraw the visualizer at 30fps max; composite at full compositor
-          // rate via drawImage (a cheap GPU blit). dataArray is reused each
-          // frame to avoid per-frame Uint8Array allocations and GC pressure.
-          const W = Math.max(1, Math.round(wVal));
-          const H = Math.max(1, Math.round(hVal));
-          let cache = visualizerCachesRef.current.get(overlay.id);
-          const needsResize =
-            !cache || cache.canvas.width !== W || cache.canvas.height !== H;
-          const needsNewBuffer =
-            !cache || cache.dataArray.length !== bufferLength;
-          if (needsResize || needsNewBuffer) {
-            const newCanvas = new OffscreenCanvas(W, H);
-            const newCtx = newCanvas.getContext("2d");
-            if (!newCtx) return;
-            cache = {
-              canvas: newCanvas,
-              ctx2d: newCtx,
-              lastDrawn: -Infinity,
-              dataArray: new Uint8Array(new ArrayBuffer(bufferLength)),
-              broadcastArray: new Array<number>(bufferLength).fill(0),
-              barsGrad: null,
-              barsGradH: -1,
-            };
-            visualizerCachesRef.current.set(overlay.id, cache);
-          }
-          if (!cache) return;
-
-          // Only sample audio data when we're about to redraw or broadcast.
-          const needsRedraw = now - cache.lastDrawn >= 33 || needsResize;
-          if (needsRedraw || broadcastAudio) {
-            if (vType === "wave") {
-              analyser.getByteTimeDomainData(cache.dataArray);
-            } else {
-              analyser.getByteFrequencyData(cache.dataArray);
-            }
-
-            if (broadcastAudio) {
-              // Reuse the pre-allocated number array to avoid a new Array
-              // allocation on every broadcast tick (~25fps per visualizer).
-              for (let i = 0; i < cache.dataArray.length; i++) {
-                cache.broadcastArray[i] = cache.dataArray[i];
-              }
-              window.parent
-                ? (window.parent as any).electron?.sendAudioData?.(
-                    overlay.id,
-                    cache.broadcastArray,
-                  )
-                : window.electron?.sendAudioData?.(
-                    overlay.id,
-                    cache.broadcastArray,
-                  );
-            }
-          }
-
-          if (needsRedraw) {
-            cache.lastDrawn = now;
-            const oc = cache.ctx2d;
-            oc.clearRect(0, 0, W, H);
-            oc.fillStyle = overlay.backgroundColor || "rgba(0, 0, 0, 0.3)";
-            oc.fillRect(0, 0, W, H);
-
-            if (vType === "wave") {
-              oc.strokeStyle = "#06b6d4";
-              oc.lineWidth = 2.5;
-              oc.beginPath();
-              const sliceWidth = W / bufferLength;
-              let lx = 0;
-              for (let i = 0; i < bufferLength; i++) {
-                const ly = ((cache.dataArray[i] / 128.0) * H) / 2;
-                if (i === 0) oc.moveTo(lx, ly);
-                else oc.lineTo(lx, ly);
-                lx += sliceWidth;
-              }
-              oc.stroke();
-            } else if (vType === "circle") {
-              const cx = W / 2;
-              const cy = H / 2;
-              const baseR = Math.min(W, H) * 0.15;
-              const maxR = Math.min(W, H) * 0.45;
-              const step = Math.max(1, Math.floor(bufferLength / 80));
-              // Batch segments into 8 color bands — 8 stroke() calls instead
-              // of one per segment (was 80-128 GPU flushes per frame).
-              const NUM_BANDS = 8;
-              for (let band = 0; band < NUM_BANDS; band++) {
-                const hue = 180 + (band / NUM_BANDS) * 80;
-                oc.strokeStyle = `hsl(${hue}, 85%, 55%)`;
-                oc.lineWidth = 2.5;
-                oc.beginPath();
-                const bandStart = Math.round((band / NUM_BANDS) * bufferLength);
-                const bandEnd = Math.round(
-                  ((band + 1) / NUM_BANDS) * bufferLength,
-                );
-                for (let i = bandStart; i < bandEnd; i += step) {
-                  const angle = (i / bufferLength) * Math.PI * 2;
-                  const r = baseR + (cache.dataArray[i] / 255) * (maxR - baseR);
-                  oc.moveTo(
-                    cx + Math.cos(angle) * baseR,
-                    cy + Math.sin(angle) * baseR,
-                  );
-                  oc.lineTo(cx + Math.cos(angle) * r, cy + Math.sin(angle) * r);
-                }
-                oc.stroke();
-              }
-            } else if (vType === "blocks") {
-              const numBlocksY = 8;
-              const step = Math.max(1, Math.floor(bufferLength / 40));
-              const displayCount = Math.floor(bufferLength / step);
-              const barWidth = W / displayCount;
-              const blockHeight = H / numBlocksY - 1.5;
-              let posX = 0;
-              for (let i = 0; i < bufferLength; i += step) {
-                const blocksToDraw = Math.round(
-                  (cache.dataArray[i] / 255) * numBlocksY,
-                );
-                for (let j = 0; j < blocksToDraw; j++) {
-                  oc.fillStyle =
-                    j < numBlocksY * 0.4
-                      ? "#6366f1"
-                      : j < numBlocksY * 0.75
-                        ? "#3b82f6"
-                        : "#06b6d4";
-                  oc.fillRect(
-                    posX,
-                    H - (j + 1) * (blockHeight + 1.5),
-                    barWidth - 1.5,
-                    blockHeight,
-                  );
-                }
-                posX += barWidth;
-              }
-            } else if (vType === "dots") {
-              const dotCount = 24;
-              const dotSpacing = W / dotCount;
-              oc.fillStyle = "#06b6d4";
-              for (let i = 0; i < dotCount; i++) {
-                const amplitude =
-                  cache.dataArray[Math.floor((i / dotCount) * bufferLength)] /
-                  255;
-                oc.beginPath();
-                oc.arc(
-                  i * dotSpacing + dotSpacing / 2,
-                  H - amplitude * H,
-                  Math.max(2.5, amplitude * 7),
-                  0,
-                  Math.PI * 2,
-                );
-                oc.fill();
-              }
-            } else {
-              // bars (default) — gradient cached per overlay; only rebuilt when
-              // canvas height changes (previously created every 33ms redraw).
-              const barWidth = (W / bufferLength) * 1.5;
-              if (!cache.barsGrad || cache.barsGradH !== H) {
-                cache.barsGrad = oc.createLinearGradient(0, H, 0, 0);
-                cache.barsGrad.addColorStop(0, "#6366f1");
-                cache.barsGrad.addColorStop(1, "#06b6d4");
-                cache.barsGradH = H;
-              }
-              oc.fillStyle = cache.barsGrad;
-              let posX = 0;
-              for (let i = 0; i < bufferLength; i++) {
-                const barHeight = (cache.dataArray[i] / 255) * H;
-                oc.fillRect(posX, H - barHeight, barWidth - 1, barHeight);
-                posX += barWidth + 1;
-                if (posX >= W) break;
-              }
-            }
-          }
-
-          // Composite cached visualizer onto the main compositor canvas.
-          ctx.drawImage(cache.canvas, xVal, yVal);
-        }
-      } else if (overlay.type === "nowPlaying") {
-        // Draw Now Playing Overlay — rendered to an OffscreenCanvas, blitted here
-        // with a single drawImage. The OffscreenCanvas is only re-drawn when
-        // content actually changes, so a static (no-audio) overlay produces zero
-        // per-frame allocations on the compositor canvas.
-        const tracking = overlay.audioNodeId
-          ? audioTimesRef.current[overlay.audioNodeId]
-          : null;
-        const curTime = tracking ? tracking.currentTime : 0;
-        const totalDur = tracking ? tracking.duration : 0;
-        const pct = totalDur > 0 ? curTime / totalDur : 0;
-
-        const W = Math.round(wVal);
-        const H = Math.round(hVal);
-        // Timer updates at 1-second resolution; progress bar at 1% resolution.
-        const contentKey = `${W}|${H}|${overlay.title ?? ""}|${overlay.artist ?? ""}|${overlay.albumArt ?? ""}|${Math.floor(curTime)}|${Math.floor(pct * 100)}`;
-
-        let npCache = nowPlayingCacheRef.current.get(overlay.id);
-        const needsNewCanvas =
-          !npCache || npCache.canvas.width !== W || npCache.canvas.height !== H;
-        const needsRedraw =
-          needsNewCanvas || !npCache || npCache.contentKey !== contentKey;
-
-        if (needsRedraw) {
-          const npCanvas = needsNewCanvas
-            ? new OffscreenCanvas(W, H)
-            : npCache!.canvas;
-          const oc = npCanvas.getContext("2d");
-          if (oc) {
-            const pad = H * 0.12;
-            const artSize = H - pad * 2;
-            const artX = pad;
-            const artY = pad;
-            const textX = artX + artSize + pad;
-            const titleY = pad + artSize * 0.12;
-            const artistY = pad + artSize * 0.48;
-
-            oc.clearRect(0, 0, W, H);
-
-            // Card background
-            drawRoundedRect(oc, 0, 0, W, H, H * 0.15);
-            oc.fillStyle = "rgba(12, 12, 12, 0.85)";
-            oc.fill();
-            oc.strokeStyle = "rgba(255, 255, 255, 0.08)";
-            oc.lineWidth = 1;
-            oc.stroke();
-
-            // Cover art with rounded clip
-            oc.save();
-            drawRoundedRect(oc, artX, artY, artSize, artSize, artSize * 0.12);
-            oc.clip();
-
-            let img = overlay.albumArt
-              ? cardImageCacheRef.current[overlay.albumArt]
-              : null;
-            if (overlay.albumArt && !img) {
-              img = new Image();
-              img.src = overlay.albumArt;
-              cardImageCacheRef.current[overlay.albumArt] = img;
-            }
-
-            if (img && img.complete && img.naturalWidth > 0) {
-              oc.drawImage(img, artX, artY, artSize, artSize);
-            } else {
-              const grad = oc.createLinearGradient(
-                artX,
-                artY,
-                artX + artSize,
-                artY + artSize,
-              );
-              grad.addColorStop(0, "#4f46e5");
-              grad.addColorStop(1, "#06b6d4");
-              oc.fillStyle = grad;
-              oc.fill();
-              oc.fillStyle = "#ffffff";
-              oc.font = `${artSize * 0.4}px sans-serif`;
-              oc.textAlign = "center";
-              oc.textBaseline = "middle";
-              oc.fillText("🎵", artX + artSize / 2, artY + artSize / 2);
-            }
-            oc.restore();
-
-            // Title
-            const maxTextWidth = W - (pad * 3 + artSize) - pad;
-            oc.fillStyle = "#ffffff";
-            oc.textAlign = "left";
-            oc.textBaseline = "top";
-            oc.font = `bold ${artSize * 0.22}px Inter, sans-serif`;
-            let displayTitle = overlay.title || "No Track Connected";
-            if (oc.measureText(displayTitle).width > maxTextWidth) {
-              while (
-                displayTitle.length > 0 &&
-                oc.measureText(displayTitle + "...").width > maxTextWidth
-              ) {
-                displayTitle = displayTitle.slice(0, -1);
-              }
-              displayTitle += "...";
-            }
-            oc.fillText(displayTitle, textX, titleY);
-
-            // Artist
-            oc.fillStyle = "#a1a1aa";
-            oc.font = `500 ${artSize * 0.16}px Inter, sans-serif`;
-            let displayArtist = overlay.artist || "Connect Audio Source";
-            if (oc.measureText(displayArtist).width > maxTextWidth) {
-              while (
-                displayArtist.length > 0 &&
-                oc.measureText(displayArtist + "...").width > maxTextWidth
-              ) {
-                displayArtist = displayArtist.slice(0, -1);
-              }
-              displayArtist += "...";
-            }
-            oc.fillText(displayArtist, textX, artistY);
-
-            // Progress bar
-            const progressY = H - pad * 1.6;
-            const timerSpace = artSize * 0.75;
-            const barW = Math.max(
-              10,
-              W - (pad * 3 + artSize) - timerSpace - pad * 2,
-            );
-            oc.fillStyle = "rgba(255, 255, 255, 0.1)";
-            oc.beginPath();
-            drawRoundedRect(oc, textX, progressY, barW, H * 0.04, H * 0.02);
-            oc.fill();
-            if (pct > 0) {
-              oc.fillStyle = "#6366f1";
-              oc.beginPath();
-              drawRoundedRect(
-                oc,
-                textX,
-                progressY,
-                barW * pct,
-                H * 0.04,
-                H * 0.02,
-              );
-              oc.fill();
-            }
-
-            // Timer
-            oc.fillStyle = "#a1a1aa";
-            oc.font = `500 ${artSize * 0.14}px monospace, sans-serif`;
-            oc.textAlign = "right";
-            oc.textBaseline = "middle";
-            oc.fillText(
-              `${formatTime(curTime)} / ${formatTime(totalDur)}`,
-              W - pad,
-              progressY + H * 0.02,
-            );
-
-            npCache = { canvas: npCanvas, contentKey };
-            nowPlayingCacheRef.current.set(overlay.id, npCache);
-          }
-        }
-
-        if (npCache) {
-          ctx.drawImage(npCache.canvas, xVal, yVal);
-        }
-      } else if (overlay.type === "twitchChat") {
-        const messages = chatMessagesStore.get(overlay.id) ?? [];
-
-        const sizePx = Math.max(
-          8,
-          Math.round((overlay.fontSize || 2.5) * (canvas.height / 100)),
-        );
-        const fontStr = `${overlay.fontStyle || "normal"} ${overlay.fontWeight || "normal"} ${sizePx}px ${overlay.fontFamily || "Inter, sans-serif"}`;
-        ctx.font = fontStr;
-
-        const lineH = Math.round(sizePx * 1.5);
-        const padX = Math.round(sizePx * 0.6);
-        const padY = Math.round(sizePx * 0.5);
-
-        // Semi-transparent background
-        ctx.fillStyle = "rgba(0,0,0,0.55)";
-        ctx.beginPath();
-        const r = Math.min(8, wVal * 0.02, hVal * 0.02);
-        ctx.roundRect(xVal, yVal, wVal, hVal, r);
-        ctx.fill();
-
-        if (messages.length > 0) {
-          ctx.save();
-          ctx.beginPath();
-          ctx.rect(xVal + padX, yVal + padY, wVal - padX * 2, hVal - padY * 2);
-          ctx.clip();
-
-          ctx.textBaseline = "top";
-          const maxLines = Math.floor((hVal - padY * 2) / lineH);
-          const contentW = wVal - padX * 2;
-
-          // Pre-compute wrapped lines newest-first until we fill the box
-          type RenderedMsg = {
-            msg: ChatMessage;
-            prefix: string;
-            prefixW: number;
-            lines: string[];
-          };
-          const rendered: RenderedMsg[] = [];
-          let totalLines = 0;
-          for (let i = messages.length - 1; i >= 0; i--) {
-            const msg = messages[i];
-            const prefix = `${msg.username}: `;
-            const prefixW = ctx.measureText(prefix).width;
-            const lines = wrapText(
-              ctx,
-              msg.message,
-              Math.max(1, contentW - prefixW),
-            );
-            if (totalLines + lines.length > maxLines) break;
-            totalLines += lines.length;
-            rendered.unshift({ msg, prefix, prefixW, lines });
-          }
-
-          // Draw bottom-up
-          let ty = yVal + hVal - padY - lineH;
-          for (let i = rendered.length - 1; i >= 0; i--) {
-            const { msg, prefix, prefixW, lines } = rendered[i];
-            for (let li = lines.length - 1; li >= 0; li--) {
-              if (li === 0) {
-                ctx.fillStyle = msg.color || "#9147ff";
-                ctx.fillText(prefix, xVal + padX, ty);
-                ctx.fillStyle = "#ffffff";
-                ctx.fillText(lines[li], xVal + padX + prefixW, ty);
-              } else {
-                ctx.fillStyle = "#ffffff";
-                ctx.fillText(lines[li], xVal + padX + prefixW, ty);
-              }
-              ty -= lineH;
-            }
-          }
-
-          ctx.restore();
-        }
-      }
-
-      ctx.restore();
-    }); // end overlays forEach
-
-    // 3. Send composited frame to Edit Overlay window at ~10fps via IPC relay.
-    // We scale down to 640×360 on an offscreen canvas before JPEG encoding —
-    // encoding the full compositor canvas (1600+ px wide) at 30fps costs too many
-    // main-thread ms and degrades the compositor itself.
+    // Forward the frame to the Edit Overlay window if open.
+    // Core sends the preview scaled/optimised, so we can just send it as-is.
     if (editOverlayOpenRef.current && !previewCapturePendingRef.current) {
+      const now = performance.now();
       if (now - lastPreviewBroadcastRef.current >= 100) {
         lastPreviewBroadcastRef.current = now;
         previewCapturePendingRef.current = true;
-
-        // Lazily create the scale canvas once
-        if (!previewScaleCanvasRef.current) {
-          previewScaleCanvasRef.current = document.createElement("canvas");
-        }
-        const sc = previewScaleCanvasRef.current;
-
-        // For 'contain' (FIT) mode, crop to the video-content rect so overlay
-        // handles in the editor land on video pixels, not letterbox areas.
-        // For 'cover' and 'stretch' the canvas IS the video area, use it whole.
-        const vw = srcCanvas.width;
-        const vh = srcCanvas.height;
-        let sX = 0, sY = 0, sW = canvas.width, sH = canvas.height;
-        if (fitModeRef.current === "contain" && vw > 0 && vh > 0) {
-          const s = Math.min(canvas.width / vw, canvas.height / vh);
-          const dw = Math.round(vw * s);
-          const dh = Math.round(vh * s);
-          const dx = Math.round((canvas.width - dw) / 2);
-          const dy = Math.round((canvas.height - dh) / 2);
-          if (dx > 0 || dy > 0) { sX = dx; sY = dy; sW = dw; sH = dh; }
-        }
-        const previewScale = Math.min(1280 / sW, 720 / sH);
-        const PW = (Math.round(sW * previewScale) & ~1) || 2;
-        const PH = (Math.round(sH * previewScale) & ~1) || 2;
-        if (sc.width !== PW) sc.width = PW;
-        if (sc.height !== PH) sc.height = PH;
-        sc.getContext("2d")?.drawImage(canvas, sX, sY, sW, sH, 0, 0, PW, PH);
-
-        sc.toBlob(
-          (blob) => {
-            previewCapturePendingRef.current = false;
-            if (!blob || !editOverlayOpenRef.current) return;
-            blob
-              .arrayBuffer()
-              .then((buf) => {
-                if (editOverlayOpenRef.current) {
-                  window.electron.sendPreviewFrame(buf, PW, PH);
-                }
-              })
-              .catch(() => {
-                /* blob → arrayBuffer failed, skip frame */
-              });
-          },
-          "image/jpeg",
-          0.7,
-        );
+        
+        canvas.toBlob((blob) => {
+          previewCapturePendingRef.current = false;
+          if (!blob || !editOverlayOpenRef.current) return;
+          blob.arrayBuffer().then((buf) => {
+            if (editOverlayOpenRef.current) {
+              window.electron.sendPreviewFrame(buf, canvas.width, canvas.height);
+            }
+          }).catch(() => {});
+        }, "image/jpeg", 0.7);
       }
     }
 
-    // 4. Encode this freshly-composited frame for the WebCodecs stream.
-    // The whole pass is already gated to the target fps above, so every
-    // composited frame maps 1:1 to an encoded frame.
-    if (isStreamingRef.current && h264EncoderRef.current) {
-      const forceKf = forceKeyframeRef.current;
-      forceKeyframeRef.current = false;
-      h264EncoderRef.current.encodeCanvas(
-        canvas,
-        streamFrameIndexRef.current++,
-        forceKf,
-      );
-    }
-
     cardRequestRef.current = requestAnimationFrame(renderCardCompositor);
-  }, [activePreset]);
+  }, []);
 
-  // Handle compositor loop activation — runs when preview, streaming, or edit overlay is active
+  // Handle compositor loop activation --- runs when preview, streaming, or edit overlay is active
   useEffect(() => {
     if (isPreviewActive || isStreaming || editOverlayOpen) {
       compositorActiveRef.current = true;
@@ -1324,8 +874,11 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
     setEditOverlayDialogStatus("running");
     setEditOverlayDialogProgress(33);
     setEditOverlayOpen(true);
-    await window.electron.openEditOverlay({ aspect: activePreset.aspect });
-  }, [captureSourceId, activePreset.aspect]);
+    const aspect =
+      activePreset.aspect === "auto" ? "auto" : activePreset.aspect;
+    await window.electron.openEditOverlay({ aspect, fitMode });
+    window.electron.notifyEditOverlayConnected();
+  }, [captureSourceId, activePreset.aspect, fitMode]);
 
   // When the Edit Overlay window is closed externally, clean up
   useEffect(() => {
@@ -1334,10 +887,6 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
       setEditOverlayDialogStatus("idle");
       setEditOverlayDialogProgress(0);
       previewCapturePendingRef.current = false;
-      if (editOverlayOwnsCaptureRef.current && !isStreamingRef.current) {
-        editOverlayOwnsCaptureRef.current = false;
-      }
-      stopNativePreviewCapture().catch(console.error);
     });
     return () => {
       window.electron.removeOnEditOverlayClosed();
@@ -1364,16 +913,14 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
 
   const handleTogglePreview = useCallback(() => {
     if (isPreviewActive) {
-      stopNativePreviewCapture().catch(console.error);
       setIsPreviewActive(false);
     } else {
-      if (!captureSourceId) return;
-      startNativePreviewCapture(captureSourceId).catch(console.error);
+      if (activeStreamSources.length === 0) return;
       setIsPreviewActive(true);
     }
   }, [
     isPreviewActive,
-    captureSourceId,
+    activeStreamSources,
     setIsPreviewActive,
     stopNativePreviewCapture,
     startNativePreviewCapture,
@@ -1497,68 +1044,14 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
           typeof activePreset.height === "number" && activePreset.height > 0
             ? activePreset.height
             : undefined;
-        const streamSources: {
-          source_id: string;
-          is_primary: boolean;
-          x_percent: number;
-          y_percent: number;
-          w_percent: number;
-          h_percent: number;
-        }[] = [];
-
-        if (connectedOverlayGroupNode) {
-          const storedRoles =
-            (connectedOverlayGroupNode.data.sourceRoles as Record<
-              string,
-              { role: string; pipX: number; pipY: number; pipW: number; pipH: number }
-            >) || {};
-          const groupSources = edges
-            .filter((e) => e.target === connectedOverlayGroupNode.id)
-            .map((e) =>
-              nodes.find((n) => n.id === e.source && n.type === "captureSourceNode"),
-            )
-            .filter(Boolean) as FlowNodeType[];
-
-          let hasPrimary = false;
-          for (const s of groupSources) {
-            const sid = s.data.captureSourceId as string;
-            if (!sid) continue;
-            
-            const r = storedRoles[s.id];
-            if (r) {
-              const isPrimary = r.role === "primary";
-              if (isPrimary) hasPrimary = true;
-              streamSources.push({
-                source_id: sid,
-                is_primary: isPrimary,
-                x_percent: r.pipX ?? 0,
-                y_percent: r.pipY ?? 0,
-                w_percent: r.pipW ?? 100,
-                h_percent: r.pipH ?? 100,
-              });
-            } else {
-              streamSources.push({
-                source_id: sid,
-                is_primary: !hasPrimary,
-                x_percent: 70,
-                y_percent: 70,
-                w_percent: 25,
-                h_percent: 14,
-              });
-              hasPrimary = true;
-            }
-          }
-        } else {
-          // Direct fallback
-          streamSources.push({
-            source_id: captureSourceId,
-            is_primary: true,
-            x_percent: 0,
-            y_percent: 0,
-            w_percent: 100,
-            h_percent: 100,
-          });
-        }
+        const streamSources = activeStreamSources.map((s) => ({
+          source_id: s.source_id,
+          is_primary: s.is_primary,
+          x_percent: s.x_percent,
+          y_percent: s.y_percent,
+          w_percent: s.w_percent,
+          h_percent: s.h_percent,
+        }));
 
         try {
           await window.electron.startNativeStream({
@@ -1587,8 +1080,8 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
       if (!canvas) return;
 
       // If no native capture is active (preview not open), start one silently
-      if (!isPreviewActive && !editOverlayOpen) {
-        await startNativePreviewCapture(captureSourceId).catch(console.error);
+      if (!isPreviewActive && !editOverlayOpen && activeStreamSources.length > 0) {
+        await startNativePreviewCapture(activeStreamSources.map(s => s.source_id)).catch(console.error);
         streamOwnsCaptureRef.current = true;
         await new Promise<void>((resolve) => setTimeout(resolve, 0));
       }
@@ -1617,7 +1110,8 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
         const dims = await new Promise<{ w: number; h: number }>((resolve) => {
           const deadline = performance.now() + 5000;
           const poll = () => {
-            const nc = nativePreviewCanvasRef.current;
+            const primaryId = activeStreamSources.find(s => s.is_primary)?.source_id;
+            const nc = primaryId ? nativePreviewCanvasesRef.current.get(primaryId) : undefined;
             if (nc && nc.width > 0 && nc.height > 0) {
               resolve({ w: nc.width, h: nc.height });
             } else if (performance.now() >= deadline) {
@@ -1946,15 +1440,21 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
                   <button
                     key={mode}
                     onClick={() => setFitMode(mode)}
+                    disabled={isStreaming || isRecording}
                     title={
-                      mode === "contain"
-                        ? "Letterbox — show everything, black bars"
-                        : mode === "cover"
-                          ? "Crop to fill — no bars, edges cropped"
-                          : "Stretch to fill — distorts aspect ratio"
+                      isStreaming || isRecording
+                        ? "Cannot change fit mode while streaming or recording"
+                        : mode === "contain"
+                          ? "Letterbox — show everything, black bars"
+                          : mode === "cover"
+                            ? "Crop to fill — no bars, edges cropped"
+                            : "Stretch to fill — distorts aspect ratio"
                     }
                     className={cn(
-                      "px-2 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider transition-colors cursor-pointer",
+                      "px-2 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider transition-colors",
+                      isStreaming || isRecording
+                        ? "cursor-not-allowed opacity-50"
+                        : "cursor-pointer",
                       fitMode === mode
                         ? "bg-indigo-500/20 text-indigo-300"
                         : "text-zinc-500 hover:text-zinc-300",
@@ -1968,12 +1468,17 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
           )}
 
           <div
-            className="relative rounded-lg border border-zinc-800 overflow-hidden bg-black flex flex-col items-center justify-center shadow-inner group transition-all duration-300"
+            className={cn(
+              "relative rounded-lg border border-zinc-800 overflow-hidden bg-black flex flex-col items-center justify-center shadow-inner group transition-all duration-300",
+              !isPreviewActive && captureSourceId ? "hidden" : ""
+            )}
             style={{
               aspectRatio:
-                activePreset.aspect === "auto"
-                  ? dynamicAspectRatio
-                  : activePreset.aspect,
+                !isPreviewActive && captureSourceId
+                  ? undefined
+                  : activePreset.aspect === "auto"
+                    ? dynamicAspectRatio
+                    : activePreset.aspect,
             }}
           >
             {/* Offscreen video + canvas: always mounted when a source is connected so
@@ -1996,7 +1501,10 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
                 />
                 <canvas
                   ref={canvasRef}
-                  className="w-full h-full object-contain"
+                  className={cn(
+                    "w-full h-full",
+                    fitMode === "cover" ? "object-cover" : fitMode === "stretch" ? "object-fill" : "object-contain"
+                  )}
                   style={{
                     // Only show canvas visually when preview is explicitly enabled.
                     // Streaming uses the canvas via captureStream() even when hidden.
@@ -2005,15 +1513,11 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
                 />
               </>
             )}
-            {!isPreviewActive && !isStreaming && (
+            {!isPreviewActive && !isStreaming && !captureSourceId && (
               <div className="flex flex-col items-center gap-2 text-zinc-500 text-center px-4 py-8">
                 <MonitorIcon className="w-8 h-8 text-zinc-700 stroke-[1.5]" />
                 <span className="text-[10px]">
-                  {!captureSourceId
-                    ? "Connect Capture Source Node"
-                    : isPreviewActive
-                      ? "Initialising compositor..."
-                      : "Click Preview to test output"}
+                  Connect Capture Source Node
                 </span>
               </div>
             )}

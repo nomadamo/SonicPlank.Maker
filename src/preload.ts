@@ -159,8 +159,17 @@ contextBridge.exposeInMainWorld("electron", {
   removeOnAudioDataUpdated: () => {
     ipcRenderer.removeAllListeners("onAudioDataUpdated");
   },
-  openEditOverlay: async (args: { aspect: string }): Promise<void> => {
+  openEditOverlay: async (args: { aspect: string; fitMode?: string }): Promise<void> => {
     await ipcRenderer.invoke("openEditOverlay", args);
+  },
+  updateFitMode: async (fitMode: string): Promise<void> => {
+    await ipcRenderer.invoke("updateFitMode", fitMode);
+  },
+  onFitModeUpdated: (callback: (fitMode: string) => void) => {
+    ipcRenderer.on("onFitModeUpdated", (_event, fitMode) => callback(fitMode));
+  },
+  removeOnFitModeUpdated: () => {
+    ipcRenderer.removeAllListeners("onFitModeUpdated");
   },
   onEditOverlayClosed: (callback: () => void) => {
     editOverlayClosedCallback = callback;
@@ -212,6 +221,15 @@ contextBridge.exposeInMainWorld("electron", {
   removeOnAudioTimeUpdated: () => {
     ipcRenderer.removeAllListeners("onAudioTimeUpdated");
   },
+  onOverlayRemoved: (callback: (id: string) => void) => {
+    ipcRenderer.on("overlay-removed", (_event, id) => callback(id));
+  },
+  removeOnOverlayRemoved: () => {
+    ipcRenderer.removeAllListeners("overlay-removed");
+  },
+  setOverlayResolution: (width: number, height: number) => {
+    return ipcRenderer.invoke("setOverlayResolution", width, height);
+  },
   onStreamStatus: (callback: (stats: any) => void) => {
     ipcRenderer.on("onStreamStatus", (_event, stats) => callback(stats));
   },
@@ -237,6 +255,9 @@ contextBridge.exposeInMainWorld("electron", {
   },
   stopPreviewCapture: (sourceId: string) => {
     return ipcRenderer.invoke("stopPreviewCapture", sourceId);
+  },
+  setCoreConfig: async (sources: any[]): Promise<void> => {
+    await ipcRenderer.invoke("setCoreConfig", sources);
   },
   onNativePreviewFrame: (
     callback: (sourceId: string, width: number, height: number, data: Uint8Array) => void,

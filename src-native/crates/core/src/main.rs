@@ -1,5 +1,6 @@
 mod capture;
 mod capture_mf;
+mod compositor;
 mod d2d;
 mod sources;
 mod streaming;
@@ -16,7 +17,7 @@ use sonicplank_ipc::{
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::windows::named_pipe::ServerOptions;
 use tokio::sync::broadcast;
-use tracing::{error, info, warn};
+use tracing::{error, info, warn, trace};
 
 use capture::{RawFrame, SharedOverlay};
 use streaming::{StreamEvent, StreamOptions, StreamSession};
@@ -34,6 +35,8 @@ async fn main() -> Result<()> {
         version = env!("CARGO_PKG_VERSION"),
         "SonicPlank Core starting"
     );
+
+    let verbose = std::env::args().any(|a| a == "--verbose");
 
     streaming::start_config_watcher();
 
@@ -72,14 +75,21 @@ async fn main() -> Result<()> {
     // `run_data_pipe` writes here; `capture::process_frame` reads and uploads to D2D.
     let shared_overlay: SharedOverlay = Arc::new(Mutex::new(None));
 
+    let compositor_cfg = Arc::new(Mutex::new(compositor::CompositorConfig { sources: Vec::new() }));
+    let composited_tx = compositor::start_compositor(
+        frame_tx.subscribe(),
+        Arc::clone(&shared_overlay),
+        Arc::clone(&compositor_cfg),
+    );
+
     tokio::select! {
-        result = run_stdin_commands(frame_tx.clone(), Arc::clone(&preview_enabled), stream_evt_tx, stream_evt_rx, Arc::clone(&shared_overlay)) => {
+        result = run_stdin_commands(frame_tx.clone(), composited_tx.clone(), Arc::clone(&preview_enabled), stream_evt_tx, stream_evt_rx, Arc::clone(&shared_overlay), Arc::clone(&compositor_cfg), verbose) => {
             if let Err(e) = result {
                 error!("Control plane error: {e:#}");
                 std::process::exit(1);
             }
         }
-        result = run_data_pipe(data_pipe, token, frame_tx.subscribe(), preview_enabled, shared_overlay) => {
+        result = run_data_pipe(data_pipe, token, composited_tx.subscribe(), preview_enabled, shared_overlay) => {
             if let Err(e) = result {
                 error!("Data pipe error: {e:#}");
             }
@@ -130,20 +140,30 @@ async fn read_auth_from_stdin() -> Result<(String, String)> {
 
 async fn run_stdin_commands(
     frame_tx: broadcast::Sender<Arc<RawFrame>>,
+    composited_tx: broadcast::Sender<Arc<RawFrame>>,
     preview_enabled: Arc<AtomicBool>,
     stream_evt_tx: tokio::sync::mpsc::UnboundedSender<StreamEvent>,
     mut stream_evt_rx: tokio::sync::mpsc::UnboundedReceiver<StreamEvent>,
     shared_overlay: SharedOverlay,
+    compositor_cfg: compositor::SharedCompositorConfig,
+    verbose: bool,
 ) -> Result<()> {
     let mut stdin = BufReader::new(tokio::io::stdin());
     let mut stdout = tokio::io::stdout();
     let mut line = String::new();
     let mut active_sessions: std::collections::HashMap<String, Box<dyn CaptureSessionTrait>> = std::collections::HashMap::new();
     let mut active_stream: Option<StreamSession> = None;
+    let mut last_keepalive = tokio::time::Instant::now();
 
     loop {
         line.clear();
+        let timeout = tokio::time::sleep_until(last_keepalive + std::time::Duration::from_secs(30));
+
         tokio::select! {
+            _ = timeout => {
+                info!("Watchdog timeout: no keep-alive received in 30s. Exiting.");
+                std::process::exit(1);
+            }
             // ── Stream events from the encoder thread  stdout ────────────────
             Some(evt) = stream_evt_rx.recv() => {
                 match evt {
@@ -202,9 +222,26 @@ async fn run_stdin_commands(
                         stdout.write_all(&frame).await?;
                         stdout.flush().await?;
                     }
-                    Ok(Command::Shutdown) => {
-                        info!("Shutdown command received");
+                    Ok(Command::Shutdown) | Ok(Command::Exit) => {
+                        info!("Exit/Shutdown command received");
                         std::process::exit(0);
+                    }
+                    Ok(Command::Standby) => {
+                        last_keepalive = tokio::time::Instant::now();
+                        if verbose {
+                            let frame = encode_event(&Event::Acknowledge { command: "Standby".into() })?;
+                            stdout.write_all(&frame).await?;
+                            stdout.flush().await?;
+                        }
+                    }
+                    Ok(Command::Config { sources }) => {
+                        last_keepalive = tokio::time::Instant::now();
+                        compositor_cfg.lock().unwrap().sources = sources;
+                        if verbose {
+                            let frame = encode_event(&Event::Acknowledge { command: "Config".into() })?;
+                            stdout.write_all(&frame).await?;
+                            stdout.flush().await?;
+                        }
                     }
                     Ok(Command::GetSources) => {
                         let items: Vec<CaptureSource> = sources::enumerate();
@@ -222,7 +259,7 @@ async fn run_stdin_commands(
                                 .map_err(Into::into)
                                 .and_then(|item| {
                                     let _ = overlay_hwnd; // no longer used; overlay arrives via data pipe
-                                    capture::CaptureSession::new(source_id.clone(), item, frame_tx.clone(), Arc::clone(&shared_overlay))
+                                    capture::CaptureSession::new(source_id.clone(), item, frame_tx.clone())
                                         .map(|s| Box::new(s) as Box<dyn CaptureSessionTrait>)
                                 })
                         };
@@ -304,8 +341,9 @@ async fn run_stdin_commands(
                             };
                             active_stream = Some(StreamSession::start(
                                 opts,
-                                frame_tx.subscribe(),
+                                composited_tx.subscribe(),
                                 stream_evt_tx.clone(),
+                                Arc::clone(&shared_overlay),
                             ));
                             info!("Stream encoder started");
                         }
@@ -438,7 +476,7 @@ async fn run_data_pipe(
             Ok(f) => f,
             // Lagged: broadcast dropped old frames — just skip and keep going.
             Err(broadcast::error::RecvError::Lagged(n)) => {
-                warn!("Preview pipe lagged, dropped {n} frames");
+                trace!("Preview pipe lagged, dropped {n} frames");
                 continue;
             }
             Err(broadcast::error::RecvError::Closed) => break,

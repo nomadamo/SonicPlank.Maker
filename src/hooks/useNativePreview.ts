@@ -3,28 +3,30 @@ import type { NativeCaptureSource } from "../global";
 
 export interface UseNativePreviewResult {
   sources: NativeCaptureSource[];
-  activeSourceId: string | null;
+  activeSourceIds: string[];
   loadSources: () => Promise<void>;
-  startCapture: (sourceId: string) => Promise<void>;
+  startCapture: (sourceIds: string[]) => Promise<void>;
   stopCapture: () => Promise<void>;
-  /** Off-DOM canvas that receives RGBA frames from the native preview pipe. */
-  canvasRef: React.RefObject<HTMLCanvasElement | null>;
+  /** Map of off-DOM canvases that receive RGBA frames from the native preview pipe, keyed by sourceId. */
+  canvasesRef: React.MutableRefObject<Map<string, HTMLCanvasElement>>;
 }
 
 export function useNativePreview(): UseNativePreviewResult {
   const [sources, setSources] = useState<NativeCaptureSource[]>([]);
-  const [activeSourceId, setActiveSourceId] = useState<string | null>(null);
-  const activeSourceIdRef = useRef<string | null>(null);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [activeSourceIds, setActiveSourceIds] = useState<string[]>([]);
+  const activeSourceIdsRef = useRef<string[]>([]);
+  const canvasesRef = useRef<Map<string, HTMLCanvasElement>>(new Map());
 
   useEffect(() => {
-    canvasRef.current = document.createElement("canvas");
-
     window.electron.onNativePreviewFrame((sourceId, width, height, data) => {
-      if (sourceId !== activeSourceIdRef.current) return;
+      if (!activeSourceIdsRef.current.includes(sourceId) && sourceId !== "preview") return;
 
-      const canvas = canvasRef.current;
-      if (!canvas) return;
+      let canvas = canvasesRef.current.get(sourceId);
+      if (!canvas) {
+        canvas = document.createElement("canvas");
+        canvasesRef.current.set(sourceId, canvas);
+      }
+
       canvas.width = width;
       canvas.height = height;
       const ctx = canvas.getContext("2d");
@@ -36,7 +38,7 @@ export function useNativePreview(): UseNativePreviewResult {
 
     return () => {
       window.electron.removeOnNativePreviewFrame();
-      canvasRef.current = null;
+      canvasesRef.current.clear();
     };
   }, []);
 
@@ -45,19 +47,24 @@ export function useNativePreview(): UseNativePreviewResult {
     setSources(list);
   }, []);
 
-  const startCapture = useCallback(async (sourceId: string) => {
-    await window.electron.startPreviewCapture(sourceId);
-    setActiveSourceId(sourceId);
-    activeSourceIdRef.current = sourceId;
+  const startCapture = useCallback(async (sourceIds: string[]) => {
+    for (const id of sourceIds) {
+      if (!activeSourceIdsRef.current.includes(id)) {
+        await window.electron.startPreviewCapture(id);
+      }
+    }
+    setActiveSourceIds(sourceIds);
+    activeSourceIdsRef.current = sourceIds;
   }, []);
 
   const stopCapture = useCallback(async () => {
-    if (activeSourceIdRef.current) {
-      await window.electron.stopPreviewCapture(activeSourceIdRef.current);
-      setActiveSourceId(null);
-      activeSourceIdRef.current = null;
+    for (const id of activeSourceIdsRef.current) {
+      await window.electron.stopPreviewCapture(id);
     }
+    setActiveSourceIds([]);
+    activeSourceIdsRef.current = [];
+    canvasesRef.current.clear();
   }, []);
 
-  return { sources, activeSourceId, loadSources, startCapture, stopCapture, canvasRef };
+  return { sources, activeSourceIds, loadSources, startCapture, stopCapture, canvasesRef };
 }

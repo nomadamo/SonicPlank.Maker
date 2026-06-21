@@ -68,12 +68,14 @@ let ffmpegProcess: any = null;
 let activeOverlays: any[] = [];
 let previewWin: BrowserWindow | null = null;
 let overlayWindow: BrowserWindow | null = null;
+let overlayConfigWidth = 1920;
+let overlayConfigHeight = 1080;
 
 async function ensureOverlayWindow(): Promise<void> {
   if (!overlayWindow || overlayWindow.isDestroyed()) {
     overlayWindow = new BrowserWindow({
-      width: 1920,
-      height: 1080,
+      width: overlayConfigWidth,
+      height: overlayConfigHeight,
       transparent: true,
       frame: false,
       show: false,
@@ -87,7 +89,7 @@ async function ensureOverlayWindow(): Promise<void> {
       },
     });
 
-    // Limit repaint rate — 1080p BGRA is ~8 MB/frame; 10fps keeps pipe pressure manageable.
+    // Limit repaint rate --- 1080p BGRA is ~8 MB/frame; 10fps keeps pipe pressure manageable.
     overlayWindow.webContents.setFrameRate(10);
 
     // Forward each paint as a type-2 overlay frame to the Rust core.
@@ -121,11 +123,13 @@ async function ensureOverlayWindow(): Promise<void> {
     });
 
     if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
-      void overlayWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL + "/#/overlay");
+      void overlayWindow.loadURL(
+        MAIN_WINDOW_VITE_DEV_SERVER_URL + "/#/overlay",
+      );
     } else {
       void overlayWindow.loadFile(
         path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`),
-        { hash: "overlay" }
+        { hash: "overlay" },
       );
     }
   }
@@ -189,9 +193,11 @@ function getStdin(): NodeJS.WritableStream | null {
 const CORE_BINARY_EXT = process.platform === "win32" ? ".exe" : "";
 
 let coreProcess: ReturnType<typeof spawn> | null = null;
-// Data pipe — carries binary frame data (Phase 1+). Read-only from Electron's
+// Data pipe --- carries binary frame data (Phase 1+). Read-only from Electron's
 // perspective; commands go to stdin, events come from stdout.
 let coreDataSocket: net.Socket | null = null;
+let coreKeepAliveTimer: ReturnType<typeof setInterval> | null = null;
+let coreLastAckMs = 0;
 
 // One-shot listeners keyed by event type. waitForCoreEvent() registers here;
 // the persistent stdout readline fires them as events arrive.
@@ -221,15 +227,21 @@ function startCoreEventLoop(): void {
       const ev = JSON.parse(line) as Record<string, unknown>;
       const type = ev.type as string | undefined;
       if (!type) return;
-      // stream_status fires repeatedly — broadcast directly rather than consuming a one-shot listener.
+      if (type === "acknowledge") {
+        coreLastAckMs = Date.now();
+        console.log(`[Core] ACK: ${JSON.stringify(ev.message ?? ev)}`);
+        return;
+      }
+      // stream_status fires repeatedly --- broadcast directly rather than consuming a one-shot listener.
       if (type === "stream_status") {
         const frame = (ev.frame as number) ?? 0;
         const fps = (ev.fps as number) ?? 0;
         const bitrateKbps = (ev.bitrate_kbps as number) ?? 0;
         const dropped = (ev.dropped as number) ?? 0;
-        const totalSec = nativeStreamStartAt != null
-          ? Math.floor((Date.now() - nativeStreamStartAt) / 1000)
-          : 0;
+        const totalSec =
+          nativeStreamStartAt != null
+            ? Math.floor((Date.now() - nativeStreamStartAt) / 1000)
+            : 0;
         const hh = String(Math.floor(totalSec / 3600)).padStart(2, "0");
         const mm = String(Math.floor((totalSec % 3600) / 60)).padStart(2, "0");
         const ss = String(totalSec % 60).padStart(2, "0");
@@ -255,15 +267,15 @@ function startCoreEventLoop(): void {
         coreEventListeners.delete(type);
         cb(ev);
       }
-      
+
       // If there's an error event, reject all waiting promises that aren't specifically waiting for "error"
       if (type === "error") {
         console.error("[Core] Emitted error:", ev);
         for (const [key, listener] of coreEventListeners.entries()) {
           if (key !== "error") {
-             // Pass the error event so the listener can reject
-             listener(ev);
-             coreEventListeners.delete(key);
+            // Pass the error event so the listener can reject
+            listener(ev);
+            coreEventListeners.delete(key);
           }
         }
       }
@@ -298,7 +310,7 @@ function waitForCoreEvent<T extends Record<string, unknown>>(
 }
 
 // Parse accumulated binary frames from the data pipe. The data pipe is
-// preview-only — streaming is handled entirely inside the Rust core.
+// preview-only --- streaming is handled entirely inside the Rust core.
 function parseDataPipeFrame(chunk: Buffer): void {
   coreFrameBuffer = Buffer.concat([coreFrameBuffer, chunk]);
 
@@ -313,15 +325,26 @@ function parseDataPipeFrame(chunk: Buffer): void {
     if (frameType === 1 && payloadLen >= 9) {
       const sourceIdLen = coreFrameBuffer.readUInt8(8);
       if (payloadLen >= 9 + sourceIdLen + 8) {
-        const sourceId = coreFrameBuffer.subarray(9, 9 + sourceIdLen).toString("utf8");
+        const sourceId = coreFrameBuffer
+          .subarray(9, 9 + sourceIdLen)
+          .toString("utf8");
         const width = coreFrameBuffer.readUInt32LE(9 + sourceIdLen);
         const height = coreFrameBuffer.readUInt32LE(13 + sourceIdLen);
         const pixelBytes = width * height * 4;
         if (17 + sourceIdLen + pixelBytes <= totalLen && nativePreviewActive) {
-          const pixels = coreFrameBuffer.subarray(17 + sourceIdLen, 17 + sourceIdLen + pixelBytes);
+          const pixels = coreFrameBuffer.subarray(
+            17 + sourceIdLen,
+            17 + sourceIdLen + pixelBytes,
+          );
           BrowserWindow.getAllWindows().forEach((win) => {
             if (!win.isDestroyed()) {
-              win.webContents.send("onNativePreviewFrame", sourceId, width, height, pixels);
+              win.webContents.send(
+                "onNativePreviewFrame",
+                sourceId,
+                width,
+                height,
+                pixels,
+              );
             }
           });
         }
@@ -407,7 +430,7 @@ function connectDataPipe(pipeName: string, token: string): Promise<void> {
 async function startCore(): Promise<void> {
   const binary = resolveCoreBinary();
   if (!fs.existsSync(binary)) {
-    console.warn(`[Core] binary not found at ${binary} — skipping`);
+    console.warn(`[Core] binary not found at ${binary} --- skipping`);
     return;
   }
 
@@ -422,9 +445,15 @@ async function startCore(): Promise<void> {
     const ffmpegBin =
       "C:\\ffmpeg-dev\\ffmpeg-n7.1-latest-win64-gpl-shared-7.1\\bin";
     spawnEnv.PATH = `${ffmpegBin};${spawnEnv.PATH ?? ""}`;
+    spawnEnv.PATH = `${ffmpegBin};${spawnEnv.PATH ?? ""}`;
   }
 
-  coreProcess = spawn(binary, [], {
+  const coreArgs: string[] = [];
+  if (app.commandLine.hasSwitch("verbose") || !app.isPackaged) {
+    coreArgs.push("--verbose");
+  }
+
+  coreProcess = spawn(binary, coreArgs, {
     stdio: ["pipe", "pipe", "pipe"],
     env: spawnEnv,
   });
@@ -454,31 +483,52 @@ async function startCore(): Promise<void> {
   try {
     const pipeName = await waitForCoreReady();
     await connectDataPipe(pipeName, token);
+    startCoreKeepAlive();
   } catch (err) {
     console.error("[Core] startup failed:", err);
   }
 }
 
+function startCoreKeepAlive() {
+  if (coreKeepAliveTimer) return;
+  coreLastAckMs = Date.now();
+  coreKeepAliveTimer = setInterval(() => {
+    if (!coreProcess) return;
+
+    sendCoreCommand({ type: "standby" });
+
+    if (Date.now() - coreLastAckMs > 35000) {
+      console.warn("[Core] Missed keep-alive ACKs for 35s. Restarting core...");
+      stopCore();
+      setTimeout(() => startCore().catch(console.error), 1000);
+    }
+  }, 10000);
+}
+
 // Send a command on the control plane (stdin). Commands never go over the data pipe.
 function sendCoreCommand(cmd: Record<string, unknown>): void {
   if (!coreProcess?.stdin?.writable) {
-    console.warn("[Core] stdin not writable — command dropped:", cmd);
+    console.warn("[Core] stdin not writable --- command dropped:", cmd);
     return;
   }
   coreProcess.stdin.write(JSON.stringify(cmd) + "\n");
 }
 
 function stopCore(): void {
+  if (coreKeepAliveTimer) {
+    clearInterval(coreKeepAliveTimer);
+    coreKeepAliveTimer = null;
+  }
   if (!coreProcess) return;
-  // Signal Rust to start graceful shutdown (FFmpeg flush, close sockets).
-  sendCoreCommand({ type: "shutdown" });
+  // Signal Rust to start graceful shutdown
+  sendCoreCommand({ type: "exit" });
   coreProcess.stdin?.end();
 
   if (coreDataSocket) {
     coreDataSocket.destroy();
     coreDataSocket = null;
   }
-  // Do NOT null coreProcess here — will-quit uses it as a backstop kill.
+  // Do NOT null coreProcess here --- will-quit uses it as a backstop kill.
   // The process exit event clears coreProcess once it actually terminates.
 }
 
@@ -1078,16 +1128,17 @@ const registerIpcHandlers = () => {
   // ('sonicplank-preview-frames') — no second capture, no WGC session conflict.
   ipcMain.handle(
     "openEditOverlay",
-    (event, args: { aspect?: string } | undefined) => {
+    (event, args: { aspect?: string; fitMode?: string } | undefined) => {
       if (previewWin && !previewWin.isDestroyed()) {
         previewWin.focus();
         return;
       }
 
       const aspect: string = args?.aspect ?? "16/9";
+      const fitMode: string = args?.fitMode ?? "contain";
       const startUrl = MAIN_WINDOW_VITE_DEV_SERVER_URL
-        ? `${MAIN_WINDOW_VITE_DEV_SERVER_URL}#/preview?aspect=${encodeURIComponent(aspect)}`
-        : `file://${path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`)}#/preview?aspect=${encodeURIComponent(aspect)}`;
+        ? `${MAIN_WINDOW_VITE_DEV_SERVER_URL}#/preview?aspect=${encodeURIComponent(aspect)}&fitMode=${encodeURIComponent(fitMode)}`
+        : `file://${path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`)}#/preview?aspect=${encodeURIComponent(aspect)}&fitMode=${encodeURIComponent(fitMode)}`;
 
       console.log("[Main] Opening Edit Overlay window:", startUrl);
 
@@ -1142,6 +1193,12 @@ const registerIpcHandlers = () => {
     },
   );
 
+  ipcMain.handle("updateFitMode", (event, fitMode: string) => {
+    if (previewWin && !previewWin.isDestroyed()) {
+      previewWin.webContents.send("onFitModeUpdated", fitMode);
+    }
+  });
+
   // Preview window notifies main when it receives its first compositor frame.
   // Main relays to all other windows (the editor) so it can update its status dialog.
   ipcMain.on("editOverlayConnected", (event) => {
@@ -1159,16 +1216,26 @@ const registerIpcHandlers = () => {
   // ── Native preview (Phase 1) ────────────────────────────────────────────────
   // These handlers bridge the renderer to the Rust capture core via stdin/stdout.
 
+  let pendingSourcesPromise: Promise<any[]> | null = null;
+
   ipcMain.handle("getPreviewSources", async () => {
     if (!coreProcess) return [];
-    sendCoreCommand({ type: "get_sources" });
-    try {
-      const ev = await waitForCoreEvent<{ items: unknown[] }>("sources");
-      return ev.items ?? [];
-    } catch (e) {
-      console.error("[Core] getPreviewSources failed:", e);
-      return [];
-    }
+    if (pendingSourcesPromise) return pendingSourcesPromise;
+
+    pendingSourcesPromise = (async () => {
+      sendCoreCommand({ type: "get_sources" });
+      try {
+        const ev = await waitForCoreEvent<{ items: unknown[] }>("sources");
+        return ev.items ?? [];
+      } catch (e) {
+        console.error("[Core] getPreviewSources failed:", e);
+        return [];
+      } finally {
+        pendingSourcesPromise = null;
+      }
+    })();
+
+    return pendingSourcesPromise;
   });
 
   ipcMain.handle("startPreviewCapture", async (_event, sourceId: string) => {
@@ -1191,19 +1258,39 @@ const registerIpcHandlers = () => {
 
     let count = activeCaptures.get(sourceId) || 0;
     count = Math.max(0, count - 1);
-    
+
     if (count === 0) {
       activeCaptures.delete(sourceId);
       sendCoreCommand({ type: "stop_capture", source_id: sourceId });
     } else {
       activeCaptures.set(sourceId, count);
     }
-    
+
     if (activeCaptures.size === 0) {
       nativePreviewActive = false;
       sendCoreCommand({ type: "disable_preview" });
     }
   });
+
+  let latestCoreConfig: any[] | null = null;
+
+  ipcMain.handle("setCoreConfig", async (_event, sources: any[]) => {
+    if (coreProcess && !coreProcess.killed) {
+      sendCoreCommand({ type: "config", sources });
+      latestCoreConfig = sources;
+    }
+  });
+
+  ipcMain.handle(
+    "setOverlayResolution",
+    async (_event, width: number, height: number) => {
+      overlayConfigWidth = width;
+      overlayConfigHeight = height;
+      if (overlayWindow && !overlayWindow.isDestroyed()) {
+        overlayWindow.setSize(width, height);
+      }
+    },
+  );
 
   ipcMain.handle(
     "startNativeStream",
@@ -1229,7 +1316,9 @@ const registerIpcHandlers = () => {
     ) => {
       if (!coreProcess) throw new Error("Core not running");
 
-      activeStreamSources = options.sources.map(s => ({ source_id: s.source_id }));
+      activeStreamSources = options.sources.map((s) => ({
+        source_id: s.source_id,
+      }));
       for (const src of options.sources) {
         const count = activeCaptures.get(src.source_id) || 0;
         activeCaptures.set(src.source_id, count + 1);
@@ -1242,9 +1331,13 @@ const registerIpcHandlers = () => {
       // Read bitrate from encoder config; fall back to 6000 kbps.
       let bitrateKbps = 6000;
       try {
-        const cfg = JSON.parse(fs.readFileSync(getEncoderConfigPath(), "utf-8")) as { bitrate_kbps?: number };
+        const cfg = JSON.parse(
+          fs.readFileSync(getEncoderConfigPath(), "utf-8"),
+        ) as { bitrate_kbps?: number };
         if (cfg.bitrate_kbps) bitrateKbps = cfg.bitrate_kbps;
-      } catch { /* use default */ }
+      } catch {
+        /* use default */
+      }
 
       // Delegate encoding and RTMP delivery entirely to the Rust core.
       sendCoreCommand({
@@ -1280,7 +1373,7 @@ const registerIpcHandlers = () => {
     for (const src of activeStreamSources) {
       let count = activeCaptures.get(src.source_id) || 0;
       count = Math.max(0, count - 1);
-      
+
       if (count === 0) {
         activeCaptures.delete(src.source_id);
         if (coreProcess) {
@@ -1512,6 +1605,10 @@ const createWindow = async () => {
     applicationVersion: "0.1.0",
     version: "0.1.0",
     copyright: "2026",
+  });
+
+  mainWindow.on("closed", () => {
+    app.quit();
   });
 };
 

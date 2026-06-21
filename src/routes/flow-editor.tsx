@@ -549,31 +549,67 @@ function FlowEditor() {
       // Update coordinates of overlay nodes in flow editor state
       setCurrentNodes((prevNodes) => {
         let changed = false;
-        const nextNodes = prevNodes.map((node) => {
-          const matchingOverlay = updatedOverlays.find((o) => o.id === node.id);
-          if (matchingOverlay) {
-            // Check if coordinates or dimensions are actually different to avoid unnecessary updates
-            if (
-              node.data.x !== matchingOverlay.x ||
-              node.data.y !== matchingOverlay.y ||
-              node.data.width !== matchingOverlay.width ||
-              node.data.height !== matchingOverlay.height
-            ) {
-              changed = true;
-              return {
-                ...node,
-                data: {
-                  ...node.data,
-                  x: matchingOverlay.x,
-                  y: matchingOverlay.y,
-                  width: matchingOverlay.width,
-                  height: matchingOverlay.height,
-                },
-              };
+        let nextNodes = [...prevNodes];
+
+        for (const overlay of updatedOverlays) {
+          if (overlay.id.startsWith("pip::")) {
+            const parts = overlay.id.split("::");
+            if (parts.length === 3) {
+              const groupId = parts[1];
+              const sourceId = parts[2];
+              
+              const groupIndex = nextNodes.findIndex(n => n.id === groupId);
+              if (groupIndex !== -1) {
+                const groupNode = nextNodes[groupIndex];
+                const storedRoles = (groupNode.data.sourceRoles as Record<string, any>) || {};
+                const currentRole = storedRoles[sourceId];
+                if (!currentRole || currentRole.pipX !== overlay.x || currentRole.pipY !== overlay.y || currentRole.pipW !== overlay.width || currentRole.pipH !== overlay.height) {
+                  changed = true;
+                  nextNodes[groupIndex] = {
+                    ...groupNode,
+                    data: {
+                      ...groupNode.data,
+                      sourceRoles: {
+                        ...storedRoles,
+                        [sourceId]: {
+                          ...(currentRole || { role: "pip" }),
+                          pipX: overlay.x,
+                          pipY: overlay.y,
+                          pipW: overlay.width,
+                          pipH: overlay.height
+                        }
+                      }
+                    }
+                  };
+                }
+              }
+            }
+          } else {
+            const nodeIndex = nextNodes.findIndex((n) => n.id === overlay.id);
+            if (nodeIndex !== -1) {
+              const node = nextNodes[nodeIndex];
+              if (
+                node.data.x !== overlay.x ||
+                node.data.y !== overlay.y ||
+                node.data.width !== overlay.width ||
+                node.data.height !== overlay.height
+              ) {
+                changed = true;
+                nextNodes[nodeIndex] = {
+                  ...node,
+                  data: {
+                    ...node.data,
+                    x: overlay.x,
+                    y: overlay.y,
+                    width: overlay.width,
+                    height: overlay.height,
+                  },
+                };
+              }
             }
           }
-          return node;
-        });
+        }
+
         if (changed) {
           setHasUnsavedChanges(true);
           setPersistRequested(true);

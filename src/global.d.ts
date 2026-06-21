@@ -57,10 +57,16 @@ declare global {
       removeOnOverlaysUpdated: (callback: (overlays: any[]) => void) => void;
       onLog: (callback: (event: any, data: string) => void) => void;
       removeOnLog: (callback: (event: any, data: string) => void) => void;
+      onOverlayRemoved: (callback: (id: string) => void) => void;
+      removeOnOverlayRemoved: () => void;
+      setOverlayResolution: (width: number, height: number) => Promise<void>;
       sendAudioData: (visualizerId: string, dataArray: number[]) => void;
       onAudioDataUpdated: (callback: (visualizerId: string, dataArray: number[]) => void) => void;
       removeOnAudioDataUpdated: () => void;
-      openEditOverlay: (args: { aspect: string }) => Promise<void>;
+      openEditOverlay: (args: { aspect: string; fitMode?: string }) => Promise<void>;
+      updateFitMode: (fitMode: string) => Promise<void>;
+      onFitModeUpdated: (callback: (fitMode: string) => void) => void;
+      removeOnFitModeUpdated: () => void;
       onEditOverlayClosed: (callback: () => void) => void;
       removeOnEditOverlayClosed: () => void;
       notifyEditOverlayConnected: () => void;
@@ -85,6 +91,7 @@ declare global {
       getPreviewSources: () => Promise<NativeCaptureSource[]>;
       startPreviewCapture: (sourceId: string) => Promise<void>;
       stopPreviewCapture: (sourceId: string) => Promise<void>;
+      setCoreConfig: (sources: any[]) => Promise<void>;
       onNativePreviewFrame: (
         callback: (sourceId: string, width: number, height: number, data: Uint8Array) => void,
       ) => void;
