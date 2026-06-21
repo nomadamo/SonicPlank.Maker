@@ -13,7 +13,8 @@ export default defineConfig({
     watch: {
       // encoder-config.json is a runtime tuning file written by Electron.
       // Vite must not watch it or every Apply/external edit triggers HMR.
-      ignored: ["**/encoder-config.json"],
+      // We also ignore src-native so that Rust core changes do not trigger HMR.
+      ignored: ["**/encoder-config.json", "**/src-native/**"],
     },
   },
   plugins: [

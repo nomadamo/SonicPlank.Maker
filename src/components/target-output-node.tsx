@@ -1367,13 +1367,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
         subtitle="Composite, record & stream"
         anchorName={`--targetOutputNode_${node.id}`}
       >
-        {/* Sourrce Handle label */}
-        <div className="left-3.5 text-[9px] font-bold text-zinc-500 uppercase tracking-wider pointer-events-none select-none">
-          Source
-        </div>
-        <div className="left-3.5 text-[9px] font-bold text-zinc-500 uppercase tracking-wider pointer-events-none select-none">
-          Overlays
-        </div>
+
 
         {/* Live Video Preview Area */}
         <div className="flex flex-col gap-1.5 nodrag nopan nowheel">
@@ -1886,23 +1880,14 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
         )}
       </BaseNodeCard>
 
-      {/* Target input handles */}
-      <Handle
-        id={`handle_${node.id}_source_target`}
-        type="target"
-        position={Position.Left}
-        isConnectable={node.isConnectable}
-        isValidConnection={isValidSourceConnection}
-        style={{ top: "78px" }}
-        className="hover:!border-red-400 hover:!shadow-[0_0_10px_rgba(248,113,113,0.5)] hover:!scale-125"
-      />
+      {/* Target input handle */}
       <Handle
         id={`handle_${node.id}_overlay_target`}
         type="target"
         position={Position.Left}
         isConnectable={node.isConnectable}
         isValidConnection={isValidOverlayConnection}
-        style={{ top: "107px" }}
+        style={{ top: "34px" }}
         className="hover:!border-red-400 hover:!shadow-[0_0_10px_rgba(248,113,113,0.5)] hover:!scale-125"
       />
 

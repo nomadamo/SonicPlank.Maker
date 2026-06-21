@@ -2,8 +2,10 @@ import { BaseNodeCard } from "./base-node";
 import { Handle, NodeProps, Position, useEdges, useNodes } from "@xyflow/react";
 import { Music as MusicIcon } from "lucide-react";
 import { FlowNodeType } from "@/types/flow-node";
-import { useSetAtom } from "jotai";
+import { useSetAtom, useAtomValue } from "jotai";
 import { updateNodeDataAtom } from "@/store/flowStore";
+import { currentPlaybackAtom } from "@/store/libraryStore";
+import { useAudioStore } from "@/lib/audio-store";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 const DEFAULTS = {
@@ -80,6 +82,10 @@ export function NowPlayingNode(NodeRef: NodeProps<FlowNodeType>) {
 
   const [playbackTime, setPlaybackTime] = useState(0);
 
+  const globalCurrentTrack = useAudioStore(s => s.currentTrack);
+  const globalCurrentTime = useAudioStore(s => s.currentTime);
+  const spotifyPlayback = useAtomValue(currentPlaybackAtom);
+
   useEffect(() => {
     if (!connectedAudioNode) {
       setPlaybackTime(0);
@@ -101,11 +107,27 @@ export function NowPlayingNode(NodeRef: NodeProps<FlowNodeType>) {
     return `${mins}:${secs.toString().padStart(2, "0")}`;
   };
 
-  const title = connectedAudioNode?.data.title || "No Track Connected";
-  const artist = connectedAudioNode?.data.artist || "Connect Audio Source";
-  const duration = connectedAudioNode?.data.duration || 0;
-  const albumArt = connectedAudioNode?.data.albumArt || "";
-  const progressPercent = duration > 0 ? (playbackTime / duration) * 100 : 0;
+  const isSpotify = !connectedAudioNode && spotifyPlayback && spotifyPlayback.isPlaying;
+  const isLocalGlobal = !connectedAudioNode && !isSpotify && globalCurrentTrack;
+
+  const title = connectedAudioNode?.data.title 
+    || (isSpotify ? spotifyPlayback.title : isLocalGlobal ? globalCurrentTrack.title : "No Track Connected");
+  const artist = connectedAudioNode?.data.artist 
+    || (isSpotify ? spotifyPlayback.artist : isLocalGlobal ? globalCurrentTrack.artist : "Connect Audio Source");
+  const duration = connectedAudioNode?.data.duration 
+    || (isSpotify ? spotifyPlayback.duration : isLocalGlobal ? globalCurrentTrack.duration : 0);
+  const albumArt = connectedAudioNode?.data.albumArt 
+    || (isSpotify ? spotifyPlayback.albumArt : isLocalGlobal ? "" : ""); // Local items don't have album art yet
+  
+  const currentDisplayTime = connectedAudioNode 
+    ? playbackTime 
+    : isSpotify 
+      ? spotifyPlayback.progress_ms / 1000 
+      : isLocalGlobal 
+        ? globalCurrentTime 
+        : 0;
+
+  const progressPercent = duration > 0 ? (currentDisplayTime / duration) * 100 : 0;
 
   return (
     <>
@@ -155,7 +177,7 @@ export function NowPlayingNode(NodeRef: NodeProps<FlowNodeType>) {
                   />
                 </div>
                 <div className="text-[9px] font-medium text-zinc-400 tabular-nums flex-shrink-0">
-                  {formatTime(playbackTime)} / {formatTime(duration)}
+                  {formatTime(currentDisplayTime)} / {formatTime(duration)}
                 </div>
               </div>
             </div>

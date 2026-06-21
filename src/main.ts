@@ -445,7 +445,6 @@ async function startCore(): Promise<void> {
     const ffmpegBin =
       "C:\\ffmpeg-dev\\ffmpeg-n7.1-latest-win64-gpl-shared-7.1\\bin";
     spawnEnv.PATH = `${ffmpegBin};${spawnEnv.PATH ?? ""}`;
-    spawnEnv.PATH = `${ffmpegBin};${spawnEnv.PATH ?? ""}`;
   }
 
   const coreArgs: string[] = [];
@@ -1541,7 +1540,7 @@ const createWindow = async () => {
     titleBarOverlay: false,
     ...(process.platform !== "darwin" ? {} : {}),
     webPreferences: {
-      devTools: inDevelopment,
+      devTools: true,
       preload: path.join(__dirname, "preload.js"),
       webSecurity: false,
     },

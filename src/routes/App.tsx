@@ -48,6 +48,12 @@ import { useSettings } from "@/store/settingsStore";
 import { SettingsDialog } from "@/components/settings-dialog";
 import { inDevelopment } from "@/constants";
 import appIcon from "@/img/icon.png";
+import { useAtom, useAtomValue } from "jotai";
+import { globalPlayingItemIdAtom, currentPlaybackAtom, useLibraryStore } from "@/store/libraryStore";
+import { LibraryAudioPlayerWrapper } from "@/components/library-audio-player";
+import { SpotifyLibraryPlayer } from "@/components/spotify-library-player";
+import { VisualizerBackdrop } from "@/components/visualizer-backdrop";
+import { motion } from "motion/react";
 
 interface TitleBarButtonProps extends ComponentProps<typeof Button> {
   message?: AppControlProps;
@@ -127,6 +133,11 @@ export default function App() {
   const setTheme = (newTheme: "light" | "dark" | "system") => {
     updateSettings({ theme: newTheme });
   };
+
+  const [playingItemId, setPlayingItemId] = useAtom(globalPlayingItemIdAtom);
+  const [currentPlayback, setCurrentPlayback] = useAtom(currentPlaybackAtom);
+  const { items: libraryItems } = useLibraryStore();
+  const [showVisualizer, setShowVisualizer] = useState(false);
 
   const items: TabProps[] = [
     {
@@ -282,14 +293,12 @@ export default function App() {
             <MenubarTrigger>File</MenubarTrigger>
             <MenubarContent>
               <MenubarGroup>
-                {inDevelopment && (
-                  <MenubarItem onClick={() => appControl("toggleDevTools")}>
-                    DevTools
-                    <MenubarShortcut>
-                      <Kbd>Ctrl</Kbd>T
-                    </MenubarShortcut>
-                  </MenubarItem>
-                )}
+                <MenubarItem onClick={() => appControl("toggleDevTools")}>
+                  Toggle Dev Tools
+                  <MenubarShortcut>
+                    <Kbd>Ctrl</Kbd>T
+                  </MenubarShortcut>
+                </MenubarItem>
               </MenubarGroup>
               <MenubarGroup>
                 <ExitMenuItem />
@@ -303,6 +312,61 @@ export default function App() {
       <RouteAnimationContainer>
         <Outlet />
       </RouteAnimationContainer>
+
+      {/* Global Player Container */}
+      <motion.div
+        initial={false}
+        animate={{ y: (playingItemId || currentPlayback) ? 0 : "100%" }}
+        transition={{ type: "spring", bounce: 0, duration: 0.4 }}
+        className="fixed bottom-0 left-0 right-0 z-50 p-0 border-t shadow-2xl rounded-t-xl bg-card max-h-[80vh] flex flex-col overflow-hidden"
+        style={{ pointerEvents: (playingItemId || currentPlayback) ? "auto" : "none" }}
+      >
+        <VisualizerBackdrop visible={!!playingItemId && showVisualizer} />
+        <div className="w-full flex flex-col py-1 relative z-10">
+          {(() => {
+            if (playingItemId) {
+              const playingItem = libraryItems.find((i) => i.id === playingItemId);
+              if (!playingItem) return null;
+              return playingItem.isSpotifyStream || playingItem.isSpotifyPlaylist ? (
+                <SpotifyLibraryPlayer
+                  key={playingItemId}
+                  item={playingItem}
+                  onStop={() => setPlayingItemId(null)}
+                />
+              ) : (
+                <LibraryAudioPlayerWrapper
+                  key={playingItemId}
+                  item={playingItem}
+                  onStop={() => setPlayingItemId(null)}
+                  showVisualizer={showVisualizer}
+                  onToggleVisualizer={() => setShowVisualizer(!showVisualizer)}
+                />
+              );
+            }
+            if (currentPlayback) {
+              return (
+                <SpotifyLibraryPlayer
+                  key="__current_playback__"
+                  item={{
+                    id: "__current_playback__",
+                    title: currentPlayback.title,
+                    artist: currentPlayback.artist,
+                    albumArt: currentPlayback.albumArt,
+                    filePath: currentPlayback.uri,
+                    duration: currentPlayback.duration,
+                    addedAt: Date.now(),
+                    isSpotifyStream: !currentPlayback.isPlaylist || undefined,
+                    isSpotifyPlaylist: currentPlayback.isPlaylist || undefined,
+                  }}
+                  autoPlay={false}
+                  onStop={() => setCurrentPlayback(null)}
+                />
+              );
+            }
+            return null;
+          })()}
+        </div>
+      </motion.div>
       <div style={{ zIndex: 1000 }}>
         {/* <TanStackRouterDevtools
           position="top-right"

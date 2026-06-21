@@ -54,6 +54,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAtomValue, useSetAtom } from "jotai";
+import { isGlobalPlayerActiveAtom } from "@/store/libraryStore";
 import {
   flowNodesAtom,
   flowEdgesAtom,
@@ -74,12 +75,15 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-  PopoverHeader,
-  PopoverTitle,
-} from "@/components/ui/popover";
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -119,7 +123,6 @@ const fitViewOptions: FitViewOptions = {
 };
 
 interface AddNodesMenuProps {
-  closePopover: () => void;
   setAddLibraryOpen: (open: boolean) => void;
   hasOutputNode: boolean;
   onAddOutputNode: () => void;
@@ -135,7 +138,6 @@ interface AddNodesMenuProps {
 }
 
 function AddNodesMenu({
-  closePopover,
   setAddLibraryOpen,
   hasOutputNode,
   onAddOutputNode,
@@ -150,242 +152,88 @@ function AddNodesMenu({
   onAddTwitchChatNode,
 }: AddNodesMenuProps) {
   return (
-    <div className="flex flex-col gap-3">
-      {/* Audio & Outputs */}
-      <div className="flex flex-col gap-1">
-        <span className="text-[9px] font-semibold text-zinc-500 uppercase tracking-wider px-1">
+    <>
+      <DropdownMenuSub>
+        <DropdownMenuSubTrigger>
+          <MusicIcon className="text-emerald-400" />
           Audio & Outputs
-        </span>
-        {/* Audio Node */}
-        <button
-          onClick={() => {
-            setAddLibraryOpen(true);
-            closePopover();
-          }}
-          className="flex items-start gap-3 p-2 rounded-lg text-left hover:bg-zinc-900 transition-colors group cursor-pointer"
-        >
-          <div className="p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/20 group-hover:bg-emerald-500/20 transition-colors mt-0.5">
-            <MusicIcon className="w-3.5 h-3.5 text-emerald-400" />
-          </div>
-          <div>
-            <div className="text-xs font-semibold text-zinc-200">
-              Audio Node
-            </div>
-            <div className="text-[10px] text-zinc-400">
-              Import audio assets from library
-            </div>
-          </div>
-        </button>
+        </DropdownMenuSubTrigger>
+        <DropdownMenuSubContent>
+          <DropdownMenuItem onClick={() => setAddLibraryOpen(true)}>
+            <MusicIcon className="text-emerald-400" />
+            Audio Node
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={onAddOutputNode}>
+            <WorkflowIcon className="text-blue-400" />
+            Master Output Node
+          </DropdownMenuItem>
+        </DropdownMenuSubContent>
+      </DropdownMenuSub>
 
-        {/* Master Output Node */}
-        <button
-          onClick={() => {
-            onAddOutputNode();
-            closePopover();
-          }}
-          className="flex items-start gap-3 p-2 rounded-lg text-left hover:bg-zinc-900 transition-colors group cursor-pointer"
-        >
-          <div className="p-2 rounded-lg bg-blue-500/10 border border-blue-500/20 group-hover:bg-blue-500/20 transition-colors mt-0.5">
-            <WorkflowIcon className="w-3.5 h-3.5 text-blue-400" />
-          </div>
-          <div>
-            <div className="text-xs font-semibold text-zinc-200">
-              Master Output Node
-            </div>
-            <div className="text-[10px] text-zinc-400">
-              Route mixed channel flows to speaker output
-            </div>
-          </div>
-        </button>
-      </div>
-
-      {/* Capture Pipeline */}
-      <div className="flex flex-col gap-1 border-t border-zinc-800/50 pt-2">
-        <span className="text-[9px] font-semibold text-zinc-500 uppercase tracking-wider px-1">
+      <DropdownMenuSub>
+        <DropdownMenuSubTrigger>
+          <MonitorIcon className="text-indigo-400" />
           Capture Pipeline
-        </span>
+        </DropdownMenuSubTrigger>
+        <DropdownMenuSubContent>
+          <DropdownMenuItem onClick={onAddSourceNode}>
+            <MonitorIcon className="text-indigo-400" />
+            Capture Source
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={onAddTargetOutputNode} disabled={hasOutputNode}>
+            <MonitorIcon className="text-red-400" />
+            Compositor Output
+          </DropdownMenuItem>
+        </DropdownMenuSubContent>
+      </DropdownMenuSub>
 
-        {/* Capture Source Node */}
-        <button
-          onClick={() => {
-            onAddSourceNode();
-            closePopover();
-          }}
-          className="flex items-start gap-3 p-2 rounded-lg text-left transition-colors group hover:bg-zinc-900 cursor-pointer"
-        >
-          <div className="p-2 rounded-lg mt-0.5 border transition-colors bg-indigo-500/10 border-indigo-500/20 text-indigo-400 group-hover:bg-indigo-500/20">
-            <MonitorIcon className="w-3.5 h-3.5" />
-          </div>
-          <div>
-            <div className="text-xs font-semibold text-zinc-200 flex items-center gap-1.5">
-              Capture Source
-            </div>
-            <div className="text-[10px] text-zinc-400">
-              Select capture target monitor or window
-            </div>
-          </div>
-        </button>
-
-        {/* Target Output Node */}
-        <button
-          onClick={() => {
-            if (!hasOutputNode) {
-              onAddTargetOutputNode();
-              closePopover();
-            }
-          }}
-          disabled={hasOutputNode}
-          className={`flex items-start gap-3 p-2 rounded-lg text-left transition-colors group ${
-            hasOutputNode
-              ? "opacity-50 cursor-not-allowed"
-              : "hover:bg-zinc-900 cursor-pointer"
-          }`}
-        >
-          <div
-            className={`p-2 rounded-lg mt-0.5 border transition-colors ${
-              hasOutputNode
-                ? "bg-zinc-800/20 border-zinc-800 text-zinc-500"
-                : "bg-red-500/10 border-red-500/20 text-red-400 group-hover:bg-red-500/20"
-            }`}
-          >
-            <MonitorIcon className="w-3.5 h-3.5" />
-          </div>
-          <div>
-            <div className="text-xs font-semibold text-zinc-200 flex items-center gap-1.5">
-              Compositor Output
-              {hasOutputNode && (
-                <span className="text-[8px] bg-zinc-800/80 text-zinc-400 px-1 py-0.5 rounded border border-zinc-700 font-normal">
-                  Limit 1
-                </span>
-              )}
-            </div>
-            <div className="text-[10px] text-zinc-400">
-              Canvas compositor output preview & recorder
-            </div>
-          </div>
-        </button>
-      </div>
-
-      {/* Visual Overlays Group */}
-      <div className="flex flex-col gap-1.5 border-t border-zinc-800/50 pt-2">
-        <span className="text-[9px] font-semibold text-zinc-500 uppercase tracking-wider px-1 mb-1">
+      <DropdownMenuSub>
+        <DropdownMenuSubTrigger>
+          <LayersIcon className="text-pink-400" />
           Visual Overlays
-        </span>
+        </DropdownMenuSubTrigger>
+        <DropdownMenuSubContent>
+          <DropdownMenuItem onClick={onAddOverlayGroupNode}>
+            <LayersIcon className="text-indigo-400" />
+            Overlay Compositor
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={onAddTextOverlayNode}>
+            <TypeIcon className="text-indigo-400" />
+            Text Watermark
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={onAddColorOverlayNode}>
+            <PaletteIcon className="text-pink-400" />
+            Color Block
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={onAddImageOverlayNode}>
+            <ImageIcon className="text-emerald-400" />
+            Image Logo
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={onAddVisualizerOverlayNode}>
+            <ActivityIcon className="text-cyan-400" />
+            Visualizer
+          </DropdownMenuItem>
+        </DropdownMenuSubContent>
+      </DropdownMenuSub>
 
-        {/* Overlay Compositor */}
-        <button
-          onClick={() => {
-            onAddOverlayGroupNode();
-            closePopover();
-          }}
-          className="flex items-start gap-3 p-2 rounded-lg text-left hover:bg-zinc-900 transition-colors group cursor-pointer"
-        >
-          <div className="p-2 rounded-lg mt-0.5 border transition-colors bg-indigo-500/10 border-indigo-500/20 text-indigo-400 group-hover:bg-indigo-500/20">
-            <LayersIcon className="w-3.5 h-3.5" />
-          </div>
-          <div>
-            <div className="text-xs font-semibold text-zinc-200 flex items-center gap-1.5">
-              Overlay Compositor
-            </div>
-            <div className="text-[10px] text-zinc-400">
-              Consolidate and layer text, color, image, and visualizers
-            </div>
-          </div>
-        </button>
-
-        <div className="grid grid-cols-2 gap-1.5 mt-1">
-          <button
-            onClick={() => {
-              onAddTextOverlayNode();
-              closePopover();
-            }}
-            className="flex items-center gap-2 p-1.5 rounded-lg text-left hover:bg-zinc-900 transition-colors group cursor-pointer border border-zinc-900 hover:border-zinc-800"
-          >
-            <div className="p-1 rounded bg-indigo-500/10 border border-indigo-500/20 text-indigo-400">
-              <TypeIcon className="w-3.5 h-3.5" />
-            </div>
-            <span className="text-[10px] font-medium text-zinc-200">
-              Text Watermark
-            </span>
-          </button>
-
-          <button
-            onClick={() => {
-              onAddColorOverlayNode();
-              closePopover();
-            }}
-            className="flex items-center gap-2 p-1.5 rounded-lg text-left hover:bg-zinc-900 transition-colors group cursor-pointer border border-zinc-900 hover:border-zinc-800"
-          >
-            <div className="p-1 rounded bg-pink-500/10 border border-pink-500/20 text-pink-400">
-              <PaletteIcon className="w-3.5 h-3.5" />
-            </div>
-            <span className="text-[10px] font-medium text-zinc-200">
-              Color Block
-            </span>
-          </button>
-
-          <button
-            onClick={() => {
-              onAddImageOverlayNode();
-              closePopover();
-            }}
-            className="flex items-center gap-2 p-1.5 rounded-lg text-left hover:bg-zinc-900 transition-colors group cursor-pointer border border-zinc-900 hover:border-zinc-800"
-          >
-            <div className="p-1 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
-              <ImageIcon className="w-3.5 h-3.5" />
-            </div>
-            <span className="text-[10px] font-medium text-zinc-200">
-              Image Logo
-            </span>
-          </button>
-
-          <button
-            onClick={() => {
-              onAddVisualizerOverlayNode();
-              closePopover();
-            }}
-            className="flex items-center gap-2 p-1.5 rounded-lg text-left hover:bg-zinc-900 transition-colors group cursor-pointer border border-zinc-900 hover:border-zinc-800"
-          >
-            <div className="p-1 rounded bg-cyan-500/10 border border-cyan-500/20 text-cyan-400">
-              <ActivityIcon className="w-3.5 h-3.5" />
-            </div>
-            <span className="text-[10px] font-medium text-zinc-200">
-              Visualizer
-            </span>
-          </button>
-
-          <button
-            onClick={() => {
-              onAddNowPlayingNode();
-              closePopover();
-            }}
-            className="flex items-center gap-2 p-1.5 rounded-lg text-left hover:bg-zinc-900 transition-colors group cursor-pointer border border-zinc-900 hover:border-zinc-800"
-          >
-            <div className="p-1 rounded bg-indigo-500/10 border border-indigo-500/20 text-indigo-400">
-              <MusicIcon className="w-3.5 h-3.5" />
-            </div>
-            <span className="text-[10px] font-medium text-zinc-200">
-              Now Playing
-            </span>
-          </button>
-
-          <button
-            onClick={() => {
-              onAddTwitchChatNode();
-              closePopover();
-            }}
-            className="flex items-center gap-2 p-1.5 rounded-lg text-left hover:bg-zinc-900 transition-colors group cursor-pointer border border-zinc-900 hover:border-zinc-800"
-          >
-            <div className="p-1 rounded bg-purple-500/10 border border-purple-500/20 text-purple-400">
-              <MessageSquareIcon className="w-3.5 h-3.5" />
-            </div>
-            <span className="text-[10px] font-medium text-zinc-200">
-              Twitch Chat
-            </span>
-          </button>
-        </div>
-      </div>
-    </div>
+      <DropdownMenuSub>
+        <DropdownMenuSubTrigger>
+          <MessageSquareIcon className="text-purple-400" />
+          Integrations
+        </DropdownMenuSubTrigger>
+        <DropdownMenuSubContent>
+          <DropdownMenuItem onClick={onAddNowPlayingNode}>
+            <MusicIcon className="text-indigo-400" />
+            Now Playing
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={onAddTwitchChatNode}>
+            <MessageSquareIcon className="text-purple-400" />
+            Twitch Chat
+          </DropdownMenuItem>
+        </DropdownMenuSubContent>
+      </DropdownMenuSub>
+    </>
   );
 }
 
@@ -416,6 +264,7 @@ function FlowEditor() {
   const [currentViewport, setCurrentViewport] = useState(flowViewportData);
 
   const updateNodeData = useSetAtom(updateNodeDataAtom);
+  const isGlobalPlayerActive = useAtomValue(isGlobalPlayerActiveAtom);
   const runNodeAction = useSetAtom(triggerNodeActionAtom);
 
   // Global keydown triggers handler
@@ -1284,15 +1133,15 @@ function FlowEditor() {
                       }}
                     >
                       <ActionBarBody>
-                        {/* Add Nodes Popover */}
-                        <Popover
+                        {/* Add Nodes Dropdown */}
+                        <DropdownMenu
                           open={isAddPopoverOpen}
                           onOpenChange={setIsAddPopoverOpen}
                         >
                           <Tooltip>
                             <TooltipTrigger
                               render={
-                                <PopoverTrigger
+                                <DropdownMenuTrigger
                                   render={
                                     <Button variant="ghost">
                                       <PlusIcon />
@@ -1304,17 +1153,8 @@ function FlowEditor() {
                             <TooltipContent>Add Node</TooltipContent>
                           </Tooltip>
 
-                          <PopoverContent className="bg-zinc-950 border border-zinc-800 text-zinc-100 rounded-2xl w-96 shadow-2xl p-4 flex flex-col gap-3">
-                            <PopoverHeader className="pb-2 border-b border-zinc-800/80">
-                              <PopoverTitle className="text-sm font-semibold text-zinc-200">
-                                Add Canvas Node
-                              </PopoverTitle>
-                              <p className="text-[11px] text-zinc-400">
-                                Select a node type to add to the editor
-                              </p>
-                            </PopoverHeader>
+                          <DropdownMenuContent className="w-48">
                             <AddNodesMenu
-                              closePopover={() => setIsAddPopoverOpen(false)}
                               setAddLibraryOpen={setAddLibraryOpen}
                               hasOutputNode={hasOutputNode}
                               onAddOutputNode={onAddOutputNode}
@@ -1330,8 +1170,8 @@ function FlowEditor() {
                               onAddNowPlayingNode={onAddNowPlayingNode}
                               onAddTwitchChatNode={onAddTwitchChatNode}
                             />
-                          </PopoverContent>
-                        </Popover>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
 
                         {/* Save */}
                         <Tooltip>
@@ -1402,8 +1242,8 @@ function FlowEditor() {
                 </motion.div>
               )}
             </div>
-            <Controls position="bottom-left" />
-            <MiniMap position="bottom-left" className="left-10!" />
+            <Controls position="bottom-left" style={{ marginBottom: isGlobalPlayerActive ? "140px" : "0" }} />
+            <MiniMap position="bottom-left" className="left-10!" style={{ marginBottom: isGlobalPlayerActive ? "140px" : "0" }} />
             <SonicBackground />
 
             {/* Empty State */}
@@ -1438,11 +1278,11 @@ function FlowEditor() {
                     onto the canvas
                   </p>
                   <div className="flex gap-2 mt-1">
-                    <Popover
+                    <DropdownMenu
                       open={isEmptyPopoverOpen}
                       onOpenChange={setIsEmptyPopoverOpen}
                     >
-                      <PopoverTrigger
+                      <DropdownMenuTrigger
                         render={
                           <Button variant="outline" className="gap-2">
                             <PlusIcon className="h-4 w-4" />
@@ -1450,17 +1290,8 @@ function FlowEditor() {
                           </Button>
                         }
                       />
-                      <PopoverContent className="bg-zinc-950 border border-zinc-800 text-zinc-100 rounded-2xl w-96 shadow-2xl p-4 flex flex-col gap-3">
-                        <PopoverHeader className="pb-2 border-b border-zinc-800/80">
-                          <PopoverTitle className="text-sm font-semibold text-zinc-200">
-                            Add Canvas Node
-                          </PopoverTitle>
-                          <p className="text-[11px] text-zinc-400">
-                            Select a node type to add to the editor
-                          </p>
-                        </PopoverHeader>
+                      <DropdownMenuContent className="w-48">
                         <AddNodesMenu
-                          closePopover={() => setIsEmptyPopoverOpen(false)}
                           setAddLibraryOpen={setAddLibraryOpen}
                           hasOutputNode={hasOutputNode}
                           onAddOutputNode={onAddOutputNode}
@@ -1476,8 +1307,8 @@ function FlowEditor() {
                           onAddNowPlayingNode={onAddNowPlayingNode}
                           onAddTwitchChatNode={onAddTwitchChatNode}
                         />
-                      </PopoverContent>
-                    </Popover>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                     <Button
                       variant="ghost"
                       className="gap-2"

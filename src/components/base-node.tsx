@@ -182,6 +182,17 @@ export function BaseNodeCard({
   const toggleMinimize = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    
+    if (isMinimized) {
+      // When expanding, also select the node so it comes to the front
+      setNodes((currentNodes) =>
+        currentNodes.map((n) => ({
+          ...n,
+          selected: n.id === id,
+        })),
+      );
+    }
+
     updateNodeData({
       id,
       patch: { isMinimized: !isMinimized },

@@ -8,4 +8,9 @@ export default defineConfig({
     // Prevents Vite from minifying code during local development
     minify: false,
   },
+  server: {
+    watch: {
+      ignored: ["**/src-native/**"],
+    },
+  },
 });

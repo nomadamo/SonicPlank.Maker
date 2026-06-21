@@ -11,14 +11,29 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
 } from "lucide-react";
-import { useAtom, useAtomValue } from "jotai";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import {
   timelineTracksAtom,
   timelineDataAtom,
   timelineCurrentTimeAtom,
   timelineIsPlayingAtom,
 } from "@/store/timelineStore";
-import { useLibraryStore } from "@/store/libraryStore";
+import {
+  useLibraryStore,
+  isGlobalPlayerActiveAtom,
+  globalPlayingItemIdAtom,
+  currentPlaybackAtom,
+} from "@/store/libraryStore";
 import { Track } from "@/components/timeline/Track";
 import { Button } from "@/components/ui/button";
 import { TimelineClip, TimelineTrack } from "@/types/timeline";
@@ -128,8 +143,32 @@ function Timeline() {
     (item) => !item.isStream && !item.isSpotifyStream && !item.isSpotifyPlaylist,
   );
   const { setHasUnsavedChanges } = useStateMachine();
-  const { isPlaying, play, pause, togglePlay, seek } = useTimelinePlayback();
+  const { isPlaying, play, pause, togglePlay: baseTogglePlay, seek } = useTimelinePlayback();
   const scrollRef = useRef<HTMLDivElement>(null);
+  
+  const isGlobalPlayerActive = useAtomValue(isGlobalPlayerActiveAtom);
+  const setGlobalPlayingId = useSetAtom(globalPlayingItemIdAtom);
+  const setCurrentPlayback = useSetAtom(currentPlaybackAtom);
+  const [warningOpen, setWarningOpen] = useState(false);
+
+  const handlePlayClick = () => {
+    if (isPlaying) {
+      pause();
+    } else {
+      if (isGlobalPlayerActive) {
+        setWarningOpen(true);
+      } else {
+        play();
+      }
+    }
+  };
+
+  const handleConfirmPlay = () => {
+    setGlobalPlayingId(null);
+    setCurrentPlayback(null);
+    setWarningOpen(false);
+    play();
+  };
 
   const { settings, updateSettings } = useSettings();
   const [sidebarWidth, setSidebarWidth] = useState(
@@ -478,7 +517,7 @@ function Timeline() {
                 variant={isPlaying ? "secondary" : "outline"}
                 size="icon"
                 className="h-8 w-8"
-                onClick={togglePlay}
+                onClick={handlePlayClick}
               >
                 {isPlaying ? (
                   <PauseIcon className="h-4 w-4" />
@@ -591,6 +630,25 @@ function Timeline() {
           )}
         </div>
       </div>
+
+      <AlertDialog open={warningOpen} onOpenChange={setWarningOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Stop Global Audio?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Audio is currently playing in the global player. Would you like to
+              stop it to play the Sonics timeline?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleConfirmPlay}>
+              Stop & Play Timeline
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
     </AnimatedRoute>
   );
 }

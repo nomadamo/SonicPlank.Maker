@@ -30,7 +30,7 @@ import {
 } from "@/components/ui/context-menu";
 import type { LibraryItem, LibraryData } from "@/types/library-item";
 import { useStateMachine } from "@/store/stateMachine";
-import { useLibraryStore, currentPlaybackAtom } from "@/store/libraryStore";
+import { useLibraryStore, currentPlaybackAtom, globalPlayingItemIdAtom, isGlobalPlayerActiveAtom } from "@/store/libraryStore";
 import { LibraryItemPropertiesDialog } from "@/components/library-item-properties-dialog";
 import {
   Combobox,
@@ -73,9 +73,6 @@ import {
 } from "@/utils/audio";
 import { IconBrandSpotify } from "@tabler/icons-react";
 import { AddFromSpotifyDialog } from "@/components/add-from-spotify-dialog";
-import { LibraryAudioPlayerWrapper } from "@/components/library-audio-player";
-import { SpotifyLibraryPlayer } from "@/components/spotify-library-player";
-
 export const Route = createFileRoute("/")({
   beforeLoad: () => {
     console.log("Library page");
@@ -84,65 +81,7 @@ export const Route = createFileRoute("/")({
   pendingComponent: LoadingAnimation,
 });
 
-function VisualizerBackdrop({ visible }: { visible: boolean }) {
-  const { htmlAudio, webAudio } = useAudio();
-  const [canvasEl, setCanvasEl] = useState<HTMLCanvasElement | null>(null);
-  const [audioEl, setAudioEl] = useState<HTMLAudioElement | null>(null);
 
-  // We wrap the audioEl and canvasEl in stable ref-like objects so Mixed8 can read from them.
-  // We use useMemo so we aren't creating new objects every render, nor mutating useRef objects during rendering/effects.
-  const audioRef = useMemo(() => ({ current: audioEl }), [audioEl]);
-  const canvasRef = useMemo(() => ({ current: canvasEl }), [canvasEl]);
-
-  useEffect(() => {
-    if (visible) {
-      setAudioEl(htmlAudio.getAudioElement());
-    } else {
-      setAudioEl(null);
-    }
-  }, [visible, htmlAudio]);
-
-  const [dimensions, setDimensions] = useState({ width: 1000, height: 80 });
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!containerRef.current) return;
-    const observer = new ResizeObserver((entries) => {
-      if (entries[0]) {
-        setDimensions({
-          width: entries[0].contentRect.width,
-          height: entries[0].contentRect.height,
-        });
-      }
-    });
-    observer.observe(containerRef.current);
-    return () => observer.disconnect();
-  }, []);
-
-  return (
-    <div
-      ref={containerRef}
-      className={cn(
-        "absolute inset-0 z-0 pointer-events-none overflow-hidden transition-opacity duration-500",
-        visible ? "opacity-20" : "opacity-0",
-      )}
-    >
-      <canvas
-        ref={setCanvasEl}
-        width={dimensions.width}
-        height={dimensions.height}
-        className="w-full h-full object-cover"
-      />
-      {canvasEl && (
-        <Mixed8
-          srcAudio={audioRef}
-          srcCanvas={canvasRef}
-          audioContext={webAudio.getContext() ?? undefined}
-        />
-      )}
-    </div>
-  );
-}
 
 
 function Library() {
@@ -151,9 +90,9 @@ function Library() {
   const [prefilledStreamTitle, setPrefilledStreamTitle] = useState("");
   const [prefilledStreamUrl, setPrefilledStreamUrl] = useState("");
   const [isDraggingOver, setIsDraggingOver] = useState(false);
-  const [showVisualizer, setShowVisualizer] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [playingItemId, setPlayingItemId] = useState<string | null>(null);
+  const [playingItemId, setPlayingItemId] = useAtom(globalPlayingItemIdAtom);
+  const isGlobalPlayerActive = useAtomValue(isGlobalPlayerActiveAtom);
   const [propertiesItem, setPropertiesItem] = useState<LibraryItem | null>(
     null,
   );
@@ -300,10 +239,7 @@ function Library() {
     setAddSpotifyOpen(true);
   }, []);
 
-  const currentPlayback = useAtomValue(currentPlaybackAtom);
-  const setCurrentPlayback = useSetAtom(currentPlaybackAtom);
-
-  const handleStopPlaying = useCallback(() => setPlayingItemId(null), []);
+  const [, setCurrentPlayback] = useAtom(currentPlaybackAtom);
 
   const handleRemoveItem = useCallback((id: string) => {
     setItems((prev) => prev.filter((item) => item.id !== id));
@@ -492,7 +428,7 @@ function Library() {
             <div
               className={cn(
                 "flex-1 overflow-y-auto w-full h-full p-4 transition-all duration-300",
-                (playingItemId || currentPlayback) ? "pb-[160px]" : "pb-24",
+                isGlobalPlayerActive ? "pb-[160px]" : "pb-24",
               )}
             >
               {/* Category Filter Combobox Row */}
@@ -646,7 +582,7 @@ function Library() {
             {/* Floating Buttons */}
             <motion.div
               initial={{ opacity: 0, bottom: "20px" }}
-              animate={{ opacity: 1, bottom: playingItemId ? "150px" : "20px" }}
+              animate={{ opacity: 1, bottom: isGlobalPlayerActive ? "150px" : "20px" }}
               transition={{
                 type: "spring",
                 bounce: 0,
@@ -766,59 +702,6 @@ function Library() {
         filePath={addAudioQueue.length > 0 ? addAudioQueue[0] : null}
         onSave={handleSaveAudioItem}
       />
-      <motion.div
-        initial={false}
-        animate={{ y: (playingItemId || currentPlayback) ? 0 : "100%" }}
-        transition={{ type: "spring", bounce: 0, duration: 0.4 }}
-        className="fixed bottom-0 left-0 right-0 z-50 p-0 border-t shadow-2xl rounded-t-xl bg-card max-h-[80vh] flex flex-col overflow-hidden"
-        style={{ pointerEvents: playingItemId ? "auto" : "none" }}
-      >
-        <VisualizerBackdrop visible={!!playingItemId && showVisualizer} />
-        <div className="w-full flex flex-col py-1 relative z-10">
-          {(() => {
-            if (playingItemId) {
-              const playingItem = items.find((i) => i.id === playingItemId);
-              if (!playingItem) return null;
-              return playingItem.isSpotifyStream || playingItem.isSpotifyPlaylist ? (
-                <SpotifyLibraryPlayer
-                  key={playingItemId}
-                  item={playingItem}
-                  onStop={handleStopPlaying}
-                />
-              ) : (
-                <LibraryAudioPlayerWrapper
-                  key={playingItemId}
-                  item={playingItem}
-                  onStop={handleStopPlaying}
-                  showVisualizer={showVisualizer}
-                  onToggleVisualizer={() => setShowVisualizer(!showVisualizer)}
-                />
-              );
-            }
-            if (currentPlayback) {
-              return (
-                <SpotifyLibraryPlayer
-                  key="__current_playback__"
-                  item={{
-                    id: "__current_playback__",
-                    title: currentPlayback.title,
-                    artist: currentPlayback.artist,
-                    albumArt: currentPlayback.albumArt,
-                    filePath: currentPlayback.uri,
-                    duration: currentPlayback.duration,
-                    addedAt: Date.now(),
-                    isSpotifyStream: !currentPlayback.isPlaylist || undefined,
-                    isSpotifyPlaylist: currentPlayback.isPlaylist || undefined,
-                  }}
-                  autoPlay={false}
-                  onStop={() => setCurrentPlayback(null)}
-                />
-              );
-            }
-            return null;
-          })()}
-        </div>
-      </motion.div>
     </AnimatedRoute>
   );
 }

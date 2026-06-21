@@ -72,7 +72,7 @@ fn bgra_blend(
 pub fn composite_frame(
     raw: &CompositeFrame,
     shared_overlay: &SharedOverlay,
-    pip_scalers: &mut HashMap<String, *mut SwsContext>,
+    pip_scalers: &mut HashMap<String, (*mut SwsContext, i32, i32, i32, i32)>,
 ) -> Arc<RawFrame> {
     let out_w = raw.primary.width as i32;
     let out_h = raw.primary.height as i32;
@@ -90,13 +90,27 @@ pub fn composite_frame(
         let src_w = pip_raw.width as i32;
         let src_h = pip_raw.height as i32;
 
-        let sws = pip_scalers.entry(def.source_id.clone()).or_insert_with(|| unsafe {
-            sws_getContext(
-                src_w, src_h, AVPixelFormat::AV_PIX_FMT_BGRA,
-                pw, ph, AVPixelFormat::AV_PIX_FMT_BGRA,
-                SWS_BILINEAR as i32, std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null()
-            )
-        });
+        let cached = pip_scalers.get(&def.source_id);
+        let need_new = match cached {
+            Some((_, cw, ch, dw, dh)) => *cw != src_w || *ch != src_h || *dw != pw || *dh != ph,
+            None => true,
+        };
+
+        if need_new {
+            if let Some((ctx, _, _, _, _)) = pip_scalers.remove(&def.source_id) {
+                unsafe { sws_freeContext(ctx); }
+            }
+            let ctx = unsafe {
+                sws_getContext(
+                    src_w, src_h, AVPixelFormat::AV_PIX_FMT_BGRA,
+                    pw, ph, AVPixelFormat::AV_PIX_FMT_BGRA,
+                    SWS_BILINEAR as i32, std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null()
+                )
+            };
+            pip_scalers.insert(def.source_id.clone(), (ctx, src_w, src_h, pw, ph));
+        }
+
+        let sws = pip_scalers.get(&def.source_id).unwrap().0;
 
         let mut scaled_pip = vec![0u8; (pw * ph * 4) as usize];
 
@@ -107,7 +121,7 @@ pub fn composite_frame(
 
         unsafe {
             sws_scale(
-                *sws,
+                sws,
                 src_data.as_ptr(),
                 src_stride.as_ptr(),
                 0, src_h,
@@ -143,7 +157,7 @@ pub fn start_compositor(
     
     std::thread::spawn(move || {
         let mut latest_pips: HashMap<String, Arc<RawFrame>> = HashMap::new();
-        let mut pip_scalers: HashMap<String, *mut SwsContext> = HashMap::new();
+        let mut pip_scalers: HashMap<String, (*mut SwsContext, i32, i32, i32, i32)> = HashMap::new();
 
         // Use blocking recv in the thread
         let mut rt = tokio::runtime::Runtime::new().unwrap();

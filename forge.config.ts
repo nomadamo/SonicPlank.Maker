@@ -6,6 +6,8 @@ import { MakerRpm } from "@electron-forge/maker-rpm";
 import { VitePlugin } from "@electron-forge/plugin-vite";
 import { FusesPlugin } from "@electron-forge/plugin-fuses";
 import { FuseV1Options, FuseVersion } from "@electron/fuses";
+import fs from "node:fs";
+import path from "node:path";
 
 // Native binary produced by `cargo build --release`. Must be listed in
 // extraResource so it lands outside the asar archive (native binaries
@@ -14,15 +16,37 @@ import { FuseV1Options, FuseVersion } from "@electron/fuses";
 const nativeBinaryExt = process.platform === "win32" ? ".exe" : "";
 const nativeBinaryPath = `./src-native/target/release/sonicplank-core${nativeBinaryExt}`;
 
+const extraResource = [nativeBinaryPath, "./src/img/icon.ico", "./src/img/icon.png"];
+
+if (process.platform === "win32") {
+  try {
+    const cargoConfig = fs.readFileSync(path.join(__dirname, "src-native", ".cargo", "config.toml"), "utf-8");
+    const match = cargoConfig.match(/FFMPEG_DIR\s*=\s*{\s*value\s*=\s*"([^"]+)"/);
+    if (match && match[1]) {
+      // JSON.parse to handle escaped backslashes in the TOML string
+      const ffmpegDir = JSON.parse(`"${match[1]}"`);
+      const binDir = path.join(ffmpegDir, "bin");
+      if (fs.existsSync(binDir)) {
+        const dlls = fs.readdirSync(binDir).filter(f => f.endsWith(".dll"));
+        for (const dll of dlls) {
+          extraResource.push(path.join(binDir, dll));
+        }
+      }
+    }
+  } catch (err) {
+    console.warn("Failed to find or parse FFMPEG_DIR for packaging DLLs:", err);
+  }
+}
+
 const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
     // Path without extension — Forge appends .ico on Windows, .icns on macOS,
     // .png on Linux. Place src/img/icon.ico alongside icon.png for Windows builds.
     icon: "./src/img/icon",
-    // Copies the Rust binary and icons into <app>/resources/ at package time.
-    // The binary is NOT inside the asar so Electron can spawn it as a child process.
-    extraResource: [nativeBinaryPath, "./src/img/icon.ico", "./src/img/icon.png"],
+    // Copies the Rust binary, icons, and FFmpeg DLLs into <app>/resources/ at package time.
+    // The binary and DLLs are NOT inside the asar so Electron can spawn it.
+    extraResource,
   },
   rebuildConfig: {},
   makers: [

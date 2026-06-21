@@ -47,9 +47,15 @@ const spotifyHeaders = (token: string) => ({
   "Content-Type": "application/json",
 });
 
-async function connectPlay(uri: string, token: string, isPlaylist: boolean) {
-  const body = isPlaylist ? { context_uri: uri } : { uris: [uri] };
-  const res = await fetch("https://api.spotify.com/v1/me/player/play", {
+function appendDevice(url: string, deviceId?: string | null) {
+  if (!deviceId) return url;
+  return url + (url.includes("?") ? "&" : "?") + `device_id=${deviceId}`;
+}
+
+async function connectPlay(uri: string, token: string, isPlaylist: boolean, positionMs?: number, deviceId?: string | null) {
+  const body: any = isPlaylist ? { context_uri: uri } : { uris: [uri] };
+  if (positionMs !== undefined) body.position_ms = Math.round(positionMs);
+  const res = await fetch(appendDevice("https://api.spotify.com/v1/me/player/play", deviceId), {
     method: "PUT",
     headers: spotifyHeaders(token),
     body: JSON.stringify(body),
@@ -60,67 +66,87 @@ async function connectPlay(uri: string, token: string, isPlaylist: boolean) {
   }
 }
 
-async function connectResume(token: string) {
-  await fetch("https://api.spotify.com/v1/me/player/play", {
+async function connectResume(token: string, fallbackUri?: string, isPlaylist?: boolean, positionMs?: number, deviceId?: string | null) {
+  const res = await fetch(appendDevice("https://api.spotify.com/v1/me/player/play", deviceId), {
     method: "PUT",
     headers: spotifyHeaders(token),
   });
+  if (!res.ok) {
+    if (fallbackUri && (res.status === 403 || res.status === 404)) {
+      // Context likely lost. Fallback to playing the specific URI with position
+      await connectPlay(fallbackUri, token, !!isPlaylist, positionMs, deviceId);
+      return;
+    }
+    throw new Error(`HTTP ${res.status}`);
+  }
 }
 
-async function connectPause(token: string) {
-  await fetch("https://api.spotify.com/v1/me/player/pause", {
+async function connectPause(token: string, deviceId?: string | null) {
+  const res = await fetch(appendDevice("https://api.spotify.com/v1/me/player/pause", deviceId), {
     method: "PUT",
     headers: spotifyHeaders(token),
   });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
 }
 
-async function connectSeek(positionMs: number, token: string) {
-  await fetch(`https://api.spotify.com/v1/me/player/seek?position_ms=${Math.round(positionMs)}`, {
+async function connectSeek(positionMs: number, token: string, deviceId?: string | null) {
+  const res = await fetch(appendDevice(`https://api.spotify.com/v1/me/player/seek?position_ms=${Math.round(positionMs)}`, deviceId), {
     method: "PUT",
     headers: spotifyHeaders(token),
   });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
 }
 
-async function connectVolume(percent: number, token: string) {
-  await fetch(`https://api.spotify.com/v1/me/player/volume?volume_percent=${Math.round(percent)}`, {
+async function connectVolume(percent: number, token: string, deviceId?: string | null) {
+  const res = await fetch(appendDevice(`https://api.spotify.com/v1/me/player/volume?volume_percent=${Math.round(percent)}`, deviceId), {
     method: "PUT",
     headers: spotifyHeaders(token),
   });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
 }
 
-async function connectShuffle(state: boolean, token: string) {
-  await fetch(`https://api.spotify.com/v1/me/player/shuffle?state=${String(state)}`, {
+async function connectShuffle(state: boolean, token: string, deviceId?: string | null) {
+  const res = await fetch(appendDevice(`https://api.spotify.com/v1/me/player/shuffle?state=${String(state)}`, deviceId), {
     method: "PUT",
     headers: spotifyHeaders(token),
   });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
 }
 
-async function connectPrevious(token: string) {
-  await fetch("https://api.spotify.com/v1/me/player/previous", {
+async function connectPrevious(token: string, deviceId?: string | null) {
+  const res = await fetch(appendDevice("https://api.spotify.com/v1/me/player/previous", deviceId), {
     method: "POST",
     headers: spotifyHeaders(token),
   });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
 }
 
-async function connectNext(token: string) {
-  await fetch("https://api.spotify.com/v1/me/player/next", {
+async function connectNext(token: string, deviceId?: string | null) {
+  const res = await fetch(appendDevice("https://api.spotify.com/v1/me/player/next", deviceId), {
     method: "POST",
     headers: spotifyHeaders(token),
   });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
 }
 
-async function connectRepeat(state: "track" | "off", token: string) {
-  await fetch(`https://api.spotify.com/v1/me/player/repeat?state=${state}`, {
+async function connectRepeat(state: "track" | "context" | "off", token: string, deviceId?: string | null) {
+  const res = await fetch(appendDevice(`https://api.spotify.com/v1/me/player/repeat?state=${state}`, deviceId), {
     method: "PUT",
     headers: spotifyHeaders(token),
   });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
 }
 
 async function getConnectState(token: string): Promise<ConnectState | null> {
   const res = await fetch("https://api.spotify.com/v1/me/player", {
     headers: { Authorization: `Bearer ${token}` },
   });
-  if (res.status === 204 || !res.ok) return null;
+  if (res.status === 204) return null;
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    console.error(`[SpotifyPlayer] getConnectState HTTP ${res.status}: ${errText}`);
+    return null;
+  }
   return res.json() as Promise<ConnectState>;
 }
 
@@ -128,7 +154,11 @@ async function loadDevices(token: string): Promise<SpotifyDevice[]> {
   const res = await fetch("https://api.spotify.com/v1/me/player/devices", {
     headers: { Authorization: `Bearer ${token}` },
   });
-  if (!res.ok) return [];
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    console.error(`[SpotifyPlayer] loadDevices HTTP ${res.status}: ${errText}`);
+    return [];
+  }
   const data = await res.json() as { devices: SpotifyDevice[] };
   return data.devices ?? [];
 }
@@ -169,6 +199,10 @@ export function SpotifyLibraryPlayer({
   const token = useAtomValue(spotifyTokenAtom);
   const tokenRef = useRef(token);
   useEffect(() => { tokenRef.current = token; }, [token]);
+
+  const lastDeviceId = useAtomValue(lastDeviceIdAtom);
+  const lastDeviceIdRef = useRef(lastDeviceId);
+  useEffect(() => { lastDeviceIdRef.current = lastDeviceId; }, [lastDeviceId]);
 
   const setLastDeviceId = useSetAtom(lastDeviceIdAtom);
 
@@ -253,23 +287,45 @@ export function SpotifyLibraryPlayer({
       }, delay);
     };
 
-    if (autoPlay) {
-      connectPlay(item.filePath, token, !!item.isSpotifyPlaylist)
-        .then(() => {
+    const initPlayer = async () => {
+      try {
+        const devs = await loadDevices(token);
+        if (cancelled) return;
+        setDevices(devs);
+        
+        const active = devs.find((d) => d.is_active);
+        if (!active && lastDeviceIdRef.current) {
+          const target = devs.find((d) => d.id === lastDeviceIdRef.current);
+          if (target) {
+            await transferPlayback(target.id, false, token);
+            if (cancelled) return;
+            setDevices((prev) => prev.map((d) => ({ ...d, is_active: d.id === target.id })));
+          }
+        }
+      } catch (err) {
+        console.error("[SpotifyPlayer] init device check failed:", err);
+      }
+
+      if (autoPlay) {
+        try {
+          await connectPlay(item.filePath, token, !!item.isSpotifyPlaylist);
           if (cancelled) return;
           setIsReady(true);
           startPolling(1500);
-        })
-        .catch((err: unknown) => {
+        } catch (err: unknown) {
           if (!cancelled) {
             const msg = err instanceof Error ? err.message : "Playback failed";
             setError(msg);
             console.error("[SpotifyPlayer]", msg);
+            startPolling(1500);
           }
-        });
-    } else {
-      startPolling(500);
-    }
+        }
+      } else {
+        startPolling(500);
+      }
+    };
+
+    initPlayer();
 
     return () => {
       cancelled = true;
@@ -282,14 +338,14 @@ export function SpotifyLibraryPlayer({
 
   useEffect(() => {
     if (!isReady || !token) return;
-    connectShuffle(shuffle, token).catch(
+    connectShuffle(shuffle, token, lastDeviceIdRef.current).catch(
       (err) => console.error("[SpotifyPlayer] shuffle failed:", err),
     );
   }, [shuffle, isReady, token]);
 
   useEffect(() => {
     if (!isReady || !token) return;
-    connectRepeat(repeat ? "track" : "off", token).catch(
+    connectRepeat(repeat ? "track" : "off", token, lastDeviceIdRef.current).catch(
       (err) => console.error("[SpotifyPlayer] repeat failed:", err),
     );
   }, [repeat, isReady, token]);
@@ -304,24 +360,27 @@ export function SpotifyLibraryPlayer({
 
   // ── Callbacks ─────────────────────────────────────────────────────────────
 
+  const getDeviceId = () => lastDeviceIdRef.current ?? null;
+
   const toggle = useCallback(() => {
     const t = tokenRef.current;
     if (!t) return;
     if (isPlaying) {
-      connectPause(t).catch((err) => console.error("[SpotifyPlayer] pause failed:", err));
+      connectPause(t, getDeviceId()).catch((err) => console.error("[SpotifyPlayer] pause failed:", err));
     } else {
-      connectResume(t).catch((err) => console.error("[SpotifyPlayer] resume failed:", err));
+      connectResume(t, item.filePath, !!item.isSpotifyPlaylist, currentTime * 1000, getDeviceId())
+        .catch((err) => console.error("[SpotifyPlayer] resume failed:", err));
     }
-  }, [isPlaying]);
+  }, [isPlaying, item.filePath, item.isSpotifyPlaylist, currentTime]);
 
   const previous = useCallback(() => {
     const t = tokenRef.current;
-    if (t) connectPrevious(t).catch((err) => console.error("[SpotifyPlayer] previous failed:", err));
+    if (t) connectPrevious(t, getDeviceId()).catch((err) => console.error("[SpotifyPlayer] previous failed:", err));
   }, []);
 
   const next = useCallback(() => {
     const t = tokenRef.current;
-    if (t) connectNext(t).catch((err) => console.error("[SpotifyPlayer] next failed:", err));
+    if (t) connectNext(t, getDeviceId()).catch((err) => console.error("[SpotifyPlayer] next failed:", err));
   }, []);
 
   const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -330,7 +389,7 @@ export function SpotifyLibraryPlayer({
     isSeekingRef.current = true;
     const tok = tokenRef.current;
     if (tok) {
-      connectSeek(t * 1000, tok)
+      connectSeek(t * 1000, tok, getDeviceId())
         .catch((err) => console.error("[SpotifyPlayer] seek failed:", err))
         .finally(() => { isSeekingRef.current = false; });
     }
@@ -339,7 +398,7 @@ export function SpotifyLibraryPlayer({
   const handleVolume = (e: React.ChangeEvent<HTMLInputElement>) => {
     const tok = tokenRef.current;
     if (tok) {
-      connectVolume(parseFloat(e.target.value) * 100, tok).catch(
+      connectVolume(parseFloat(e.target.value) * 100, tok, getDeviceId()).catch(
         (err) => console.error("[SpotifyPlayer] volume failed:", err),
       );
     }

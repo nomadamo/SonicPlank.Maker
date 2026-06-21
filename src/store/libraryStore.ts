@@ -9,6 +9,7 @@ export const libraryCategoriesAtom = atom<LibraryCategory[]>([]);
 export const libraryLoadedAtom = atom<boolean>(false);
 export const spotifyAtom = atom<SpotifyApi | null>(null);
 export const spotifyTokenAtom = atom<string | null>(null);
+export const globalPlayingItemIdAtom = atom<string | null>(null);
 
 export const updateLibraryItemAtom = atom(
   null,
@@ -79,6 +80,14 @@ export const lastDeviceIdAtom = atomWithStorage<string | null>(
 
 export const currentPlaybackAtom = atom<CurrentPlayback | null>(null);
 
+export const isGlobalPlayerActiveAtom = atom((get) => {
+  const localId = get(globalPlayingItemIdAtom);
+  if (localId) return true;
+  const spotify = get(currentPlaybackAtom);
+  if (spotify && spotify.isPlaying) return true;
+  return false;
+});
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function buildSdk(creds: SpotifyCredentials): SpotifyApi {
@@ -101,7 +110,10 @@ async function refreshCredentials(refreshToken: string): Promise<SpotifyCredenti
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: params.toString(),
   });
-  if (!res.ok) throw new Error(`Spotify token refresh failed: ${res.status}`);
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    throw new Error(`Spotify token refresh failed: ${res.status} ${errText}`);
+  }
   const data = await res.json() as {
     access_token: string;
     refresh_token?: string;
