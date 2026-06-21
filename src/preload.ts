@@ -103,6 +103,10 @@ contextBridge.exposeInMainWorld("electron", {
     return filePath;
   },
   getFilePath: (file: any) => webUtils.getPathForFile(file),
+  getGpuList: async (): Promise<any[]> => {
+    const list = await ipcRenderer.invoke("getGpuList");
+    return list;
+  },
   getScreenSources: async (options?: any): Promise<any[]> => {
     const sources = await ipcRenderer.invoke("getScreenSources", options);
     return sources;

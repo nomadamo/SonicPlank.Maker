@@ -858,6 +858,16 @@ const registerIpcHandlers = () => {
   //   });
   // }
 
+  ipcMain.handle("getGpuList", async () => {
+    try {
+      const gpuInfo = await app.getGPUInfo("basic") as any;
+      const gpus = gpuInfo?.gpuDevice || [];
+      return gpus.map((g: any) => g.deviceString || g.vendorString || "Unknown GPU");
+    } catch {
+      return [];
+    }
+  });
+
   // ipcMain.handle("startStream", (_event, rtmpUrl, options) => {
   //   try {
   //     if (ffmpegProcess) {

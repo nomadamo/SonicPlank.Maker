@@ -10,6 +10,7 @@ import {
   Panel,
   NodeChange,
   EdgeChange,
+  useReactFlow,
 } from "@xyflow/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AudioNode } from "@/components/audio-node";
@@ -22,6 +23,7 @@ import { VisualizerOverlayNode } from "@/components/visualizer-overlay-node";
 import { TargetOutputNode } from "@/components/target-output-node";
 import { OverlayGroupNode } from "@/components/overlay-group-node";
 import { NowPlayingNode } from "@/components/now-playing-node";
+import { GlobalAudioNode } from "@/components/global-audio-node";
 import { TwitchChatNode } from "@/components/twitch-chat-node";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { AnimatedRoute } from "@/components/animated-route";
@@ -102,6 +104,7 @@ import { toast } from "sonner";
 
 const nodeTypes = {
   audioFlowNode: AudioNode,
+  globalAudioNode: GlobalAudioNode,
   masterOutputNode: MasterOutputNode,
   captureSourceNode: CaptureSourceNode,
   textOverlayNode: TextOverlayNode,
@@ -134,6 +137,7 @@ interface AddNodesMenuProps {
   onAddVisualizerOverlayNode: () => void;
   onAddOverlayGroupNode: () => void;
   onAddNowPlayingNode: () => void;
+  onAddGlobalAudioNode: () => void;
   onAddTwitchChatNode: () => void;
 }
 
@@ -149,6 +153,7 @@ function AddNodesMenu({
   onAddVisualizerOverlayNode,
   onAddOverlayGroupNode,
   onAddNowPlayingNode,
+  onAddGlobalAudioNode,
   onAddTwitchChatNode,
 }: AddNodesMenuProps) {
   return (
@@ -161,8 +166,13 @@ function AddNodesMenu({
         <DropdownMenuSubContent>
           <DropdownMenuItem onClick={() => setAddLibraryOpen(true)}>
             <MusicIcon className="text-emerald-400" />
-            Audio Node
+            Local Audio Node
           </DropdownMenuItem>
+          <DropdownMenuItem onClick={onAddGlobalAudioNode}>
+            <MusicIcon className="text-emerald-400" />
+            Global Audio Node
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
           <DropdownMenuItem onClick={onAddOutputNode}>
             <WorkflowIcon className="text-blue-400" />
             Master Output Node
@@ -254,6 +264,7 @@ function FlowEditor() {
   const flowViewportData = useAtomValue(flowViewportAtom);
   const setFlowData = useSetAtom(flowDataAtom);
   const { settings } = useSettings();
+  const { screenToFlowPosition, addNodes } = useReactFlow();
 
   const navigate = useNavigate();
   const [selectedNodes, setSelectedNodes] = useState([] as FlowNodeType[]);
@@ -726,9 +737,11 @@ function FlowEditor() {
   const handleNodesChange = useCallback(
     (changedNodes: NodeChange[]) => {
       onNodesChange(changedNodes);
-      const isSignificant = changedNodes.some(
-        (c) => c.type !== "dimensions" && c.type !== "select",
-      );
+      const isSignificant = changedNodes.some((c) => {
+        if (c.type === "dimensions" || c.type === "select") return false;
+        if (c.type === "position" && c.dragging) return false;
+        return true;
+      });
       if (isSignificant) {
         setHasUnsavedChanges(true);
       }
@@ -848,6 +861,21 @@ function FlowEditor() {
     setPersistRequested,
     setHasUnsavedChanges,
   ]);
+
+  const onAddGlobalAudioNode = useCallback(() => {
+    const position = getCenterProjectPosition();
+    const newNode: FlowNodeType = {
+      id: crypto.randomUUID(),
+      type: "globalAudioNode",
+      position,
+      data: {
+        isMinimized: false,
+      },
+    };
+    setCurrentNodes((nodes) => [...nodes, newNode]);
+    setPersistRequested(true);
+    setHasUnsavedChanges(true);
+  }, [getCenterProjectPosition, setCurrentNodes, setPersistRequested, setHasUnsavedChanges]);
 
   const onAddSourceNode = useCallback(() => {
     const newNode: FlowNodeType = {
@@ -1124,7 +1152,7 @@ function FlowEditor() {
                     open={true}
                     positioning={{
                       placement: "bottom",
-                      gutter: "20px",
+                      gutter: isGlobalPlayerActive ? "130px" : "20px",
                     }}
                   >
                     <ActionBarContent
@@ -1168,6 +1196,7 @@ function FlowEditor() {
                               }
                               onAddOverlayGroupNode={onAddOverlayGroupNode}
                               onAddNowPlayingNode={onAddNowPlayingNode}
+                              onAddGlobalAudioNode={onAddGlobalAudioNode}
                               onAddTwitchChatNode={onAddTwitchChatNode}
                             />
                           </DropdownMenuContent>
@@ -1305,6 +1334,7 @@ function FlowEditor() {
                           }
                           onAddOverlayGroupNode={onAddOverlayGroupNode}
                           onAddNowPlayingNode={onAddNowPlayingNode}
+                          onAddGlobalAudioNode={onAddGlobalAudioNode}
                           onAddTwitchChatNode={onAddTwitchChatNode}
                         />
                       </DropdownMenuContent>

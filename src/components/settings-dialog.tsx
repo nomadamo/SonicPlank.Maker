@@ -47,6 +47,7 @@ import {
   ColorThumb,
   SliderTrack,
 } from "@/components/ui/color";
+import { OutputSettingsTab } from "./settings/output-settings-tab";
 
 interface SettingsDialogProps {
   open: boolean;
@@ -298,7 +299,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent style={{ maxWidth: "500px", minHeight: "560px" }} className="flex flex-col justify-between">
+      <DialogContent style={{ maxWidth: "500px", minHeight: "560px", maxHeight: "90vh" }} className="flex flex-col justify-start overflow-y-auto overflow-x-hidden">
         <DialogHeader>
           <DialogTitle>Settings</DialogTitle>
           <DialogDescription>
@@ -580,74 +581,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
           <CoreTab />
 
           {/* Output / Recording Tab */}
-          <TabsContent value="output" className="flex flex-col gap-4 min-h-[360px]">
-            {/* Recording Path */}
-            <div className="flex flex-col gap-3">
-              <div className="flex flex-col gap-1 text-left">
-                <label className="text-sm font-medium">Recording Save Directory</label>
-                <span className="text-xs text-muted-foreground text-left">
-                  Directory where output node recordings are saved
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <Input
-                  readOnly
-                  placeholder="System Default"
-                  value={settings.recordingPath || "Default (Documents/SonicPlank.Maker/recordings)"}
-                  className="flex-1 text-xs select-all bg-muted/30"
-                />
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={async () => {
-                    try {
-                      const paths = await window.electron.openFileDialog({
-                        properties: ["openDirectory"],
-                        filters: [],
-                      });
-                      if (paths && paths.length > 0) {
-                        updateSettings({ recordingPath: paths[0] });
-                      }
-                    } catch (err) {
-                      console.error("Failed to pick recording path directory:", err);
-                    }
-                  }}
-                >
-                  Browse...
-                </Button>
-                {settings.recordingPath && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="text-xs text-destructive hover:text-destructive hover:bg-destructive/10"
-                    onClick={() => updateSettings({ recordingPath: "" })}
-                  >
-                    Reset
-                  </Button>
-                )}
-              </div>
-              <div className="flex flex-col gap-1.5 text-left mt-1">
-                <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">
-                  Recording Video Bitrate (Kbps)
-                </label>
-                <Input
-                  type="number"
-                  placeholder="e.g. 12000"
-                  value={settings.recordingBitrateKbps ?? 12000}
-                  onChange={(e) => {
-                    const val = parseInt(e.target.value, 10);
-                    updateSettings({ recordingBitrateKbps: isNaN(val) ? undefined : val });
-                  }}
-                  className="text-xs font-mono w-40"
-                />
-              </div>
-            </div>
-
-            <div className="text-xs text-muted-foreground text-left mt-2 p-3 bg-muted/30 rounded-md border border-border">
-              Stream URL, key, bitrate and encoder are now configured directly on the
-              <strong> Compositor Output</strong> node — click <em>Go Live</em> to access them.
-            </div>
-          </TabsContent>
+          <OutputSettingsTab />
         </Tabs>
 
         <Separator />

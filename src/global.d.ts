@@ -40,6 +40,7 @@ declare global {
       getFilePath: (file: File) => string;
       getScreenSources: (options?: any) => Promise<ScreenCaptureSource[]>;
       getDisplays: () => Promise<DisplayInfo[]>;
+      getGpuList: () => Promise<string[]>;
       setOverlays: (overlays: any[]) => Promise<void>;
       getOverlays: () => Promise<any[]>;
       startStream: (rtmpUrl: string, options?: {

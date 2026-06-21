@@ -1,5 +1,14 @@
 import { atomWithStorage } from "jotai/utils";
 import { useAtom } from "jotai";
+import { useCallback } from "react";
+
+export type RtmpTarget = {
+  id: string;
+  label: string;
+  preset: "twitch" | "youtube" | "tiktok" | "custom";
+  url: string;
+  key: string;
+};
 
 export type AppSettings = {
   autoSave: boolean;
@@ -13,13 +22,21 @@ export type AppSettings = {
   audioStreamIcon?: string;
   audioStreamColor?: string;
   recordingPath?: string;
+  
+  // FFmpeg Output Global Settings
+  streamEncoder?: "copy" | "libx264" | "h264_nvenc" | "h264_amf" | "h264_qsv";
+  streamFps?: 30 | 60;
+  streamDelayMs?: number;
+  streamBitrateKbps?: number;
+  recordingBitrateKbps?: number;
+  selectedGpu?: string;
+
+  // Global RTMP Targets
+  rtmpTargets: RtmpTarget[];
+
+  // Legacy fields to be ignored/removed later but kept for transition
   streamUrl?: string;
   streamToken?: string;
-  streamBitrateKbps?: number;
-  streamFps?: 30 | 60;
-  recordingBitrateKbps?: number;
-  streamEncoder?: "copy" | "libx264" | "h264_nvenc" | "h264_amf" | "h264_qsv";
-  streamDelayMs?: number;
 };
 
 export const defaultSettings: AppSettings = {
@@ -41,6 +58,8 @@ export const defaultSettings: AppSettings = {
   recordingBitrateKbps: 12000,
   streamEncoder: "copy",
   streamDelayMs: 0,
+  selectedGpu: "auto",
+  rtmpTargets: [],
 };
 
 export const settingsAtom = atomWithStorage<AppSettings>(
@@ -51,9 +70,13 @@ export const settingsAtom = atomWithStorage<AppSettings>(
 export function useSettings() {
   const [settings, setSettings] = useAtom(settingsAtom);
 
-  const updateSettings = (patch: Partial<AppSettings>) => {
-    setSettings((prev) => ({ ...prev, ...patch }));
-  };
+  const updateSettings = useCallback((patch: Partial<AppSettings> | ((prev: AppSettings) => Partial<AppSettings>)) => {
+    if (typeof patch === "function") {
+      setSettings((prev) => ({ ...prev, ...patch(prev) }));
+    } else {
+      setSettings((prev) => ({ ...prev, ...patch }));
+    }
+  }, [setSettings]);
 
   return { settings, updateSettings };
 }

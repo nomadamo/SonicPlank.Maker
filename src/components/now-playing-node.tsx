@@ -82,8 +82,8 @@ export function NowPlayingNode(NodeRef: NodeProps<FlowNodeType>) {
 
   const [playbackTime, setPlaybackTime] = useState(0);
 
-  const globalCurrentTrack = useAudioStore(s => s.currentTrack);
-  const globalCurrentTime = useAudioStore(s => s.currentTime);
+  const globalCurrentTrack = useAudioStore((s) => s.currentTrack);
+  const globalCurrentTime = useAudioStore((s) => s.currentTime);
   const spotifyPlayback = useAtomValue(currentPlaybackAtom);
 
   useEffect(() => {
@@ -107,27 +107,45 @@ export function NowPlayingNode(NodeRef: NodeProps<FlowNodeType>) {
     return `${mins}:${secs.toString().padStart(2, "0")}`;
   };
 
-  const isSpotify = !connectedAudioNode && spotifyPlayback && spotifyPlayback.isPlaying;
+  const isSpotify =
+    !connectedAudioNode && spotifyPlayback && spotifyPlayback.isPlaying;
   const isLocalGlobal = !connectedAudioNode && !isSpotify && globalCurrentTrack;
 
-  const title = connectedAudioNode?.data.title 
-    || (isSpotify ? spotifyPlayback.title : isLocalGlobal ? globalCurrentTrack.title : "No Track Connected");
-  const artist = connectedAudioNode?.data.artist 
-    || (isSpotify ? spotifyPlayback.artist : isLocalGlobal ? globalCurrentTrack.artist : "Connect Audio Source");
-  const duration = connectedAudioNode?.data.duration 
-    || (isSpotify ? spotifyPlayback.duration : isLocalGlobal ? globalCurrentTrack.duration : 0);
-  const albumArt = connectedAudioNode?.data.albumArt 
-    || (isSpotify ? spotifyPlayback.albumArt : isLocalGlobal ? "" : ""); // Local items don't have album art yet
-  
-  const currentDisplayTime = connectedAudioNode 
-    ? playbackTime 
-    : isSpotify 
-      ? spotifyPlayback.progress_ms / 1000 
-      : isLocalGlobal 
-        ? globalCurrentTime 
+  const title =
+    connectedAudioNode?.data.title ||
+    (isSpotify
+      ? spotifyPlayback.title
+      : isLocalGlobal
+        ? globalCurrentTrack.title
+        : "No Track Connected");
+  const artist =
+    connectedAudioNode?.data.artist ||
+    (isSpotify
+      ? spotifyPlayback.artist
+      : isLocalGlobal
+        ? globalCurrentTrack.artist
+        : "Connect Audio Source");
+  const duration =
+    connectedAudioNode?.data.duration ||
+    (isSpotify
+      ? spotifyPlayback.duration
+      : isLocalGlobal
+        ? globalCurrentTrack.duration
+        : 0);
+  const albumArt =
+    connectedAudioNode?.data.albumArt ||
+    (isSpotify ? spotifyPlayback.albumArt : isLocalGlobal ? "" : ""); // Local items don't have album art yet
+
+  const currentDisplayTime = connectedAudioNode
+    ? playbackTime
+    : isSpotify
+      ? spotifyPlayback.progress_ms / 1000
+      : isLocalGlobal
+        ? globalCurrentTime
         : 0;
 
-  const progressPercent = duration > 0 ? (currentDisplayTime / duration) * 100 : 0;
+  const progressPercent =
+    duration > 0 ? (currentDisplayTime / duration) * 100 : 0;
 
   return (
     <>

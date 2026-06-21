@@ -197,13 +197,21 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
   // Streaming states
   // Derived from settings so changes to URL or token are always reflected
   // without a separate sync effect (which could overwrite what the user typed).
-  const rtmpUrl = useMemo(() => {
-    const base = settings.streamUrl?.trim() || "";
-    const token = settings.streamToken?.trim() || "";
-    if (!base) return "";
-    if (!token) return base;
-    return base.endsWith("/") ? `${base}${token}` : `${base}/${token}`;
-  }, [settings.streamUrl, settings.streamToken]);
+  const targetId = (node.data.streamTargetId as string) || (settings.rtmpTargets?.[0]?.id || "");
+  const configType = (node.data.streamConfigType as "global" | "custom") || "global";
+  const customConfig = (node.data.streamCustomConfig as any) || {
+    streamFps: settings.streamFps || 60,
+    streamEncoder: settings.streamEncoder || "copy",
+    streamDelayMs: settings.streamDelayMs || 0,
+    streamBitrateKbps: settings.streamBitrateKbps || 6000,
+  };
+
+  const updateNodeDataField = useCallback((field: string, value: any) => {
+    updateNodeData({
+      id: node.id,
+      patch: { [field]: value },
+    });
+  }, [node.id, updateNodeData]);
   const [showStreamInput, setShowStreamInput] = useState(false);
   const [streamStats, setStreamStats] = useState<StreamStats | null>(null);
   const [isStopping, setIsStopping] = useState(false);
@@ -435,8 +443,13 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
   }, [edges, nodes, connectedOverlayGroupNode, directSourceNode]);
 
   // Keep the Rust core's compositor config in sync with the current UI layout
+  const prevCoreConfigRef = useRef("");
   useEffect(() => {
-    window.electron.setCoreConfig(activeStreamSources).catch(console.error);
+    const configStr = JSON.stringify(activeStreamSources);
+    if (prevCoreConfigRef.current !== configStr) {
+      prevCoreConfigRef.current = configStr;
+      window.electron.setCoreConfig(activeStreamSources).catch(console.error);
+    }
   }, [activeStreamSources]);
 
   // Extract source parameters
@@ -628,14 +641,22 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
         const audioEdge = edges.find((e) => e.target === n.id);
         if (audioEdge) {
           const audioNode = nodes.find(
-            (an) => an.id === audioEdge.source && an.type === "audioFlowNode",
+            (an) => an.id === audioEdge.source && (an.type === "audioFlowNode" || an.type === "globalAudioNode"),
           );
           if (audioNode) {
-            albumArt = (audioNode.data.albumArt as string) || "";
-            title = (audioNode.data.title as string) || "Unknown Title";
-            artist = (audioNode.data.artist as string) || "Unknown Artist";
-            audioNodeId = audioNode.id;
-            duration = Number(audioNode.data.duration) || 0;
+            if (audioNode.type === "audioFlowNode") {
+              albumArt = (audioNode.data.albumArt as string) || "";
+              title = (audioNode.data.title as string) || "Unknown Title";
+              artist = (audioNode.data.artist as string) || "Unknown Artist";
+              audioNodeId = audioNode.id;
+              duration = Number(audioNode.data.duration) || 0;
+            } else if (audioNode.type === "globalAudioNode") {
+              albumArt = (audioNode.data.albumArt as string) || "";
+              title = (audioNode.data.title as string) || "Global Audio";
+              artist = (audioNode.data.artist as string) || "Unknown";
+              audioNodeId = audioNode.id;
+              duration = Number(audioNode.data.duration) || 0;
+            }
           }
         }
       }
@@ -1026,7 +1047,18 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
   // Fallback path (no WebCodecs H.264): the legacy canvas → JPEG → FFmpeg
   // transcode loop.
   const startStreaming = useCallback(async () => {
-    if (!rtmpUrl || !captureSourceId) return;
+    const target = settings.rtmpTargets?.find((t) => t.id === targetId);
+    if (!target || !target.url || !captureSourceId) return;
+
+    const base = target.url.trim();
+    const token = target.key.trim();
+    const resolvedRtmpUrl = base.endsWith("/") ? `${base}${token}` : `${base}/${token}`;
+
+    const isCustom = configType === "custom";
+    const finalFps = isCustom ? customConfig.streamFps : settings.streamFps || 60;
+    const finalEncoder = isCustom ? customConfig.streamEncoder : settings.streamEncoder || "copy";
+    const finalDelay = isCustom ? customConfig.streamDelayMs : settings.streamDelayMs || 0;
+    const finalBitrate = isCustom ? customConfig.streamBitrateKbps : settings.streamBitrateKbps || 6000;
 
     setIsStarting(true);
     try {
@@ -1035,7 +1067,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
         captureSourceId.startsWith("monitor:") ||
         captureSourceId.startsWith("window:")
       ) {
-        const streamFps = settings.streamFps ?? 60;
+        const streamFps = finalFps;
         const presetW =
           typeof activePreset.width === "number" && activePreset.width > 0
             ? activePreset.width
@@ -1055,8 +1087,8 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
 
         try {
           await window.electron.startNativeStream({
-            rtmpUrl,
-            fps: streamFps,
+            rtmpUrl: resolvedRtmpUrl,
+            fps: finalFps,
             outputWidth: presetW,
             outputHeight: presetH,
             fitMode: fitMode,
@@ -1136,9 +1168,9 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
       canvas.width = encWidth;
       canvas.height = encHeight;
 
-      const streamFps = settings.streamFps ?? 60;
+      const streamFps = finalFps;
       const frameDurationMs = 1000 / streamFps;
-      const bitrateKbps = settings.streamBitrateKbps || 6000;
+      const bitrateKbps = finalBitrate;
 
       // ── Preferred: WebCodecs hardware H.264 → FFmpeg copy-mux ─────────────────
       console.log(
@@ -1162,11 +1194,11 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
           `[TargetOutputNode] WebCodecs H.264 (${encoderHandle.codec}) at ${canvas.width}x${canvas.height} ${streamFps}fps → FFmpeg copy-mux`,
         );
         try {
-          const initRes = await window.electron.startStream(rtmpUrl, {
+          const initRes = await window.electron.startStream(resolvedRtmpUrl, {
             mode: "h264",
             fps: streamFps,
             bitrateKbps,
-            streamDelayMs: settings.streamDelayMs ?? 0,
+            streamDelayMs: finalDelay,
           });
           if (!initRes.success) {
             console.error(
@@ -1185,7 +1217,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
         // rather than a second rAF loop — one composite+encode per frame, no
         // contention. The compositor reads these refs each frame.
         h264EncoderRef.current = encoderHandle;
-        streamFpsRef.current = streamFps;
+        streamFpsRef.current = finalFps;
         streamFrameIndexRef.current = 0;
         streamDimsRef.current = { width: encWidth, height: encHeight };
         isStreamingRef.current = true;
@@ -1202,7 +1234,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
 
       // Cap the compositor to the stream fps too (encode block stays inert here
       // since h264EncoderRef is null — the JPEG captureLoop does the work).
-      streamFpsRef.current = streamFps;
+      streamFpsRef.current = finalFps;
       streamDimsRef.current = { width: canvas.width, height: canvas.height };
       isStreamingRef.current = true;
 
@@ -1216,12 +1248,12 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
           : null;
 
       try {
-        const initRes = await window.electron.startStream(rtmpUrl, {
+        const initRes = await window.electron.startStream(resolvedRtmpUrl, {
           mode: "mjpeg",
-          encoder: settings.streamEncoder || "libx264",
+          encoder: finalEncoder,
           bitrateKbps,
           fps: streamFps,
-          streamDelayMs: settings.streamDelayMs ?? 0,
+          streamDelayMs: finalDelay,
           ...(presetW && presetH ? { width: presetW, height: presetH } : {}),
         });
         if (!initRes.success) {
@@ -1272,7 +1304,9 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
       setIsStarting(false);
     }
   }, [
-    rtmpUrl,
+    targetId,
+    configType,
+    customConfig,
     captureSourceId,
     activePreset,
     startNativePreviewCapture,
@@ -1281,6 +1315,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
     settings.streamFps,
     settings.streamDelayMs,
     settings.streamBitrateKbps,
+    settings.rtmpTargets,
     isPreviewActive,
     editOverlayOpen,
   ]);
@@ -1583,7 +1618,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
                   </>
                 ) : (
                   <>
-                    <RadioIcon className="w-2.5 h-2.5" /> Start Stream
+                    <RadioIcon className="w-2.5 h-2.5" /> Stream
                   </>
                 )}
               </button>
@@ -1592,112 +1627,106 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
 
           {showStreamInput && !isStreaming && (
             <div className="flex flex-col gap-2 p-2.5 bg-zinc-950 border border-zinc-800 rounded-lg mt-1 text-[11px]">
-              {/* RTMP URL */}
-              <div className="flex flex-col gap-0.5">
-                <span className="font-semibold text-zinc-200">
-                  RTMP Target URL
+              {/* Target Selection */}
+              <div className="flex flex-col gap-1">
+                <span className="text-[9px] font-semibold text-zinc-400 uppercase tracking-wider">
+                  Target
                 </span>
-                <span className="text-[9px] text-zinc-500">
-                  Server URL + stream key combined, or enter separately below
-                </span>
-              </div>
-              <input
-                type="text"
-                value={settings.streamUrl || ""}
-                onChange={(e) =>
-                  updateSettings({ streamUrl: cleanStreamUrl(e.target.value) })
-                }
-                className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200 focus:border-indigo-500 focus:outline-none"
-                placeholder="rtmp://..."
-              />
-              {rtmpUrl &&
-                !rtmpUrl.startsWith("rtmp://") &&
-                !rtmpUrl.startsWith("rtmps://") && (
-                  <span className="text-[10px] text-amber-500 font-semibold mt-0.5">
-                    Warning: Stream URL should start with rtmp:// or rtmps://
-                  </span>
+                {(!settings.rtmpTargets || settings.rtmpTargets.length === 0) ? (
+                  <span className="text-xs text-amber-500 italic">No stream services configured in settings.</span>
+                ) : (
+                  <select
+                    value={targetId}
+                    onChange={(e) => updateNodeDataField("streamTargetId", e.target.value)}
+                    className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200 focus:border-indigo-500 focus:outline-none cursor-pointer"
+                  >
+                    {settings.rtmpTargets.map((t) => (
+                      <option key={t.id} value={t.id}>{t.label} ({t.preset})</option>
+                    ))}
+                  </select>
                 )}
+              </div>
 
-              {/* Stream Key (optional — appended to base URL) */}
+              {/* Stream Configuration Type */}
               <div className="flex flex-col gap-1 mt-1">
                 <span className="text-[9px] font-semibold text-zinc-400 uppercase tracking-wider">
-                  Stream Key
+                  Configuration
                 </span>
-                <input
-                  type="password"
-                  value={settings.streamToken || ""}
-                  onChange={(e) =>
-                    updateSettings({ streamToken: e.target.value })
-                  }
-                  className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200 focus:border-indigo-500 focus:outline-none font-mono"
-                  placeholder="Enter stream key (optional)..."
-                />
+                <select
+                  value={configType}
+                  onChange={(e) => updateNodeDataField("streamConfigType", e.target.value)}
+                  className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200 focus:border-indigo-500 focus:outline-none cursor-pointer"
+                >
+                  <option value="global">Global Settings</option>
+                  <option value="custom">Custom Override</option>
+                </select>
               </div>
 
-              {/* FPS + Encoder */}
-              <div className="flex gap-2 mt-1">
-                <div className="flex flex-col gap-1 w-16 shrink-0">
-                  <span className="text-[9px] font-semibold text-zinc-400 uppercase tracking-wider">
-                    FPS
-                  </span>
-                  <select
-                    value={settings.streamFps ?? 60}
-                    onChange={(e) =>
-                      updateSettings({
-                        streamFps: Number(e.target.value) as 30 | 60,
-                      })
-                    }
-                    className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200 focus:border-indigo-500 focus:outline-none cursor-pointer"
-                  >
-                    <option value={30}>30</option>
-                    <option value={60}>60</option>
-                  </select>
-                </div>
-                <div className="flex flex-col gap-1 flex-1">
-                  <span className="text-[9px] font-semibold text-zinc-400 uppercase tracking-wider">
-                    Encoder
-                  </span>
-                  <select
-                    value={settings.streamEncoder || "copy"}
-                    onChange={(e) =>
-                      updateSettings({
-                        streamEncoder: e.target.value as
-                          | "copy"
-                          | "libx264"
-                          | "h264_nvenc"
-                          | "h264_amf"
-                          | "h264_qsv",
-                      })
-                    }
-                    className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200 focus:border-indigo-500 focus:outline-none cursor-pointer"
-                  >
-                    <option value="copy">Auto (WebCodecs)</option>
-                    <option value="libx264">CPU (x264)</option>
-                    <option value="h264_nvenc">NVIDIA (NVENC)</option>
-                    <option value="h264_amf">AMD (AMF)</option>
-                    <option value="h264_qsv">Intel (QSV)</option>
-                  </select>
-                </div>
-                <div className="flex flex-col gap-1 w-16 shrink-0">
-                  <span className="text-[9px] font-semibold text-zinc-400 uppercase tracking-wider">
-                    Delay
-                  </span>
-                  <select
-                    value={settings.streamDelayMs ?? 0}
-                    onChange={(e) =>
-                      updateSettings({
-                        streamDelayMs: Number(e.target.value),
-                      })
-                    }
-                    className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200 focus:border-indigo-500 focus:outline-none cursor-pointer"
-                  >
-                    <option value={0}>None</option>
-                    <option value={5000}>5s</option>
-                    <option value={10000}>10s</option>
-                    <option value={15000}>15s</option>
-                  </select>
-                </div>
-              </div>
+              {/* Custom Overrides */}
+              {configType === "custom" && (
+                <>
+                  {/* Bitrate */}
+                  <div className="flex flex-col gap-1 mt-1">
+                    <span className="text-[9px] font-semibold text-zinc-400 uppercase tracking-wider">
+                      Stream Bitrate (Kbps)
+                    </span>
+                    <input
+                      type="number"
+                      value={customConfig.streamBitrateKbps}
+                      onChange={(e) => updateNodeDataField("streamCustomConfig", { ...customConfig, streamBitrateKbps: Number(e.target.value) || 6000 })}
+                      className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200 focus:border-indigo-500 focus:outline-none font-mono"
+                    />
+                  </div>
+                  
+                  {/* FPS + Encoder + Delay */}
+                  <div className="flex gap-2 mt-1">
+                    <div className="flex flex-col gap-1 w-16 shrink-0">
+                      <span className="text-[9px] font-semibold text-zinc-400 uppercase tracking-wider">
+                        FPS
+                      </span>
+                      <select
+                        value={customConfig.streamFps}
+                        onChange={(e) => updateNodeDataField("streamCustomConfig", { ...customConfig, streamFps: Number(e.target.value) as 30 | 60 })}
+                        className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200 focus:border-indigo-500 focus:outline-none cursor-pointer"
+                      >
+                        <option value={30}>30</option>
+                        <option value={60}>60</option>
+                      </select>
+                    </div>
+                    <div className="flex flex-col gap-1 flex-1">
+                      <span className="text-[9px] font-semibold text-zinc-400 uppercase tracking-wider">
+                        Encoder
+                      </span>
+                      <select
+                        value={customConfig.streamEncoder}
+                        onChange={(e) => updateNodeDataField("streamCustomConfig", { ...customConfig, streamEncoder: e.target.value })}
+                        className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200 focus:border-indigo-500 focus:outline-none cursor-pointer"
+                      >
+                        <option value="copy">Auto (WebCodecs)</option>
+                        <option value="libx264">CPU (x264)</option>
+                        <option value="h264_nvenc">NVIDIA (NVENC)</option>
+                        <option value="h264_amf">AMD (AMF)</option>
+                        <option value="h264_qsv">Intel (QSV)</option>
+                      </select>
+                    </div>
+                    <div className="flex flex-col gap-1 w-16 shrink-0">
+                      <span className="text-[9px] font-semibold text-zinc-400 uppercase tracking-wider">
+                        Delay
+                      </span>
+                      <select
+                        value={customConfig.streamDelayMs}
+                        onChange={(e) => updateNodeDataField("streamCustomConfig", { ...customConfig, streamDelayMs: Number(e.target.value) })}
+                        className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200 focus:border-indigo-500 focus:outline-none cursor-pointer"
+                      >
+                        <option value={0}>None</option>
+                        <option value={5000}>5s</option>
+                        <option value={10000}>10s</option>
+                        <option value={15000}>15s</option>
+                      </select>
+                    </div>
+                  </div>
+                </>
+              )}
 
               {!isPreviewActive && (
                 <span className="text-[9px] text-zinc-500 mt-0.5">
@@ -1727,7 +1756,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
                       Starting...
                     </>
                   ) : (
-                    "Start Stream"
+                    "Stream"
                   )}
                 </button>
               </div>
