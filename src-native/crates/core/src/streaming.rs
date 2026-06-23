@@ -469,13 +469,19 @@ unsafe fn run_encoder_unsafe(
 
     // Encoder-specific tuning applied before av_opt_set options
     if opts.encoder == "h264_nvenc" {
-        // B-frames add interleaving delay: av_interleaved_write_frame buffers 2-3 packets
-        // and flushes in bursts, causing large TCP writes that block for 300-1000ms.
-        // 0 B-frames = one packet per frame, written immediately, no burst writes.
-        (*codec_ctx).max_b_frames = 0;
+        // 2 B-frames: NVENC DTS-based B-frame reordering works correctly with
+        // av_write_frame (non-interleaved), which is what we already use.
+        // B-frames significantly improve compression efficiency at the same bitrate.
+        (*codec_ctx).max_b_frames = 2;
         // NVENC CBR: rc_max_rate = rc_buffer_size = bit_rate for stable CBR
         (*codec_ctx).rc_max_rate = (*codec_ctx).bit_rate;
         (*codec_ctx).rc_buffer_size = (*codec_ctx).bit_rate as i32;
+        // Adaptive Quantization: redistributes bitrate from flat/dark regions to
+        // high-detail areas (text, faces, edges) within each frame.
+        // aq-strength 8 is a balanced default (range 1-15).
+        set_opt(codec_ctx, "spatial-aq", "1");
+        set_opt(codec_ctx, "temporal-aq", "1");
+        set_opt(codec_ctx, "aq-strength", "8");
     }
 
     for (key, val) in &preset.options {

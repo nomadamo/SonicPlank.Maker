@@ -1088,14 +1088,19 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
         captureSourceId.startsWith("window:")
       ) {
         const streamFps = finalFps;
-        const presetW =
-          typeof activePreset.width === "number" && activePreset.width > 0
-            ? activePreset.width
-            : undefined;
-        const presetH =
-          typeof activePreset.height === "number" && activePreset.height > 0
-            ? activePreset.height
-            : undefined;
+        const RESOLUTION_MAP: Record<string, [number, number]> = {
+          "1080p": [1920, 1080],
+          "936p":  [1664, 936],
+          "720p":  [1280, 720],
+        };
+        const resKey = settings.streamOutputResolution || "native";
+        const resolvedDims = RESOLUTION_MAP[resKey];
+        const presetW = resolvedDims
+          ? resolvedDims[0]
+          : (typeof activePreset.width === "number" && activePreset.width > 0 ? activePreset.width : undefined);
+        const presetH = resolvedDims
+          ? resolvedDims[1]
+          : (typeof activePreset.height === "number" && activePreset.height > 0 ? activePreset.height : undefined);
         const streamSources = activeStreamSources.map((s) => ({
           source_id: s.source_id,
           is_primary: s.is_primary,
@@ -1336,6 +1341,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
     settings.streamFps,
     settings.streamDelayMs,
     settings.streamBitrateKbps,
+    settings.streamOutputResolution,
     settings.rtmpTargets,
     isPreviewActive,
     editOverlayOpen,

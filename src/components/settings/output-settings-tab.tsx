@@ -153,6 +153,24 @@ export function OutputSettingsTab() {
           </div>
 
           <div className="flex flex-col gap-2">
+            <Label className="text-xs">Output Resolution</Label>
+            <Select
+              value={settings.streamOutputResolution || "native"}
+              onValueChange={(v) => updateSettings({ streamOutputResolution: v })}
+            >
+              <SelectTrigger className="text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="native">Native (Source)</SelectItem>
+                <SelectItem value="1080p">1080p (1920×1080)</SelectItem>
+                <SelectItem value="936p">936p (1664×936) — Twitch Sweet Spot</SelectItem>
+                <SelectItem value="720p">720p (1280×720)</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="flex flex-col gap-2">
             <Label className="text-xs">Stream Bitrate (Kbps)</Label>
             <Input 
               type="number" 

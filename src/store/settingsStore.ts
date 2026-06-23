@@ -30,6 +30,8 @@ export type AppSettings = {
   streamBitrateKbps?: number;
   recordingBitrateKbps?: number;
   selectedGpu?: string;
+  /** Output resolution: "native" | "1080p" | "936p" | "720p" */
+  streamOutputResolution?: string;
 
   // Global RTMP Targets
   rtmpTargets: RtmpTarget[];
@@ -59,6 +61,7 @@ export const defaultSettings: AppSettings = {
   streamEncoder: "copy",
   streamDelayMs: 0,
   selectedGpu: "auto",
+  streamOutputResolution: "native",
   rtmpTargets: [],
 };
 
