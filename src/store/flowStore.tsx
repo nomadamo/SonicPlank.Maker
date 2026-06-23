@@ -16,7 +16,113 @@ export const defaultFlowData: FlowData = {
   viewport: { x: 100, y: 100, zoom: 1 },
 };
 
-export const flowDataAtom = atom<FlowData>(defaultFlowData);
+function isOnlySelectionChange(oldNodes: FlowNodeType[], newNodes: FlowNodeType[], oldEdges: Edge[], newEdges: Edge[]): boolean {
+  if (oldNodes.length !== newNodes.length || oldEdges.length !== newEdges.length) return false;
+  
+  for (let i = 0; i < oldEdges.length; i++) {
+    if (oldEdges[i].id !== newEdges[i].id) return false;
+    if (oldEdges[i].source !== newEdges[i].source || oldEdges[i].target !== newEdges[i].target) return false;
+  }
+  
+  for (let i = 0; i < oldNodes.length; i++) {
+    if (oldNodes[i].id !== newNodes[i].id) return false;
+    if (oldNodes[i].position.x !== newNodes[i].position.x || oldNodes[i].position.y !== newNodes[i].position.y) return false;
+    if (oldNodes[i].type !== newNodes[i].type) return false;
+    if (oldNodes[i].data !== newNodes[i].data) return false;
+  }
+  
+  return true;
+}
+
+type FlowCoreData = Omit<FlowData, "viewport">;
+
+interface FlowHistory {
+  past: FlowCoreData[];
+  present: FlowCoreData;
+  future: FlowCoreData[];
+}
+
+const flowViewportInternalAtom = atom<Viewport>(defaultFlowData.viewport);
+
+const flowHistoryAtom = atom<FlowHistory>({
+  past: [],
+  present: { nodes: defaultFlowData.nodes, edges: defaultFlowData.edges },
+  future: [],
+});
+
+export const flowDataAtom = atom(
+  (get) => {
+    const history = get(flowHistoryAtom);
+    const viewport = get(flowViewportInternalAtom);
+    return { ...history.present, viewport } as FlowData;
+  },
+  (get, set, update: FlowData | ((prev: FlowData) => FlowData)) => {
+    const currentState = get(flowDataAtom);
+    const nextState = typeof update === "function" ? update(currentState) : update;
+    const history = get(flowHistoryAtom);
+
+    // Always update viewport separately
+    set(flowViewportInternalAtom, nextState.viewport);
+
+    // If core nodes/edges haven't changed, don't push to history
+    if (history.present.nodes === nextState.nodes && history.present.edges === nextState.edges) {
+      return;
+    }
+
+    const isSelectionOnly = isOnlySelectionChange(history.present.nodes, nextState.nodes, history.present.edges, nextState.edges);
+
+    set(flowHistoryAtom, {
+      past: isSelectionOnly ? history.past : [...history.past, history.present].slice(-50),
+      present: { nodes: nextState.nodes, edges: nextState.edges },
+      future: [],
+    });
+  }
+);
+
+export const loadFlowDataAtom = atom(
+  null,
+  (_get, set, newData: FlowData) => {
+    set(flowViewportInternalAtom, newData.viewport);
+    set(flowHistoryAtom, {
+      past: [],
+      present: { nodes: newData.nodes, edges: newData.edges },
+      future: [],
+    });
+  }
+);
+
+export const undoFlowAtom = atom(null, (get, set) => {
+  const history = get(flowHistoryAtom);
+  if (history.past.length === 0) return;
+
+  const previous = history.past[history.past.length - 1];
+  const newPast = history.past.slice(0, -1);
+
+  set(flowHistoryAtom, {
+    past: newPast,
+    present: previous,
+    future: [history.present, ...history.future],
+  });
+});
+
+export const redoFlowAtom = atom(null, (get, set) => {
+  const history = get(flowHistoryAtom);
+  if (history.future.length === 0) return;
+
+  const next = history.future[0];
+  const newFuture = history.future.slice(1);
+
+  set(flowHistoryAtom, {
+    past: [...history.past, history.present],
+    present: next,
+    future: newFuture,
+  });
+});
+
+export const canUndoFlowAtom = atom((get) => get(flowHistoryAtom).past.length > 0);
+export const canRedoFlowAtom = atom((get) => get(flowHistoryAtom).future.length > 0);
+export const flowCurrentPathAtom = atom<string | null>(null);
+export const flowHasUnsavedChangesAtom = atom<boolean>(false);
 
 export const flowNodeAtomFamily = atomFamily((id) =>
   atom(
@@ -110,6 +216,7 @@ export const updateNodeDataAtom = atom(
     { id, patch }: { id: string; patch: Partial<FlowNodeType["data"]> },
   ) => {
     const currentState = get(flowDataAtom);
+    if (!currentState.nodes.some((n) => n.id === id)) return;
     set(flowDataAtom, {
       ...currentState,
       nodes: currentState.nodes.map((n) =>

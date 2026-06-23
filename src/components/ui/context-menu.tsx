@@ -18,8 +18,9 @@ function ContextMenuPortal({ ...props }: ContextMenuPrimitive.Portal.Props) {
 
 function ContextMenuTrigger({
   className,
+  asChild,
   ...props
-}: ContextMenuPrimitive.Trigger.Props) {
+}: ContextMenuPrimitive.Trigger.Props & { asChild?: boolean }) {
   return (
     <ContextMenuPrimitive.Trigger
       data-slot="context-menu-trigger"

@@ -19,8 +19,8 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
-import { flowNodesAtom } from "@/store/flowStore";
-import { timelineTracksAtom } from "@/store/timelineStore";
+import { flowNodesAtom, flowHasUnsavedChangesAtom } from "@/store/flowStore";
+import { timelineTracksAtom, sonicsHasUnsavedChangesAtom } from "@/store/timelineStore";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -100,7 +100,9 @@ function Library() {
   const [recordingOpen, setRecordingOpen] = useState(false);
   const [addStreamOpen, setAddStreamOpen] = useState(false);
   const [addSpotifyOpen, setAddSpotifyOpen] = useState(false);
-  const { setHasUnsavedChanges, loaded } = useStateMachine();
+  const { loaded } = useStateMachine();
+  const setFlowUnsaved = useSetAtom(flowHasUnsavedChangesAtom);
+  const setSonicsUnsaved = useSetAtom(sonicsHasUnsavedChangesAtom);
   const [flowNodesData, setFlowNodesData] = useAtom(flowNodesAtom);
   const [timelineTracks, setTimelineTracks] = useAtom(timelineTracksAtom);
   const { items, setItems, categories } = useLibraryStore();
@@ -261,10 +263,10 @@ function Library() {
         },
       };
       setFlowNodesData((prev) => [...(prev || []), newNode]);
-      setHasUnsavedChanges(true);
+      setFlowUnsaved(true);
       void navigate({ to: "/flow-editor" });
     },
-    [flowNodesData, setFlowNodesData, setHasUnsavedChanges, navigate],
+    [flowNodesData, setFlowNodesData, setFlowUnsaved, navigate],
   );
 
   const handleSetCategoryFilter = useCallback(
@@ -308,10 +310,10 @@ function Library() {
         firstTrack.clips = [...firstTrack.clips, newClip];
         return tracks;
       });
-      setHasUnsavedChanges(true);
+      setSonicsUnsaved(true);
       void navigate({ to: "/sonics" });
     },
-    [setTimelineTracks, setHasUnsavedChanges, navigate],
+    [setTimelineTracks, setSonicsUnsaved, navigate],
   );
 
   const isEmpty = items.length === 0;
@@ -772,14 +774,14 @@ function LibraryCard({
             onClick={() => onSelect(item.id)}
             onDoubleClick={() => onPlay()}
             className={cn(
-              "border p-[14px] cursor-pointer transition-all duration-200 relative group bg-zinc-950/45 border-zinc-800 text-white shadow-lg rounded-xl",
+              "border p-[14px] cursor-pointer transition-all duration-200 relative group bg-secondary/50 border-border text-foreground shadow-lg rounded-xl",
               isSelected
-                ? "border-indigo-500 shadow-[0_0_15px_rgba(99,102,241,0.35)] ring-1 ring-indigo-500/30 bg-zinc-950/80"
-                : "hover:bg-zinc-900/60 hover:border-zinc-700",
+                ? "border-indigo-500 shadow-[0_0_15px_rgba(99,102,241,0.35)] ring-1 ring-indigo-500/30 bg-secondary/80"
+                : "hover:bg-secondary/60 hover:border-border/80",
             )}
           >
             {/* Album Art */}
-            <div className="w-full aspect-square rounded-lg bg-zinc-950 flex items-center justify-center mb-3 overflow-hidden relative border border-zinc-900">
+            <div className="w-full aspect-square rounded-lg bg-background flex items-center justify-center mb-3 overflow-hidden relative border border-border/50">
               {item.albumArt ? (
                 <img
                   src={item.albumArt}
@@ -813,7 +815,7 @@ function LibraryCard({
                   <Icon name={categoryIcon} size={28} strokeWidth={1.5} />
                 </div>
               ) : (
-                <div className="p-3.5 rounded-xl border bg-zinc-500/10 border-zinc-500/20 text-zinc-400">
+                <div className="p-3.5 rounded-xl border bg-muted/10 border-border/20 text-muted-foreground">
                   <MusicIcon size={28} />
                 </div>
               )}

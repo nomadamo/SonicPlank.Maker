@@ -4,7 +4,7 @@ import { Volume2, VolumeX } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Knob } from "@/components/audio/knob";
 import { LevelMeter } from "./LevelMeter";
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -13,6 +13,8 @@ import {
 } from "@/components/ui/context-menu";
 import { Trash2Icon, Edit2Icon } from "lucide-react";
 import { TimelineClip } from "@/types/timeline";
+import { useAtom } from "jotai";
+import { timelineSelectionAtom } from "@/store/timelineStore";
 
 interface TrackProps {
   track: TimelineTrack;
@@ -26,13 +28,15 @@ interface TrackProps {
     updates: Partial<TimelineClip>,
   ) => void;
   onRemoveClip?: (trackId: string, clipId: string) => void;
+  onSplitClip?: (trackId: string, clipId: string, time: number) => void;
+  onUpdateTrack?: (trackId: string, updates: Partial<TimelineTrack>) => void;
   onMoveClipToTrack?: (
     clipId: string,
     sourceTrackId: string,
     targetTrackId: string,
     newStartTime: number,
   ) => void;
-  onUpdateTrack?: (trackId: string, updates: Partial<TimelineTrack>) => void;
+  onSeek?: (time: number) => void;
 }
 
 export function Track({
@@ -43,12 +47,91 @@ export function Track({
   onRenameTrack,
   onUpdateClip,
   onRemoveClip,
-  onMoveClipToTrack,
+  onSplitClip,
   onUpdateTrack,
+  onMoveClipToTrack,
+  onSeek,
 }: TrackProps) {
   const [isRenaming, setIsRenaming] = useState(false);
   const [editName, setEditName] = useState(track.name);
   const inputRef = useRef<HTMLInputElement>(null);
+  
+  const [selection, setSelection] = useAtom(timelineSelectionAtom);
+  const trackBodyRef = useRef<HTMLDivElement>(null);
+  
+  const selectionStartRef = useRef<number>(0);
+  const activeSelectionClipRef = useRef<TimelineClip | null>(null);
+  const [isSelecting, setIsSelecting] = useState(false);
+
+  const handlePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (trackBodyRef.current) {
+      // Don't start selection if clicking on the clip label (drag handle) or resize handles
+      const target = e.target as HTMLElement;
+      if (target.closest('.cursor-grab') || target.closest('.cursor-col-resize')) {
+        return;
+      }
+      
+      const rect = trackBodyRef.current.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const time = Math.max(0, x / pixelsPerSecond);
+      
+      // Find the clip under the cursor
+      const clickedClip = track.clips.find(
+        (c) => time >= c.startTime && time <= c.startTime + c.duration
+      );
+
+      if (!clickedClip) {
+        // Did not click on a clip, abort selection
+        setSelection(null);
+        return;
+      }
+
+      e.preventDefault();
+      
+      activeSelectionClipRef.current = clickedClip;
+      selectionStartRef.current = time;
+      setIsSelecting(true);
+      setSelection({ trackId: track.id, start: time, end: time });
+      onSeek?.(time);
+    }
+  }, [pixelsPerSecond, setSelection, onSeek, track.id, track.clips]);
+
+  const handlePointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (isSelecting && trackBodyRef.current && activeSelectionClipRef.current) {
+      const rect = trackBodyRef.current.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      let time = Math.max(0, x / pixelsPerSecond);
+      
+      // Clamp to clip bounds
+      const clip = activeSelectionClipRef.current;
+      time = Math.max(clip.startTime, Math.min(clip.startTime + clip.duration, time));
+      
+      setSelection({
+        trackId: track.id,
+        start: Math.min(selectionStartRef.current, time),
+        end: Math.max(selectionStartRef.current, time),
+      });
+    }
+  }, [isSelecting, pixelsPerSecond, setSelection, track.id]);
+
+  const handlePointerUp = useCallback(() => {
+    if (isSelecting) {
+      setIsSelecting(false);
+      activeSelectionClipRef.current = null;
+    }
+  }, [isSelecting]);
+
+  // Catch releases outside the track
+  useEffect(() => {
+    const handleGlobalUp = () => {
+      if (isSelecting) {
+        setIsSelecting(false);
+        activeSelectionClipRef.current = null;
+      }
+    };
+    window.addEventListener("pointerup", handleGlobalUp);
+    return () => window.removeEventListener("pointerup", handleGlobalUp);
+  }, [isSelecting]);
 
   useEffect(() => {
     if (isRenaming && inputRef.current) {
@@ -213,11 +296,67 @@ export function Track({
       </ContextMenu>
 
       <div
+        ref={trackBodyRef}
         className="relative flex-1 ml-0.5 h-full overflow-hidden bg-background/50"
         onDragOver={handleDragOver}
         onDrop={handleDrop}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
         data-track-id={track.id}
       >
+        {/* Selection Overlay */}
+        {selection?.trackId === track.id && selection.end > selection.start && (
+          <div
+            className="absolute top-0 bottom-0 bg-primary/20 border-x border-primary/50 z-30 pointer-events-none group/selection"
+            style={{
+              left: `${selection.start * pixelsPerSecond}px`,
+              width: `${(selection.end - selection.start) * pixelsPerSecond}px`
+            }}
+          >
+            {/* Volume Trim Handle */}
+            <div 
+              className="absolute top-0 left-0 right-0 h-4 bg-primary/40 opacity-0 group-hover/selection:opacity-100 pointer-events-auto cursor-ns-resize hover:bg-primary/60 transition-all"
+              onPointerDown={(e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                
+                // Find clip fully encompassing selection
+                const clip = track.clips.find(c => c.startTime <= selection.start && c.startTime + c.duration >= selection.end);
+                if (!clip) return;
+
+                const initialY = e.clientY;
+                const startValue = clip.volume ?? 1.0;
+                
+                const handleMove = (moveEvent: PointerEvent) => {
+                  const deltaY = moveEvent.clientY - initialY;
+                  // e.g. 50 pixels = full range 1.0
+                  let newValue = startValue - (deltaY / 50);
+                  newValue = Math.max(0, Math.min(2.0, newValue));
+                  
+                  // Inject 4 points for the ducking/boosting envelope
+                  const p1 = { time: Math.max(0, selection.start - clip.startTime - 0.01), value: clip.volume ?? 1.0, curve: "smooth" as const };
+                  const p2 = { time: selection.start - clip.startTime, value: newValue, curve: "linear" as const };
+                  const p3 = { time: selection.end - clip.startTime, value: newValue, curve: "smooth" as const };
+                  const p4 = { time: Math.min(clip.duration, selection.end - clip.startTime + 0.01), value: clip.volume ?? 1.0, curve: "smooth" as const };
+                  
+                  // In a robust implementation, we would merge this with existing envelope points.
+                  // For now, replacing the envelope handles the basic trim requirement.
+                  onUpdateClip?.(track.id, clip.id, { volumeEnvelope: [p1, p2, p3, p4] });
+                };
+                
+                const handleUp = () => {
+                  window.removeEventListener('pointermove', handleMove);
+                  window.removeEventListener('pointerup', handleUp);
+                };
+                
+                window.addEventListener('pointermove', handleMove);
+                window.addEventListener('pointerup', handleUp);
+              }}
+            />
+          </div>
+        )}
+        
         {/* Render Clips */}
         {track.clips.map((clip) => (
           <Clip
@@ -227,6 +366,7 @@ export function Track({
             pixelsPerSecond={pixelsPerSecond}
             onUpdate={(updates) => onUpdateClip?.(track.id, clip.id, updates)}
             onRemove={() => onRemoveClip?.(track.id, clip.id)}
+            onSplit={(time) => onSplitClip?.(track.id, clip.id, time)}
             onMoveTrack={(targetTrackId, newStartTime) =>
               onMoveClipToTrack?.(
                 clip.id,

@@ -59,7 +59,7 @@ interface SettingsDialogProps {
 function FieldRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="grid grid-cols-[7.5rem_1fr] items-center gap-2">
-      <span className="text-xs text-zinc-400 text-right">{label}</span>
+      <span className="text-xs text-muted-foreground text-right">{label}</span>
       {children}
     </div>
   );
@@ -80,7 +80,7 @@ function OptionSelect({
         <SelectValue />
       </SelectTrigger>
       <SelectContent>
-        <SelectItem value="__none__" className="text-xs font-mono text-zinc-500">— default —</SelectItem>
+        <SelectItem value="__none__" className="text-xs font-mono text-muted-foreground">— default —</SelectItem>
         {options.map((o) => (
           <SelectItem key={o} value={o} className="text-xs font-mono">{o}</SelectItem>
         ))}
@@ -172,7 +172,7 @@ function CoreTab() {
   if (!config) {
     return (
       <TabsContent value="core" className="flex items-center justify-center min-h-[360px]">
-        <span className="text-xs text-zinc-500">Loading…</span>
+        <span className="text-xs text-muted-foreground">Loading…</span>
       </TabsContent>
     );
   }
@@ -228,7 +228,7 @@ function CoreTab() {
           <span className="text-xs text-green-500">Saved</span>
         )}
         {isDirty && applyState !== "saved" && (
-          <span className="text-xs text-zinc-500">Unsaved changes</span>
+          <span className="text-xs text-muted-foreground">Unsaved changes</span>
         )}
         <Button size="sm" disabled={!isDirty} onClick={handleApply}>
           Apply
@@ -248,38 +248,32 @@ const INTERVAL_OPTIONS: { label: string; value: number }[] = [
 
 export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   const { settings, updateSettings } = useSettings();
-  const [outputDevices, setOutputDevices] = React.useState<MediaDeviceInfo[]>(
-    [],
-  );
-  const [inputDevices, setInputDevices] = React.useState<MediaDeviceInfo[]>([]);
+  const [outputDevices, setOutputDevices] = React.useState<{ id: string; name: string; is_input: boolean; is_default: boolean }[]>([]);
+  const [inputDevices, setInputDevices] = React.useState<{ id: string; name: string; is_input: boolean; is_default: boolean }[]>([]);
   const { theme, setTheme } = useStateMachine();
 
   React.useEffect(() => {
     if (open) {
-      navigator.mediaDevices
-        .getUserMedia({ audio: true })
-        .then(() => navigator.mediaDevices.enumerateDevices())
-        .catch(() => navigator.mediaDevices.enumerateDevices())
-        .then((devices) => {
-          setOutputDevices(devices.filter((d) => d.kind === "audiooutput"));
-          setInputDevices(devices.filter((d) => d.kind === "audioinput"));
-        });
+      window.electron.getAudioDevices().then((devices) => {
+        setOutputDevices(devices.filter((d) => !d.is_input));
+        setInputDevices(devices.filter((d) => d.is_input));
+      });
     }
   }, [open]);
 
   const selectedOutputDevice = outputDevices.find(
-    (d) => d.deviceId === settings.audioOutputDeviceId,
+    (d) => d.id === settings.audioOutputDeviceId,
   );
   const outputDisplayLabel = settings.audioOutputDeviceId
-    ? selectedOutputDevice?.label ||
+    ? selectedOutputDevice?.name ||
       `Speaker (${settings.audioOutputDeviceId.slice(0, 5)}...)`
     : "System Default";
 
   const selectedInputDevice = inputDevices.find(
-    (d) => d.deviceId === settings.audioInputDeviceId,
+    (d) => d.id === settings.audioInputDeviceId,
   );
   const inputDisplayLabel = settings.audioInputDeviceId
-    ? selectedInputDevice?.label ||
+    ? selectedInputDevice?.name ||
       `Microphone (${settings.audioInputDeviceId.slice(0, 5)}...)`
     : "System Default";
 
@@ -503,9 +497,9 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                 <SelectContent>
                   <SelectItem value="default">System Default</SelectItem>
                   {outputDevices.map((device) => (
-                    <SelectItem key={device.deviceId} value={device.deviceId}>
-                      {device.label ||
-                        `Speaker (${device.deviceId.slice(0, 5)}...)`}
+                    <SelectItem key={device.id} value={device.id}>
+                      {device.name ||
+                        `Speaker (${device.id.slice(0, 5)}...)`}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -535,9 +529,9 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                 <SelectContent>
                   <SelectItem value="default">System Default</SelectItem>
                   {inputDevices.map((device) => (
-                    <SelectItem key={device.deviceId} value={device.deviceId}>
-                      {device.label ||
-                        `Microphone (${device.deviceId.slice(0, 5)}...)`}
+                    <SelectItem key={device.id} value={device.id}>
+                      {device.name ||
+                        `Microphone (${device.id.slice(0, 5)}...)`}
                     </SelectItem>
                   ))}
                 </SelectContent>

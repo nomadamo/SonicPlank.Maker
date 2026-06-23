@@ -213,7 +213,7 @@ export function CaptureSourceNode(NodeRef: NodeProps<FlowNodeType>) {
           <button
             onClick={fetchSources}
             disabled={loadingSources}
-            className="p-1.5 rounded hover:bg-zinc-800 text-zinc-400 hover:text-zinc-100 transition-colors disabled:opacity-50 cursor-pointer"
+            className="p-1.5 rounded hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50 cursor-pointer"
             title="Refresh sources"
           >
             <RefreshCwIcon
@@ -224,7 +224,7 @@ export function CaptureSourceNode(NodeRef: NodeProps<FlowNodeType>) {
       >
         {/* Display / Window Selector */}
         <div className="flex flex-col gap-1.5 nodrag nopan nowheel">
-          <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">
+          <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
             Capture Target
           </label>
           <Select
@@ -233,30 +233,30 @@ export function CaptureSourceNode(NodeRef: NodeProps<FlowNodeType>) {
               if (typeof val === "string") handleSourceChange(val);
             }}
           >
-            <SelectTrigger className="w-full h-9 bg-zinc-900 border border-zinc-800 rounded-lg flex items-center justify-between px-3 text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-zinc-200">
+            <SelectTrigger className="w-full h-9 bg-muted border border-border rounded-lg flex items-center justify-between px-3 text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-foreground">
               <SelectValue placeholder="Select capture source">
                 {selectedLabel}
               </SelectValue>
             </SelectTrigger>
-            <SelectContent className="bg-zinc-950 border border-zinc-800 rounded-lg p-1 max-h-60 overflow-y-auto shadow-xl">
+            <SelectContent className="bg-background border border-border rounded-lg p-1 max-h-60 overflow-y-auto shadow-xl">
               {sources.length === 0 ? (
-                <div className="text-xs text-zinc-400 p-3 text-center">
+                <div className="text-xs text-muted-foreground p-3 text-center">
                   No displays or windows found
                 </div>
               ) : (
                 <>
                   {monitors.length > 0 && (
                     <>
-                      <div className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider px-2 pt-1 pb-0.5">
+                      <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider px-2 pt-1 pb-0.5">
                         Displays
                       </div>
                       {monitors.map((src: NativeCaptureSource) => (
                         <SelectItem
                           key={src.id}
                           value={src.id}
-                          className="flex items-center gap-2 p-2 hover:bg-zinc-900 rounded cursor-pointer text-sm text-zinc-300"
+                          className="flex items-center gap-2 p-2 hover:bg-muted rounded cursor-pointer text-sm text-foreground/80"
                         >
-                          <MonitorIcon className="w-4 h-4 text-zinc-400 shrink-0 inline mr-1.5" />
+                          <MonitorIcon className="w-4 h-4 text-muted-foreground shrink-0 inline mr-1.5" />
                           <span className="truncate max-w-[200px]">{src.name}</span>
                         </SelectItem>
                       ))}
@@ -264,16 +264,16 @@ export function CaptureSourceNode(NodeRef: NodeProps<FlowNodeType>) {
                   )}
                   {windows.length > 0 && (
                     <>
-                      <div className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider px-2 pt-2 pb-0.5">
+                      <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider px-2 pt-2 pb-0.5">
                         Windows
                       </div>
                       {windows.map((src: NativeCaptureSource) => (
                         <SelectItem
                           key={src.id}
                           value={src.id}
-                          className="flex items-center gap-2 p-2 hover:bg-zinc-900 rounded cursor-pointer text-sm text-zinc-300"
+                          className="flex items-center gap-2 p-2 hover:bg-muted rounded cursor-pointer text-sm text-foreground/80"
                         >
-                          <AppWindowIcon className="w-4 h-4 text-zinc-400 shrink-0 inline mr-1.5" />
+                          <AppWindowIcon className="w-4 h-4 text-muted-foreground shrink-0 inline mr-1.5" />
                           <span className="truncate max-w-[200px]">{src.name}</span>
                         </SelectItem>
                       ))}
@@ -287,7 +287,7 @@ export function CaptureSourceNode(NodeRef: NodeProps<FlowNodeType>) {
 
         {/* Aspect Ratio / Resolution Selector */}
         <div className="flex flex-col gap-1.5 nodrag nopan nowheel">
-          <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">
+          <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
             Aspect Ratio / Resolution
           </label>
           <Select
@@ -296,17 +296,17 @@ export function CaptureSourceNode(NodeRef: NodeProps<FlowNodeType>) {
               if (val) handleResolutionChange(val);
             }}
           >
-            <SelectTrigger className="w-full h-9 bg-zinc-900 border border-zinc-800 rounded-lg flex items-center justify-between px-3 text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-zinc-200">
+            <SelectTrigger className="w-full h-9 bg-muted border border-border rounded-lg flex items-center justify-between px-3 text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-foreground">
               <SelectValue placeholder="Select aspect/resolution">
                 {activePreset.label}
               </SelectValue>
             </SelectTrigger>
-            <SelectContent className="bg-zinc-950 border border-zinc-800 rounded-lg p-1 max-h-60 overflow-y-auto shadow-xl">
+            <SelectContent className="bg-background border border-border rounded-lg p-1 max-h-60 overflow-y-auto shadow-xl">
               {Object.entries(resolutionPresets).map(([key, preset]) => (
                 <SelectItem
                   key={key}
                   value={key}
-                  className="flex items-center p-2 hover:bg-zinc-900 rounded cursor-pointer text-sm text-zinc-300"
+                  className="flex items-center p-2 hover:bg-muted rounded cursor-pointer text-sm text-foreground/80"
                 >
                   {preset.label}
                 </SelectItem>
@@ -316,12 +316,12 @@ export function CaptureSourceNode(NodeRef: NodeProps<FlowNodeType>) {
         </div>
 
         {/* Audio Toggle */}
-        <div className="flex items-center justify-between border-t border-zinc-800/80 pt-3 mt-1 nodrag nopan nowheel">
+        <div className="flex items-center justify-between border-t border-border/80 pt-3 mt-1 nodrag nopan nowheel">
           <div className="flex flex-col">
-            <span className="text-xs font-medium text-zinc-200">
+            <span className="text-xs font-medium text-foreground">
               Capture System Audio
             </span>
-            <span className="text-[10px] text-zinc-400">
+            <span className="text-[10px] text-muted-foreground">
               Capture window or desktop audio stream
             </span>
           </div>
@@ -333,7 +333,7 @@ export function CaptureSourceNode(NodeRef: NodeProps<FlowNodeType>) {
 
         {/* Frame rate */}
         <div className="flex flex-col gap-1.5 nodrag nopan nowheel">
-          <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">
+          <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
             Maximum FPS
           </label>
           <Select
@@ -342,17 +342,17 @@ export function CaptureSourceNode(NodeRef: NodeProps<FlowNodeType>) {
               if (typeof val === "string") handleMaxFrameRateChange(val);
             }}
           >
-            <SelectTrigger className="w-full h-9 bg-zinc-900 border border-zinc-800 rounded-lg flex items-center justify-between px-3 text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-zinc-200">
+            <SelectTrigger className="w-full h-9 bg-muted border border-border rounded-lg flex items-center justify-between px-3 text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-foreground">
               <SelectValue placeholder="Select a max frame rate">
                 {node.data.maxCaptureFrameRate?.toString()}
               </SelectValue>
             </SelectTrigger>
-            <SelectContent className="bg-zinc-950 border border-zinc-800 rounded-lg p-1 max-h-60 overflow-y-auto shadow-xl">
+            <SelectContent className="bg-background border border-border rounded-lg p-1 max-h-60 overflow-y-auto shadow-xl">
               {[0, 30, 60, 120].map((value) => (
                 <SelectItem
                   key={value}
                   value={value.toString()}
-                  className="flex items-center p-2 hover:bg-zinc-900 rounded cursor-pointer text-sm text-zinc-300"
+                  className="flex items-center p-2 hover:bg-muted rounded cursor-pointer text-sm text-foreground/80"
                 >
                   {value === 0 ? "No limit" : value}
                 </SelectItem>

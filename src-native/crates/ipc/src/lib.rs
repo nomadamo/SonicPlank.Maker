@@ -73,8 +73,13 @@ pub enum Command {
     /// Request enumeration of capturable monitors and windows.
     /// Core responds with [`Event::Sources`].
     GetSources,
-    /// Begin capturing the source with the given id.
-    StartCapture { 
+    /// Request enumeration of audio input and output devices.
+    /// Core responds with [`Event::AudioDevices`].
+    GetAudioDevices,
+    /// Start capturing the requested source. Note that in Phase 1 this is just
+    /// for native previews (the compositor manages its own captures based on config).
+    /// Core responds with [`Event::CaptureStarted`] or [`Event::Error`].
+    StartCapture {
         source_id: String,
         #[serde(default)]
         overlay_hwnd: Option<String>,
@@ -100,9 +105,17 @@ pub enum Command {
         /// Codec name: "libx264", "h264_nvenc", "h264_amf", "h264_qsv"
         encoder: String,
         sources: Vec<StreamSourceDef>,
+        #[serde(default)]
+        audio_device_id: Option<String>,
     },
     /// Stop the active stream. Core responds with [`Event::StreamStopped`].
     StopStream,
+    /// Request the waveform peaks for a local audio file.
+    /// Core responds with [`Event::WaveformPeaks`].
+    GetWaveformPeaks {
+        path: String,
+        pixels_per_second: u32,
+    },
 }
 
 // ── Events (Core  Electron) ──────────────────────────────────────────────────
@@ -130,6 +143,8 @@ pub enum Event {
     },
     /// Response to [`Command::GetSources`].
     Sources { items: Vec<CaptureSource> },
+    /// Response to [`Command::GetAudioDevices`].
+    AudioDevices { items: Vec<AudioDeviceDef> },
     /// Emitted when a capture session starts successfully.
     CaptureStarted { source_id: String },
     /// Emitted when the active capture session stops.
@@ -151,6 +166,11 @@ pub enum Event {
     /// Emitted when a command like Config or Standby is received, only if --verbose flag is used.
     Acknowledge {
         command: String,
+    },
+    /// Response to [`Command::GetWaveformPeaks`].
+    WaveformPeaks {
+        path: String,
+        peaks: Vec<f32>,
     },
 }
 
@@ -192,6 +212,15 @@ pub enum CaptureSourceKind {
     Monitor,
     Window,
     Webcam,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct AudioDeviceDef {
+    pub id: String,
+    pub name: String,
+    pub is_input: bool,
+    pub is_default: bool,
 }
 
 // ── Data-plane binary framing ─────────────────────────────────────────────────

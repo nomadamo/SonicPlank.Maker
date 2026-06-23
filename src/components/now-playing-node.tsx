@@ -170,8 +170,8 @@ export function NowPlayingNode(NodeRef: NodeProps<FlowNodeType>) {
       >
         <div className="flex flex-col gap-3.5 nodrag nopan nowheel">
           {/* Card Visual Preview */}
-          <div className="relative overflow-hidden rounded-xl bg-zinc-950/80 border border-zinc-800/80 p-3 flex items-center gap-3 shadow-lg backdrop-blur-md">
-            <div className="relative w-12 h-12 rounded-lg bg-zinc-900 border border-zinc-800/60 overflow-hidden flex items-center justify-center flex-shrink-0">
+          <div className="relative overflow-hidden rounded-xl bg-background/80 border border-border/80 p-3 flex items-center gap-3 shadow-lg backdrop-blur-md">
+            <div className="relative w-12 h-12 rounded-lg bg-muted border border-border/60 overflow-hidden flex items-center justify-center flex-shrink-0">
               {albumArt ? (
                 <img
                   src={albumArt}
@@ -183,18 +183,18 @@ export function NowPlayingNode(NodeRef: NodeProps<FlowNodeType>) {
               )}
             </div>
             <div className="flex-1 min-w-0 flex flex-col gap-1">
-              <div className="text-xs font-bold text-zinc-100 truncate tracking-wide">
+              <div className="text-xs font-bold text-foreground truncate tracking-wide">
                 {title}
               </div>
-              <div className="text-[10px] text-zinc-400 truncate">{artist}</div>
+              <div className="text-[10px] text-muted-foreground truncate">{artist}</div>
               <div className="w-full flex items-center gap-2 mt-1">
-                <div className="flex-1 h-1 bg-zinc-800 rounded-full overflow-hidden">
+                <div className="flex-1 h-1 bg-secondary rounded-full overflow-hidden">
                   <div
                     className="h-full bg-indigo-500 rounded-full transition-all duration-100 ease-out"
                     style={{ width: `${Math.min(100, progressPercent)}%` }}
                   />
                 </div>
-                <div className="text-[9px] font-medium text-zinc-400 tabular-nums flex-shrink-0">
+                <div className="text-[9px] font-medium text-muted-foreground tabular-nums flex-shrink-0">
                   {formatTime(currentDisplayTime)} / {formatTime(duration)}
                 </div>
               </div>
@@ -202,9 +202,9 @@ export function NowPlayingNode(NodeRef: NodeProps<FlowNodeType>) {
           </div>
 
           {/* Coordinates Grid */}
-          <div className="grid grid-cols-2 gap-2 border-t border-zinc-800/40 pt-2.5">
+          <div className="grid grid-cols-2 gap-2 border-t border-border/40 pt-2.5">
             <div className="flex flex-col gap-1">
-              <label className="text-[9px] font-semibold text-zinc-400 uppercase tracking-wider">
+              <label className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">
                 Position X (%)
               </label>
               <input
@@ -213,11 +213,11 @@ export function NowPlayingNode(NodeRef: NodeProps<FlowNodeType>) {
                 max="100"
                 value={draft.x}
                 onChange={(e) => set("x", Number(e.target.value) || 0)}
-                className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200 focus:border-indigo-500 focus:outline-none"
+                className="w-full bg-muted border border-border rounded px-2 py-1 text-xs text-foreground focus:border-indigo-500 focus:outline-none"
               />
             </div>
             <div className="flex flex-col gap-1">
-              <label className="text-[9px] font-semibold text-zinc-400 uppercase tracking-wider">
+              <label className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">
                 Position Y (%)
               </label>
               <input
@@ -226,11 +226,11 @@ export function NowPlayingNode(NodeRef: NodeProps<FlowNodeType>) {
                 max="100"
                 value={draft.y}
                 onChange={(e) => set("y", Number(e.target.value) || 0)}
-                className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200 focus:border-indigo-500 focus:outline-none"
+                className="w-full bg-muted border border-border rounded px-2 py-1 text-xs text-foreground focus:border-indigo-500 focus:outline-none"
               />
             </div>
             <div className="flex flex-col gap-1">
-              <label className="text-[9px] font-semibold text-zinc-400 uppercase tracking-wider">
+              <label className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">
                 Width (%)
               </label>
               <input
@@ -239,11 +239,11 @@ export function NowPlayingNode(NodeRef: NodeProps<FlowNodeType>) {
                 max="100"
                 value={draft.width}
                 onChange={(e) => set("width", Number(e.target.value) || 0)}
-                className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200 focus:border-indigo-500 focus:outline-none"
+                className="w-full bg-muted border border-border rounded px-2 py-1 text-xs text-foreground focus:border-indigo-500 focus:outline-none"
               />
             </div>
             <div className="flex flex-col gap-1">
-              <label className="text-[9px] font-semibold text-zinc-400 uppercase tracking-wider">
+              <label className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">
                 Height (%)
               </label>
               <input
@@ -252,18 +252,18 @@ export function NowPlayingNode(NodeRef: NodeProps<FlowNodeType>) {
                 max="100"
                 value={draft.height}
                 onChange={(e) => set("height", Number(e.target.value) || 0)}
-                className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200 focus:border-indigo-500 focus:outline-none"
+                className="w-full bg-muted border border-border rounded px-2 py-1 text-xs text-foreground focus:border-indigo-500 focus:outline-none"
               />
             </div>
           </div>
 
           {/* Opacity Slider */}
-          <div className="flex flex-col gap-1 border-t border-zinc-800/40 pt-2.5">
+          <div className="flex flex-col gap-1 border-t border-border/40 pt-2.5">
             <div className="flex justify-between items-center">
-              <label className="text-[9px] font-semibold text-zinc-400 uppercase tracking-wider">
+              <label className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">
                 Opacity
               </label>
-              <span className="text-[10px] text-zinc-400">
+              <span className="text-[10px] text-muted-foreground">
                 {Math.round(draft.opacity * 100)}%
               </span>
             </div>
@@ -274,7 +274,7 @@ export function NowPlayingNode(NodeRef: NodeProps<FlowNodeType>) {
               step="0.05"
               value={draft.opacity}
               onChange={(e) => set("opacity", Number(e.target.value))}
-              className="w-full h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-indigo-500 focus:outline-none"
+              className="w-full h-1 bg-secondary rounded-lg appearance-none cursor-pointer accent-indigo-500 focus:outline-none"
             />
           </div>
 

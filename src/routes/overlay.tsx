@@ -95,10 +95,15 @@ function OverlayWindowComponent() {
       audioTimesRef.current[nodeId] = { currentTime, duration };
     });
 
+    window.electron.onChatMessagesUpdated((nodeId, messages) => {
+      chatMessagesStore.set(nodeId, messages);
+    });
+
     return () => {
       window.electron.removeOnOverlaysUpdated(() => {});
       window.electron.removeOnAudioDataUpdated();
       window.electron.removeOnAudioTimeUpdated();
+      window.electron.removeOnChatMessagesUpdated();
     };
   }, []);
 

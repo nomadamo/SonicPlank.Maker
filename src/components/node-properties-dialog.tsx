@@ -219,18 +219,18 @@ export function NodePropertiesDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent style={{ maxWidth: "480px" }} className="bg-zinc-950 text-white border-zinc-800">
+      <DialogContent style={{ maxWidth: "480px" }} className="bg-background text-white border-border">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-zinc-100">
+          <DialogTitle className="flex items-center gap-2 text-foreground">
             <DialogIcon className="h-5 w-5 text-indigo-400" />
             {titleLabel}
           </DialogTitle>
-          <DialogDescription className="text-zinc-400">
+          <DialogDescription className="text-muted-foreground">
             {description}
           </DialogDescription>
         </DialogHeader>
 
-        <Separator className="bg-zinc-800/60" />
+        <Separator className="bg-secondary/60" />
 
         <div className="flex flex-col gap-4 py-2">
           {/* Audio Node Specific Fields */}
@@ -238,8 +238,8 @@ export function NodePropertiesDialog({
             <>
               {/* Title */}
               <div className="flex flex-col gap-1.5">
-                <Label htmlFor="prop-title" className="flex items-center gap-1.5 text-zinc-300">
-                  <MusicIcon className="h-3.5 w-3.5 text-zinc-500" />
+                <Label htmlFor="prop-title" className="flex items-center gap-1.5 text-foreground/80">
+                  <MusicIcon className="h-3.5 w-3.5 text-muted-foreground" />
                   Title
                 </Label>
                 <Input
@@ -247,14 +247,14 @@ export function NodePropertiesDialog({
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
                   placeholder="Track title"
-                  className="bg-zinc-900 border-zinc-800 text-zinc-200 focus:border-indigo-500"
+                  className="bg-muted border-border text-foreground focus:border-indigo-500"
                 />
               </div>
 
               {/* Artist */}
               <div className="flex flex-col gap-1.5">
-                <Label htmlFor="prop-artist" className="flex items-center gap-1.5 text-zinc-300">
-                  <UserIcon className="h-3.5 w-3.5 text-zinc-500" />
+                <Label htmlFor="prop-artist" className="flex items-center gap-1.5 text-foreground/80">
+                  <UserIcon className="h-3.5 w-3.5 text-muted-foreground" />
                   Artist
                 </Label>
                 <Input
@@ -262,14 +262,14 @@ export function NodePropertiesDialog({
                   value={artist}
                   onChange={(e) => setArtist(e.target.value)}
                   placeholder="Artist name"
-                  className="bg-zinc-900 border-zinc-800 text-zinc-200 focus:border-indigo-500"
+                  className="bg-muted border-border text-foreground focus:border-indigo-500"
                 />
               </div>
 
               {/* Volume */}
               <div className="flex flex-col gap-1.5">
-                <Label className="flex items-center gap-1.5 text-zinc-300">
-                  <Volume2Icon className="h-3.5 w-3.5 text-zinc-500" />
+                <Label className="flex items-center gap-1.5 text-foreground/80">
+                  <Volume2Icon className="h-3.5 w-3.5 text-muted-foreground" />
                   Default Volume — {Math.round(volume * 100)}%
                 </Label>
                 <Slider
@@ -283,21 +283,21 @@ export function NodePropertiesDialog({
                 />
               </div>
 
-              <Separator className="bg-zinc-800/60" />
+              <Separator className="bg-secondary/60" />
 
               {/* Read-only metadata */}
-              <div className="flex flex-col gap-2 bg-zinc-900/40 p-2.5 rounded-lg border border-zinc-900">
-                <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">
+              <div className="flex flex-col gap-2 bg-muted/40 p-2.5 rounded-lg border border-border/50">
+                <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
                   File Info
                 </p>
                 <div className="flex items-start gap-2">
-                  <FileAudioIcon className="h-3.5 w-3.5 mt-0.5 text-zinc-500 shrink-0" />
-                  <p className="text-xs text-zinc-400 break-all" title={node.data.mediaPath}>
+                  <FileAudioIcon className="h-3.5 w-3.5 mt-0.5 text-muted-foreground shrink-0" />
+                  <p className="text-xs text-muted-foreground break-all" title={node.data.mediaPath}>
                     {node.data.mediaPath || "—"}
                   </p>
                 </div>
                 {node.data.duration != null && (
-                  <p className="text-xs text-zinc-400">
+                  <p className="text-xs text-muted-foreground">
                     Duration: {formatDuration(node.data.duration)}
                   </p>
                 )}
@@ -309,16 +309,16 @@ export function NodePropertiesDialog({
           {nodeType === "textOverlayNode" && (
             <>
               <div className="flex flex-col gap-1.5">
-                <Label className="text-zinc-300">Watermark Text</Label>
+                <Label className="text-foreground/80">Watermark Text</Label>
                 <Input
                   value={textContent}
                   onChange={(e) => setTextContent(e.target.value)}
                   placeholder="e.g. Live Stream"
-                  className="bg-zinc-900 border-zinc-800 text-zinc-200"
+                  className="bg-muted border-border text-foreground"
                 />
               </div>
               <div className="flex flex-col gap-1.5">
-                <Label className="text-zinc-300">Font Size ({fontSize}%)</Label>
+                <Label className="text-foreground/80">Font Size ({fontSize}%)</Label>
                 <Slider
                   min={1}
                   max={20}
@@ -328,7 +328,7 @@ export function NodePropertiesDialog({
                 />
               </div>
               <div className="flex flex-col gap-1.5">
-                <Label className="text-zinc-300">Text Color</Label>
+                <Label className="text-foreground/80">Text Color</Label>
                 <div className="flex gap-2 items-center">
                   <CustomColorPicker
                     value={textColor}
@@ -337,16 +337,16 @@ export function NodePropertiesDialog({
                   <Input
                     value={textColor}
                     onChange={(e) => setTextColor(e.target.value)}
-                    className="flex-1 bg-zinc-900 border-zinc-800 text-zinc-200"
+                    className="flex-1 bg-muted border-border text-foreground"
                   />
                 </div>
               </div>
               <div className="flex flex-col gap-1.5">
-                <Label className="text-zinc-300">Font Family</Label>
+                <Label className="text-foreground/80">Font Family</Label>
                 <select
                   value={fontFamily}
                   onChange={(e) => setFontFamily(e.target.value)}
-                  className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 focus:outline-none cursor-pointer"
+                  className="w-full bg-muted border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground focus:outline-none cursor-pointer"
                 >
                   <option value="Inter, sans-serif">Inter</option>
                   <option value="Roboto, sans-serif">Roboto</option>
@@ -358,11 +358,11 @@ export function NodePropertiesDialog({
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="flex flex-col gap-1.5">
-                  <Label className="text-zinc-300">Font Weight</Label>
+                  <Label className="text-foreground/80">Font Weight</Label>
                   <select
                     value={fontWeight}
                     onChange={(e) => setFontWeight(e.target.value)}
-                    className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 focus:outline-none cursor-pointer"
+                    className="w-full bg-muted border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground focus:outline-none cursor-pointer"
                   >
                     <option value="300">Light</option>
                     <option value="normal">Regular</option>
@@ -372,11 +372,11 @@ export function NodePropertiesDialog({
                   </select>
                 </div>
                 <div className="flex flex-col gap-1.5">
-                  <Label className="text-zinc-300">Font Style</Label>
+                  <Label className="text-foreground/80">Font Style</Label>
                   <select
                     value={fontStyle}
                     onChange={(e) => setFontStyle(e.target.value)}
-                    className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 focus:outline-none cursor-pointer"
+                    className="w-full bg-muted border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground focus:outline-none cursor-pointer"
                   >
                     <option value="normal">Normal</option>
                     <option value="italic">Italic</option>
@@ -389,7 +389,7 @@ export function NodePropertiesDialog({
           {/* Color Overlay Specific Fields */}
           {nodeType === "colorOverlayNode" && (
             <div className="flex flex-col gap-1.5">
-              <Label className="text-zinc-300">Fill Color</Label>
+              <Label className="text-foreground/80">Fill Color</Label>
               <div className="flex gap-2 items-center">
                 <CustomColorPicker
                   value={backgroundColor}
@@ -398,7 +398,7 @@ export function NodePropertiesDialog({
                 <Input
                   value={backgroundColor}
                   onChange={(e) => setBackgroundColor(e.target.value)}
-                  className="flex-1 bg-zinc-900 border-zinc-800 text-zinc-200"
+                  className="flex-1 bg-muted border-border text-foreground"
                 />
               </div>
             </div>
@@ -407,12 +407,12 @@ export function NodePropertiesDialog({
           {/* Image Overlay Specific Fields */}
           {nodeType === "imageOverlayNode" && (
             <div className="flex flex-col gap-1.5">
-              <Label className="text-zinc-300">Local Image Path / URL</Label>
+              <Label className="text-foreground/80">Local Image Path / URL</Label>
               <Input
                 value={imagePath}
                 onChange={(e) => setImagePath(e.target.value)}
                 placeholder="C:\path\to\logo.png"
-                className="bg-zinc-900 border-zinc-800 text-zinc-200"
+                className="bg-muted border-border text-foreground"
               />
             </div>
           )}
@@ -420,11 +420,11 @@ export function NodePropertiesDialog({
           {/* Visualizer Specific Fields */}
           {nodeType === "visualizerOverlayNode" && (
             <div className="flex flex-col gap-1.5">
-              <Label className="text-zinc-300">Rendering Style</Label>
+              <Label className="text-foreground/80">Rendering Style</Label>
               <select
                 value={visualizerType}
                 onChange={(e) => setVisualizerType(e.target.value)}
-                className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs text-zinc-200 focus:outline-none cursor-pointer"
+                className="w-full bg-muted border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground focus:outline-none cursor-pointer"
               >
                 <option value="bars">Frequency Bars</option>
                 <option value="wave">Time-domain Wave (Oscilloscope)</option>
@@ -443,9 +443,9 @@ export function NodePropertiesDialog({
                 type="checkbox"
                 checked={captureAudio}
                 onChange={(e) => setCaptureAudio(e.target.checked)}
-                className="rounded bg-zinc-900 border-zinc-800 accent-indigo-500 cursor-pointer h-4 w-4"
+                className="rounded bg-muted border-border accent-indigo-500 cursor-pointer h-4 w-4"
               />
-              <Label htmlFor="prop-cap-audio" className="text-zinc-300 cursor-pointer">
+              <Label htmlFor="prop-cap-audio" className="text-foreground/80 cursor-pointer">
                 Capture Source Audio Output
               </Label>
             </div>
@@ -453,9 +453,9 @@ export function NodePropertiesDialog({
 
           {/* Triggers Mappings Config Section */}
           {availableActions && (
-            <div className="flex flex-col gap-3.5 border-t border-zinc-800/65 pt-4">
+            <div className="flex flex-col gap-3.5 border-t border-border/65 pt-4">
               <div className="flex justify-between items-center">
-                <h5 className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">
+                <h5 className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">
                   Configurable Hotkeys
                 </h5>
                 <Button
@@ -472,14 +472,14 @@ export function NodePropertiesDialog({
                       },
                     ]);
                   }}
-                  className="h-7 text-[10px] px-2.5 rounded-lg border-zinc-800 bg-zinc-900 hover:bg-zinc-800 text-zinc-300"
+                  className="h-7 text-[10px] px-2.5 rounded-lg border-border bg-muted hover:bg-secondary text-foreground/80"
                 >
                   Add Hotkey
                 </Button>
               </div>
 
               {triggers.length === 0 ? (
-                <p className="text-[11px] text-zinc-500 italic">
+                <p className="text-[11px] text-muted-foreground italic">
                   No hotkeys mapped yet. Click Add Hotkey above.
                 </p>
               ) : (
@@ -495,7 +495,7 @@ export function NodePropertiesDialog({
                             prev.map((t) => (t.id === trigger.id ? { ...t, action: val } : t))
                           );
                         }}
-                        className="flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none cursor-pointer h-8"
+                        className="flex-1 bg-muted border border-border rounded-lg px-2 py-1 text-xs text-foreground focus:outline-none cursor-pointer h-8"
                       >
                         {availableActions.map((act) => (
                           <option key={act.name} value={act.name}>
@@ -511,10 +511,10 @@ export function NodePropertiesDialog({
                         size="sm"
                         onClick={() => setRecordingTriggerId(trigger.id)}
                         className={cn(
-                          "w-28 text-[11px] h-8 rounded-lg border-zinc-800 truncate font-mono",
+                          "w-28 text-[11px] h-8 rounded-lg border-border truncate font-mono",
                           recordingTriggerId === trigger.id
                             ? "bg-amber-500/10 border-amber-500/30 text-amber-400 animate-pulse border-dashed"
-                            : "bg-zinc-900 text-zinc-300 hover:bg-zinc-800"
+                            : "bg-muted text-foreground/80 hover:bg-secondary"
                         )}
                       >
                         {recordingTriggerId === trigger.id ? "Press key..." : trigger.triggerKey || "Not Bound"}
@@ -528,7 +528,7 @@ export function NodePropertiesDialog({
                         onClick={() => {
                           setTriggers((prev) => prev.filter((t) => t.id !== trigger.id));
                         }}
-                        className="h-8 px-2.5 hover:bg-red-500/10 text-zinc-400 hover:text-red-400 rounded-lg"
+                        className="h-8 px-2.5 hover:bg-red-500/10 text-muted-foreground hover:text-red-400 rounded-lg"
                       >
                         Remove
                       </Button>
@@ -540,8 +540,8 @@ export function NodePropertiesDialog({
           )}
         </div>
 
-        <div className="flex justify-end gap-2 pt-2 border-t border-zinc-800/40">
-          <Button variant="ghost" onClick={() => onOpenChange(false)} className="hover:bg-zinc-900 hover:text-zinc-100">
+        <div className="flex justify-end gap-2 pt-2 border-t border-border/40">
+          <Button variant="ghost" onClick={() => onOpenChange(false)} className="hover:bg-muted hover:text-foreground">
             Cancel
           </Button>
           <Button onClick={handleSave} className="bg-indigo-600 hover:bg-indigo-500 text-white">

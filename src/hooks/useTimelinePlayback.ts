@@ -10,6 +10,40 @@ import {
   getOrCreateTrackNodes,
   cleanupUnusedTrackNodes,
 } from "@/lib/trackAudioRegistry";
+import { TimelineClip } from "@/types/timeline";
+
+function getInterpolatedVolume(clip: TimelineClip, localTime: number): number {
+  const baseVolume = clip.volume ?? 1.0;
+  const env = clip.volumeEnvelope;
+  
+  if (!env || env.length === 0) return baseVolume;
+
+  // Before first point
+  if (localTime <= env[0].time) return env[0].value;
+  
+  // After last point
+  if (localTime >= env[env.length - 1].time) return env[env.length - 1].value;
+
+  // Find surrounding points
+  for (let i = 0; i < env.length - 1; i++) {
+    const p0 = env[i];
+    const p1 = env[i + 1];
+    
+    if (localTime >= p0.time && localTime <= p1.time) {
+      const t = (localTime - p0.time) / (p1.time - p0.time); // 0.0 to 1.0
+      
+      if (p0.curve === "linear") {
+        return p0.value + (p1.value - p0.value) * t;
+      } else {
+        // Smooth curve (cosine approximation of cubic bezier)
+        const smoothT = 0.5 - 0.5 * Math.cos(t * Math.PI);
+        return p0.value + (p1.value - p0.value) * smoothT;
+      }
+    }
+  }
+
+  return baseVolume;
+}
 
 export function useTimelinePlayback() {
   const [isPlaying, setIsPlaying] = useAtom(timelineIsPlayingAtom);
@@ -17,7 +51,7 @@ export function useTimelinePlayback() {
   const tracks = useAtomValue(timelineTracksAtom);
 
   const audioCache = useRef<Map<string, HTMLAudioElement>>(new Map());
-  const sourceCache = useRef<Map<string, MediaElementAudioSourceNode>>(
+  const sourceCache = useRef<Map<string, { source: MediaElementAudioSourceNode, gainNode: GainNode }>>(
     new Map(),
   );
 
@@ -38,10 +72,11 @@ export function useTimelinePlayback() {
     }
 
     // Clean up source nodes
-    for (const [clipId, source] of sourceCache.current.entries()) {
+    for (const [clipId, nodes] of sourceCache.current.entries()) {
       if (!currentClipIds.has(clipId)) {
         try {
-          source.disconnect();
+          nodes.source.disconnect();
+          nodes.gainNode.disconnect();
         } catch (e) {}
         sourceCache.current.delete(clipId);
       }
@@ -63,7 +98,7 @@ export function useTimelinePlayback() {
   }, [tracks]);
 
   // Sync logic for a single frame
-  const syncClips = useCallback((time: number, forcePause: boolean = false) => {
+  const syncClips = useCallback((time: number, forcePause: boolean = false, isSeek: boolean = false) => {
     const ctx = $webAudio.getContext();
 
     tracksRef.current.forEach((track) => {
@@ -92,12 +127,15 @@ export function useTimelinePlayback() {
         }
 
         // Route through Web Audio if nodes exist and not panned/gained twice
-        let source = sourceCache.current.get(clip.id);
-        if (!source && nodes && ctx) {
+        let clipNodes = sourceCache.current.get(clip.id);
+        if (!clipNodes && nodes && ctx) {
           try {
-            source = ctx.createMediaElementSource(audio);
-            source.connect(nodes.gainNode);
-            sourceCache.current.set(clip.id, source);
+            const source = ctx.createMediaElementSource(audio);
+            const gainNode = ctx.createGain();
+            source.connect(gainNode);
+            gainNode.connect(nodes.gainNode);
+            clipNodes = { source, gainNode };
+            sourceCache.current.set(clip.id, clipNodes);
           } catch (err) {
             console.error(
               "Error creating MediaElementSource for clip",
@@ -107,32 +145,49 @@ export function useTimelinePlayback() {
           }
         }
 
-        // Ensure volume is synced
-        if (source) {
-          // If routed through Web Audio, we keep audio element volume at 1.0
-          // to let gainNode control it completely
-          if (audio.volume !== 1.0) {
-            audio.volume = 1.0;
-          }
-        } else {
-          // Fallback if not routed to Web Audio yet
-          if (audio.volume !== trackVolume) {
-            audio.volume = trackVolume;
-          }
-        }
-
         const isInsideClip =
           time >= clip.startTime && time < clip.startTime + clip.duration;
         const expectedInternalTime =
           time - clip.startTime + (clip.startOffset || 0);
 
+        // Calculate dynamic envelope volume
+        const localTime = time - clip.startTime;
+        const dynamicVolume = getInterpolatedVolume(clip, localTime);
+
+        // Ensure volume is synced
+        if (clipNodes) {
+          // If routed through Web Audio, use the clip's specific gain node
+          // Note: Since this runs ~60fps in requestAnimationFrame, this creates relatively smooth automation,
+          // though using gainNode.gain.setValueAtTime would be better for sample-accurate scheduling.
+          // For now, this meets the immediate non-destructive edit requirements visually and audibly.
+          if (Math.abs(clipNodes.gainNode.gain.value - dynamicVolume) > 0.001) {
+            clipNodes.gainNode.gain.value = dynamicVolume;
+          }
+        } else {
+          // Fallback if not routed to Web Audio yet
+          const combinedVolume = trackVolume * dynamicVolume;
+          if (Math.abs(audio.volume - combinedVolume) > 0.001) {
+            audio.volume = Math.max(0, Math.min(1, combinedVolume));
+          }
+        }
+
         if (isInsideClip && !forcePause) {
           if (audio.paused) {
+            // Sync playhead tightly BEFORE playing to prevent massive stutter jumps
+            if (Math.abs(audio.currentTime - expectedInternalTime) > 0.05) {
+              audio.currentTime = expectedInternalTime;
+            }
             audio.play().catch(() => {});
-          }
-          // Drift correction: if audio is out of sync by more than 250ms, seek it
-          if (Math.abs(audio.currentTime - expectedInternalTime) > 0.25) {
-            audio.currentTime = expectedInternalTime;
+          } else {
+            // Drift correction: if audio is out of sync, correct it.
+            // But if we are naturally playing, we NEVER snap unless it's a catastrophic drift
+            // If the user sought (isSeek), we snap tightly.
+            if (isSeek && Math.abs(audio.currentTime - expectedInternalTime) > 0.05) {
+              audio.currentTime = expectedInternalTime;
+            } else if (Math.abs(audio.currentTime - expectedInternalTime) > 5.0) {
+              // Only snap during natural playback if it somehow drifts by more than 5 seconds!
+              audio.currentTime = expectedInternalTime;
+            }
           }
         } else {
           if (!audio.paused) {
@@ -228,7 +283,7 @@ export function useTimelinePlayback() {
     (time: number) => {
       currentTimeRef.current = time;
       setCurrentTime(time);
-      syncClips(time, !isPlaying);
+      syncClips(time, !isPlaying, true);
     },
     [setCurrentTime, syncClips, isPlaying],
   );

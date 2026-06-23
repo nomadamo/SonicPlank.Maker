@@ -25,7 +25,7 @@ export type AppSettings = {
   
   // FFmpeg Output Global Settings
   streamEncoder?: "copy" | "libx264" | "h264_nvenc" | "h264_amf" | "h264_qsv";
-  streamFps?: 30 | 60;
+  streamFps?: 30 | 60 | 90 | 120;
   streamDelayMs?: number;
   streamBitrateKbps?: number;
   recordingBitrateKbps?: number;

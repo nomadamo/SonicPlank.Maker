@@ -210,6 +210,50 @@ export const initSpotifyFromStorage = atom(null, async (get, set) => {
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
 
+export const pollSpotifyPlaybackAtom = atom(null, async (get, set) => {
+  const token = get(spotifyTokenAtom);
+  if (!token) return;
+
+  try {
+    const playerRes = await fetch("https://api.spotify.com/v1/me/player", {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    if (playerRes.status === 200) {
+      const state = await playerRes.json() as StartupPlayerState;
+      if (state.item) {
+        const context = state.context ?? null;
+        const uri = context ? context.uri : state.item.uri;
+        
+        // Only update if it actually changed to avoid re-renders
+        const current = get(currentPlaybackAtom);
+        if (
+          !current ||
+          current.uri !== uri ||
+          current.isPlaying !== state.is_playing ||
+          current.title !== state.item.name
+        ) {
+          set(currentPlaybackAtom, {
+            title: state.item.name,
+            artist: state.item.artists.map((a) => a.name).join(", "),
+            albumArt: state.item.album.images[0]?.url ?? "",
+            uri,
+            isPlaylist: !!context,
+            isPlaying: state.is_playing,
+            duration: state.item.duration_ms / 1000,
+          });
+        }
+        
+        if (state.device?.id) {
+          set(lastDeviceIdAtom, state.device.id);
+        }
+      }
+    }
+  } catch (err) {
+    // Ignore fetch errors during polling
+  }
+});
+
 export const authenticateSpotify = atom(null, async (_get, set) => {
   const tokens = await window.electron.initiateSpotifyAuth();
   const creds: SpotifyCredentials = {

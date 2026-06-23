@@ -85,6 +85,18 @@ contextBridge.exposeInMainWorld("electron", {
     const metadata = await ipcRenderer.invoke("getaudiometadata", filePath);
     return metadata;
   },
+  showSaveDialog: async (options: any): Promise<any> => {
+    return await ipcRenderer.invoke("dialog:showSaveDialog", options);
+  },
+  showOpenDialog: async (options: any): Promise<any> => {
+    return await ipcRenderer.invoke("dialog:showOpenDialog", options);
+  },
+  readProject: async (filePath: string): Promise<string | null> => {
+    return await ipcRenderer.invoke("readProject", filePath);
+  },
+  saveProject: async (filePath: string, data: string): Promise<boolean> => {
+    return await ipcRenderer.invoke("saveProject", filePath, data);
+  },
   openFileDialog: async (options?: any): Promise<string[]> => {
     const filePaths = await ipcRenderer.invoke("openfiledialog", options);
     return filePaths;
@@ -162,6 +174,25 @@ contextBridge.exposeInMainWorld("electron", {
   },
   removeOnAudioDataUpdated: () => {
     ipcRenderer.removeAllListeners("onAudioDataUpdated");
+  },
+  onNativeWindowClose: (callback: () => void) => {
+    ipcRenderer.on("nativeWindowClose", callback);
+  },
+  removeOnNativeWindowClose: () => {
+    ipcRenderer.removeAllListeners("nativeWindowClose");
+  },
+  sendChatMessages: (nodeId: string, messages: any[]) => {
+    ipcRenderer.send("sendChatMessages", nodeId, messages);
+  },
+  onChatMessagesUpdated: (
+    callback: (nodeId: string, messages: any[]) => void,
+  ) => {
+    ipcRenderer.on("onChatMessagesUpdated", (_event, nodeId, messages) => {
+      callback(nodeId, messages);
+    });
+  },
+  removeOnChatMessagesUpdated: () => {
+    ipcRenderer.removeAllListeners("onChatMessagesUpdated");
   },
   openEditOverlay: async (args: { aspect: string; fitMode?: string }): Promise<void> => {
     await ipcRenderer.invoke("openEditOverlay", args);
@@ -254,6 +285,14 @@ contextBridge.exposeInMainWorld("electron", {
   > => {
     return await ipcRenderer.invoke("getPreviewSources");
   },
+  getAudioDevices: async (): Promise<
+    { id: string; name: string; is_input: boolean; is_default: boolean }[]
+  > => {
+    return await ipcRenderer.invoke("getAudioDevices");
+  },
+  getWaveformPeaks: async (path: string, pixelsPerSecond: number): Promise<number[]> => {
+    return await ipcRenderer.invoke("getWaveformPeaks", path, pixelsPerSecond);
+  },
   startPreviewCapture: async (sourceId: string): Promise<void> => {
     await ipcRenderer.invoke("startPreviewCapture", sourceId);
   },
@@ -283,6 +322,7 @@ contextBridge.exposeInMainWorld("electron", {
       outputHeight?: number;
       fitMode?: string;
       encoder?: string;
+      audioDeviceId?: string;
       sources: {
         source_id: string;
         is_primary: boolean;

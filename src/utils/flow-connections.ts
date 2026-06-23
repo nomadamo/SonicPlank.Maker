@@ -33,19 +33,19 @@ export const CONNECTION_RULES: Record<string, Record<string, HandleConnectionRul
   },
   nowPlayingNode: {
     target: {
-      allowedSourceTypes: ["audioFlowNode"],
+      allowedSourceTypes: ["audioFlowNode", "globalAudioNode"],
       allowedSourceHandleSuffix: "source",
     },
   },
   visualizerOverlayNode: {
     target: {
-      allowedSourceTypes: ["audioFlowNode"],
+      allowedSourceTypes: ["audioFlowNode", "globalAudioNode"],
       allowedSourceHandleSuffix: "source",
     },
   },
   masterOutputNode: {
     target: {
-      allowedSourceTypes: ["audioFlowNode"],
+      allowedSourceTypes: ["audioFlowNode", "globalAudioNode"],
       allowedSourceHandleSuffix: "source",
     },
   },

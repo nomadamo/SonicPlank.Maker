@@ -4,6 +4,9 @@ mod compositor;
 mod d2d;
 mod sources;
 mod streaming;
+mod audio;
+mod audio_encoder;
+mod waveform;
 
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -249,6 +252,15 @@ async fn run_stdin_commands(
                         stdout.write_all(&frame).await?;
                         stdout.flush().await?;
                     }
+                    Ok(Command::GetAudioDevices) => {
+                        let items = audio::get_audio_devices().unwrap_or_else(|e| {
+                            error!("Failed to enumerate audio devices: {e}");
+                            Vec::new()
+                        });
+                        let frame = encode_event(&Event::AudioDevices { items })?;
+                        stdout.write_all(&frame).await?;
+                        stdout.flush().await?;
+                    }
                     Ok(Command::StartCapture { source_id, overlay_hwnd }) => {
                         let session_result: Result<Box<dyn CaptureSessionTrait>> = if source_id.starts_with("webcam:") {
                             let sym_link = source_id.trim_start_matches("webcam:");
@@ -316,6 +328,7 @@ async fn run_stdin_commands(
                         fit_mode,
                         encoder,
                         sources,
+                        audio_device_id,
                     }) => {
                         if active_sessions.is_empty() {
                             let frame = encode_event(&Event::Error {
@@ -338,6 +351,7 @@ async fn run_stdin_commands(
                                 fit_mode,
                                 encoder,
                                 sources,
+                                audio_device_id,
                             };
                             active_stream = Some(StreamSession::start(
                                 opts,
@@ -353,6 +367,27 @@ async fn run_stdin_commands(
                             s.stop();
                             // StreamStopped event is emitted by the encoder thread.
                         }
+                    }
+                    Ok(Command::GetWaveformPeaks { path, pixels_per_second }) => {
+                        info!("Computing waveform peaks for {} at {} pps", path, pixels_per_second);
+                        tokio::task::spawn_blocking(move || {
+                            let peaks = match crate::waveform::compute_peaks(&path, pixels_per_second) {
+                                Ok(p) => p,
+                                Err(e) => {
+                                    tracing::error!("Failed to compute waveform: {}", e);
+                                    Vec::new()
+                                }
+                            };
+                            let frame = encode_event(&Event::WaveformPeaks {
+                                path,
+                                peaks,
+                            }).unwrap();
+                            tokio::spawn(async move {
+                                let mut out = tokio::io::stdout();
+                                let _ = out.write_all(&frame).await;
+                                let _ = out.flush().await;
+                            });
+                        });
                     }
                     Ok(other) => {
                         warn!("Unexpected command on control plane: {other:?}");

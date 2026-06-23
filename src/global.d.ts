@@ -35,6 +35,10 @@ declare global {
       loadTimeline: () => Promise<string>;
       saveTimeline: (data: any) => Promise<void>;
       getAudioMetadata: (filePath: string) => Promise<AudioMetadata>;
+      showSaveDialog: (options: any) => Promise<any>;
+      showOpenDialog: (options: any) => Promise<any>;
+      readProject: (filePath: string) => Promise<string | null>;
+      saveProject: (filePath: string, data: string) => Promise<boolean>;
       openFileDialog: (options?: any) => Promise<string[]>;
       saveRecording: (fileName: string, arrayBuffer: ArrayBuffer, customPath?: string) => Promise<string>;
       getFilePath: (file: File) => string;
@@ -64,6 +68,11 @@ declare global {
       sendAudioData: (visualizerId: string, dataArray: number[]) => void;
       onAudioDataUpdated: (callback: (visualizerId: string, dataArray: number[]) => void) => void;
       removeOnAudioDataUpdated: () => void;
+      onNativeWindowClose: (callback: () => void) => void;
+      removeOnNativeWindowClose: () => void;
+      sendChatMessages: (nodeId: string, messages: any[]) => void;
+      onChatMessagesUpdated: (callback: (nodeId: string, messages: any[]) => void) => void;
+      removeOnChatMessagesUpdated: () => void;
       openEditOverlay: (args: { aspect: string; fitMode?: string }) => Promise<void>;
       updateFitMode: (fitMode: string) => Promise<void>;
       onFitModeUpdated: (callback: (fitMode: string) => void) => void;
@@ -97,6 +106,8 @@ declare global {
         callback: (sourceId: string, width: number, height: number, data: Uint8Array) => void,
       ) => void;
       removeOnNativePreviewFrame: () => void;
+      getAudioDevices: () => Promise<{ id: string; name: string; is_input: boolean; is_default: boolean }[]>;
+      getWaveformPeaks: (path: string, pixelsPerSecond: number) => Promise<number[]>;
       startNativeStream: (
         options: {
           rtmpUrl: string;
@@ -106,6 +117,7 @@ declare global {
           outputHeight?: number;
           fitMode?: string;
           encoder?: string;
+          audioDeviceId?: string;
           sources: {
             source_id: string;
             is_primary: boolean;

@@ -125,8 +125,8 @@ export function OverlayGroupNode(NodeRef: NodeProps<FlowNodeType>) {
       >
         {/* ── Capture Sources ─────────────────────────────────────── */}
         {connectedCaptureSources.length > 0 && (
-          <div className="flex flex-col gap-1.5 p-3 rounded-lg bg-zinc-900/50 border border-zinc-800/40 nodrag nopan nowheel">
-            <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mb-0.5 select-none">
+          <div className="flex flex-col gap-1.5 p-3 rounded-lg bg-muted/50 border border-border/40 nodrag nopan nowheel">
+            <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-0.5 select-none">
               Capture Sources
             </span>
             {connectedCaptureSources.map((source) => {
@@ -140,13 +140,13 @@ export function OverlayGroupNode(NodeRef: NodeProps<FlowNodeType>) {
               return (
                 <div
                   key={source.id}
-                  className="flex flex-col gap-1 border-b border-zinc-800/40 last:border-0 pb-2 last:pb-0"
+                  className="flex flex-col gap-1 border-b border-border/40 last:border-0 pb-2 last:pb-0"
                 >
                   <div className="flex items-center gap-1.5">
-                    <span className="text-[11px] text-zinc-300 truncate flex-1 min-w-0">
+                    <span className="text-[11px] text-foreground/80 truncate flex-1 min-w-0">
                       {sourceName}
                     </span>
-                    <div className="flex items-center gap-0.5 rounded-md bg-zinc-900 border border-zinc-800 p-0.5 shrink-0">
+                    <div className="flex items-center gap-0.5 rounded-md bg-muted border border-border p-0.5 shrink-0">
                       {(["primary", "pip"] as const).map((r) => (
                         <button
                           key={r}
@@ -155,7 +155,7 @@ export function OverlayGroupNode(NodeRef: NodeProps<FlowNodeType>) {
                             "px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider transition-colors cursor-pointer",
                             role?.role === r
                               ? "bg-indigo-500/20 text-indigo-300"
-                              : "text-zinc-500 hover:text-zinc-300",
+                              : "text-muted-foreground hover:text-foreground/80",
                           )}
                         >
                           {r === "primary" ? "Main" : "PiP"}
@@ -166,7 +166,7 @@ export function OverlayGroupNode(NodeRef: NodeProps<FlowNodeType>) {
                       <button
                         title="Swap: make this the primary source"
                         onClick={() => setSourceRole(source.id, "primary")}
-                        className="p-0.5 rounded text-zinc-500 hover:text-indigo-300 transition-colors cursor-pointer"
+                        className="p-0.5 rounded text-muted-foreground hover:text-indigo-300 transition-colors cursor-pointer"
                       >
                         <SwapIcon className="w-3 h-3" />
                       </button>
@@ -199,7 +199,7 @@ export function OverlayGroupNode(NodeRef: NodeProps<FlowNodeType>) {
                                   [key]: Number(e.target.value),
                                 })
                               }
-                              className="w-full text-[10px] bg-zinc-950 border border-zinc-700 rounded px-1 py-0.5 text-zinc-200 nodrag nopan nowheel"
+                              className="w-full text-[10px] bg-background border border-border/80 rounded px-1 py-0.5 text-foreground nodrag nopan nowheel"
                             />
                             <span className="text-[8px] text-zinc-600">%</span>
                           </div>
@@ -214,12 +214,12 @@ export function OverlayGroupNode(NodeRef: NodeProps<FlowNodeType>) {
         )}
 
         {/* ── Overlay Layers ───────────────────────────────────────── */}
-        <div className="flex flex-col gap-1.5 p-3 rounded-lg bg-zinc-900/50 border border-zinc-800/40 nodrag nopan nowheel">
-          <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mb-0.5 select-none">
+        <div className="flex flex-col gap-1.5 p-3 rounded-lg bg-muted/50 border border-border/40 nodrag nopan nowheel">
+          <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-0.5 select-none">
             Layers (Bottom → Top)
           </span>
           {connectedOverlays.length === 0 ? (
-            <div className="text-[11px] text-zinc-500 italic py-1 select-none">
+            <div className="text-[11px] text-muted-foreground italic py-1 select-none">
               No overlay layers connected.
             </div>
           ) : (
@@ -276,12 +276,12 @@ export function OverlayGroupNode(NodeRef: NodeProps<FlowNodeType>) {
                     id={item.id}
                     className="nodrag nopan nowheel select-none"
                   >
-                    <div className="flex w-full items-center justify-between text-[11px] text-zinc-300 py-1.5 border-b border-zinc-800/40 last:border-0 hover:bg-zinc-900/40 px-1 rounded transition-colors group">
+                    <div className="flex w-full items-center justify-between text-[11px] text-foreground/80 py-1.5 border-b border-border/40 last:border-0 hover:bg-muted/40 px-1 rounded transition-colors group">
                       <div className="flex items-center gap-2 min-w-0 flex-1">
                         <SortableDragHandle />
                         <span className="font-medium truncate">{typeLabel}</span>
                       </div>
-                      <span className="text-zinc-500 max-w-[120px] truncate text-[10px] select-none pr-1">
+                      <span className="text-muted-foreground max-w-[120px] truncate text-[10px] select-none pr-1">
                         {descriptor}
                       </span>
                     </div>

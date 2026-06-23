@@ -58,7 +58,7 @@ export function CustomColorPicker({
             <Button
               variant="ghost"
               className={cn(
-                "nodrag nopan nowheel flex h-fit items-center gap-2 p-0.5 border border-zinc-800 rounded bg-zinc-950 hover:bg-zinc-900 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-zinc-700",
+                "nodrag nopan nowheel flex h-fit items-center gap-2 p-0.5 border border-border rounded bg-background hover:bg-muted transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-zinc-700",
                 disabled && "opacity-50 pointer-events-none"
               )}
               disabled={disabled}
@@ -70,18 +70,18 @@ export function CustomColorPicker({
             </Button>
           }
         />
-        <PopoverContent className="nodrag nopan nowheel w-fit bg-zinc-950 border border-zinc-800 p-3 rounded-xl flex flex-col gap-3 shadow-2xl">
+        <PopoverContent className="nodrag nopan nowheel w-fit bg-background border border-border p-3 rounded-xl flex flex-col gap-3 shadow-2xl">
           <div className="flex flex-col gap-2">
             <ColorArea
               colorSpace="hsb"
               xChannel="saturation"
               yChannel="brightness"
-              className="h-[140px] w-[180px] rounded-lg border border-zinc-800/80 shadow-md"
+              className="h-[140px] w-[180px] rounded-lg border border-border/80 shadow-md"
             >
               <ColorThumb className="z-50 border-white shadow-lg cursor-grab active:cursor-grabbing" />
             </ColorArea>
             <ColorSlider colorSpace="hsb" channel="hue">
-              <SliderTrack className="h-4 w-[180px] rounded-full border border-zinc-800/80">
+              <SliderTrack className="h-4 w-[180px] rounded-full border border-border/80">
                 <ColorThumb className="top-1/2 border-white shadow-lg cursor-grab active:cursor-grabbing" />
               </SliderTrack>
             </ColorSlider>
@@ -91,7 +91,7 @@ export function CustomColorPicker({
             <ColorField colorSpace="rgb" className="flex-1">
               <Input
                 id={`picker_input_${colorId}`}
-                className="h-8 text-xs bg-zinc-900 border-zinc-800 text-zinc-200 focus-visible:ring-zinc-700 font-mono"
+                className="h-8 text-xs bg-muted border-border text-foreground focus-visible:ring-zinc-700 font-mono"
                 aria-label="Hex Color"
                 value={safeValue}
               />
@@ -99,7 +99,7 @@ export function CustomColorPicker({
             <Button
               size="icon"
               variant="outline"
-              className="h-8 w-8 bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-250 hover:bg-zinc-800 transition-colors"
+              className="h-8 w-8 bg-muted border-border text-muted-foreground hover:text-zinc-250 hover:bg-secondary transition-colors"
               onClick={handleCopy}
             >
               {isCopied ? (
@@ -112,28 +112,28 @@ export function CustomColorPicker({
 
           <ColorSwatchPicker className="w-[180px] gap-1.5 flex flex-wrap justify-between">
             <ColorSwatchPickerItem color="#ef4444">
-              <ColorSwatch className="size-6 rounded-md border border-zinc-800 shadow-sm" />
+              <ColorSwatch className="size-6 rounded-md border border-border shadow-sm" />
             </ColorSwatchPickerItem>
             <ColorSwatchPickerItem color="#f97316">
-              <ColorSwatch className="size-6 rounded-md border border-zinc-800 shadow-sm" />
+              <ColorSwatch className="size-6 rounded-md border border-border shadow-sm" />
             </ColorSwatchPickerItem>
             <ColorSwatchPickerItem color="#eab308">
-              <ColorSwatch className="size-6 rounded-md border border-zinc-800 shadow-sm" />
+              <ColorSwatch className="size-6 rounded-md border border-border shadow-sm" />
             </ColorSwatchPickerItem>
             <ColorSwatchPickerItem color="#22c55e">
-              <ColorSwatch className="size-6 rounded-md border border-zinc-800 shadow-sm" />
+              <ColorSwatch className="size-6 rounded-md border border-border shadow-sm" />
             </ColorSwatchPickerItem>
             <ColorSwatchPickerItem color="#06b6d4">
-              <ColorSwatch className="size-6 rounded-md border border-zinc-800 shadow-sm" />
+              <ColorSwatch className="size-6 rounded-md border border-border shadow-sm" />
             </ColorSwatchPickerItem>
             <ColorSwatchPickerItem color="#3b82f6">
-              <ColorSwatch className="size-6 rounded-md border border-zinc-800 shadow-sm" />
+              <ColorSwatch className="size-6 rounded-md border border-border shadow-sm" />
             </ColorSwatchPickerItem>
             <ColorSwatchPickerItem color="#a855f7">
-              <ColorSwatch className="size-6 rounded-md border border-zinc-800 shadow-sm" />
+              <ColorSwatch className="size-6 rounded-md border border-border shadow-sm" />
             </ColorSwatchPickerItem>
             <ColorSwatchPickerItem color="#ffffff">
-              <ColorSwatch className="size-6 rounded-md border border-zinc-800 shadow-sm" />
+              <ColorSwatch className="size-6 rounded-md border border-border shadow-sm" />
             </ColorSwatchPickerItem>
           </ColorSwatchPicker>
         </PopoverContent>

@@ -55,14 +55,16 @@ import {
   MessageSquare as MessageSquareIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { useAtomValue, useSetAtom } from "jotai";
+import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { isGlobalPlayerActiveAtom } from "@/store/libraryStore";
+import { useFlowHistory } from "@/hooks/useFlowHistory";
 import {
   flowNodesAtom,
   flowEdgesAtom,
   flowViewportAtom,
   flowDataAtom,
   updateNodeDataAtom,
+  flowHasUnsavedChangesAtom,
 } from "@/store/flowStore";
 import { executeNodeAction } from "@/utils/node-actions";
 import { triggerNodeActionAtom } from "@/store/transientNodeStore";
@@ -254,11 +256,10 @@ export const Route = createFileRoute("/flow-editor")({
 
 function FlowEditor() {
   const {
-    hasUnsavedChanges,
-    setHasUnsavedChanges,
     persistRequested,
     setPersistRequested,
   } = useStateMachine();
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useAtom(flowHasUnsavedChangesAtom);
   const flowNodesData = useAtomValue(flowNodesAtom);
   const flowEdgesData = useAtomValue(flowEdgesAtom);
   const flowViewportData = useAtomValue(flowViewportAtom);
@@ -277,6 +278,7 @@ function FlowEditor() {
   const updateNodeData = useSetAtom(updateNodeDataAtom);
   const isGlobalPlayerActive = useAtomValue(isGlobalPlayerActiveAtom);
   const runNodeAction = useSetAtom(triggerNodeActionAtom);
+  const { undo, redo, canUndo, canRedo } = useFlowHistory();
 
   // Global keydown triggers handler
   useEffect(() => {

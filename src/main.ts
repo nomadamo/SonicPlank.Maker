@@ -201,10 +201,13 @@ let coreLastAckMs = 0;
 
 // One-shot listeners keyed by event type. waitForCoreEvent() registers here;
 // the persistent stdout readline fires them as events arrive.
-const coreEventListeners = new Map<
-  string,
-  (ev: Record<string, unknown>) => void
->();
+interface CoreEventListener {
+  type: string;
+  predicate?: (ev: Record<string, unknown>) => boolean;
+  resolve: (ev: Record<string, unknown>) => void;
+  reject: (err: Error) => void;
+}
+const coreEventListeners = new Set<CoreEventListener>();
 let coreStdoutRl: readline.Interface | null = null;
 
 // Accumulates partial binary frames arriving from the data pipe.
@@ -262,20 +265,26 @@ function startCoreEventLoop(): void {
         });
         return;
       }
-      const cb = coreEventListeners.get(type);
-      if (cb) {
-        coreEventListeners.delete(type);
-        cb(ev);
+      
+      let matched = false;
+      for (const listener of coreEventListeners) {
+        if (listener.type === type) {
+          if (!listener.predicate || listener.predicate(ev)) {
+            listener.resolve(ev);
+            coreEventListeners.delete(listener);
+            matched = true;
+          }
+        }
       }
 
       // If there's an error event, reject all waiting promises that aren't specifically waiting for "error"
       if (type === "error") {
         console.error("[Core] Emitted error:", ev);
-        for (const [key, listener] of coreEventListeners.entries()) {
-          if (key !== "error") {
+        for (const listener of coreEventListeners) {
+          if (listener.type !== "error") {
             // Pass the error event so the listener can reject
-            listener(ev);
-            coreEventListeners.delete(key);
+            listener.reject(new Error(`[Core] Error: ${ev.message || "Unknown error"}`));
+            coreEventListeners.delete(listener);
           }
         }
       }
@@ -292,20 +301,36 @@ function startCoreEventLoop(): void {
 function waitForCoreEvent<T extends Record<string, unknown>>(
   type: string,
   timeoutMs = 5000,
+  predicate?: (ev: Record<string, unknown>) => boolean
 ): Promise<T> {
   return new Promise<T>((resolve, reject) => {
+    const listener: CoreEventListener = {
+      type,
+      predicate,
+      resolve: resolve as (ev: Record<string, unknown>) => void,
+      reject,
+    };
+    
     const tid = setTimeout(() => {
-      coreEventListeners.delete(type);
+      coreEventListeners.delete(listener);
       reject(new Error(`[Core] timeout waiting for '${type}' event`));
     }, timeoutMs);
-    coreEventListeners.set(type, (ev) => {
+    
+    // Wrap resolve/reject to also clear the timeout
+    const originalResolve = listener.resolve;
+    const originalReject = listener.reject;
+    
+    listener.resolve = (ev) => {
       clearTimeout(tid);
-      if (ev.type === "error" && type !== "error") {
-        reject(new Error(`[Core] Error: ${ev.message || "Unknown error"}`));
-      } else {
-        resolve(ev as T);
-      }
-    });
+      originalResolve(ev);
+    };
+    
+    listener.reject = (err) => {
+      clearTimeout(tid);
+      originalReject(err);
+    };
+
+    coreEventListeners.add(listener);
   });
 }
 
@@ -371,30 +396,21 @@ function resolveCoreBinary(): string {
 
 // Wait for the Ready event on stdout and return the negotiated pipe name.
 // Also starts the persistent event loop so subsequent events are dispatched.
-function waitForCoreReady(): Promise<string> {
-  return new Promise<string>((resolve, reject) => {
-    const timeout = setTimeout(
-      () => reject(new Error("Core ready timeout after 10 s")),
-      10_000,
-    );
-    if (!coreProcess?.stdout) {
-      reject(new Error("Core process has no stdout"));
-      return;
-    }
-    startCoreEventLoop();
-    coreEventListeners.set("ready", (ev) => {
-      clearTimeout(timeout);
-      const pipe = ev.pipe as string | undefined;
-      if (!pipe) {
-        reject(new Error("Ready event missing pipe field"));
-        return;
-      }
-      console.log(
-        `[Core] ready - version=${ev.version ?? "?"} pid=${ev.pid ?? "?"} pipe=${pipe}`,
-      );
-      resolve(pipe);
-    });
-  });
+async function waitForCoreReady(): Promise<string> {
+  if (!coreProcess?.stdout) {
+    throw new Error("Core process has no stdout");
+  }
+  startCoreEventLoop();
+  
+  const ev = await waitForCoreEvent<{ pipe?: string, version?: string, pid?: number }>("ready", 10_000);
+  const pipe = ev.pipe;
+  if (!pipe) {
+    throw new Error("Ready event missing pipe field");
+  }
+  console.log(
+    `[Core] ready - version=${ev.version ?? "?"} pid=${ev.pid ?? "?"} pipe=${pipe}`,
+  );
+  return pipe;
 }
 
 // Connect to the negotiated data pipe and send Hello to authenticate.
@@ -576,10 +592,13 @@ if (started) {
   app.quit();
 }
 
+let forceClose = false;
+
 const registerIpcHandlers = () => {
   ipcMain.handle("closeApp", (event) => {
     if (process.platform !== "darwin") {
       const win = BrowserWindow.fromWebContents(event.sender);
+      forceClose = true;
       win?.close();
     }
   });
@@ -673,6 +692,44 @@ const registerIpcHandlers = () => {
     } catch (error) {
       console.error("There was an error reading audio metadata:", error);
       throw error;
+    }
+  });
+
+  ipcMain.handle("dialog:showSaveDialog", async (_event, options: Electron.SaveDialogOptions) => {
+    const window = BrowserWindow.getFocusedWindow();
+    if (window) {
+      return await dialog.showSaveDialog(window, options);
+    }
+    return await dialog.showSaveDialog(options);
+  });
+
+  ipcMain.handle("dialog:showOpenDialog", async (_event, options: Electron.OpenDialogOptions) => {
+    const window = BrowserWindow.getFocusedWindow();
+    if (window) {
+      return await dialog.showOpenDialog(window, options);
+    }
+    return await dialog.showOpenDialog(options);
+  });
+
+  ipcMain.handle("readProject", async (_event, filePath: string) => {
+    try {
+      if (fs.existsSync(filePath)) {
+        return fs.readFileSync(filePath, "utf-8");
+      }
+      return null;
+    } catch (error) {
+      console.error(error);
+      return null;
+    }
+  });
+
+  ipcMain.handle("saveProject", async (_event, filePath: string, data: string) => {
+    try {
+      fs.writeFileSync(filePath, data, "utf-8");
+      return true;
+    } catch (error) {
+      console.error(error);
+      return false;
     }
   });
 
@@ -803,6 +860,14 @@ const registerIpcHandlers = () => {
     BrowserWindow.getAllWindows().forEach((win) => {
       if (win.webContents !== event.sender) {
         win.webContents.send("onAudioDataUpdated", visualizerId, dataArray);
+      }
+    });
+  });
+
+  ipcMain.on("sendChatMessages", (event, nodeId, messages) => {
+    BrowserWindow.getAllWindows().forEach((win) => {
+      if (win.webContents !== event.sender) {
+        win.webContents.send("onChatMessagesUpdated", nodeId, messages);
       }
     });
   });
@@ -1247,6 +1312,42 @@ const registerIpcHandlers = () => {
     return pendingSourcesPromise;
   });
 
+  let pendingAudioDevicesPromise: Promise<any[]> | null = null;
+
+  ipcMain.handle("getAudioDevices", async () => {
+    if (!coreProcess) return [];
+    if (pendingAudioDevicesPromise) return pendingAudioDevicesPromise;
+
+    pendingAudioDevicesPromise = (async () => {
+      sendCoreCommand({ type: "get_audio_devices" });
+      try {
+        const ev = await waitForCoreEvent<{ items: unknown[] }>("audio_devices");
+        return ev.items ?? [];
+      } catch (e) {
+        console.error("[Core] getAudioDevices failed:", e);
+        return [];
+      } finally {
+        pendingAudioDevicesPromise = null;
+      }
+    })();
+
+    return pendingAudioDevicesPromise;
+  });
+
+  ipcMain.handle("getWaveformPeaks", async (_event, path: string, pixelsPerSecond: number) => {
+    if (!coreProcess) throw new Error("Core not running");
+
+    sendCoreCommand({ type: "get_waveform_peaks", path, pixels_per_second: pixelsPerSecond });
+
+    try {
+      const ev = await waitForCoreEvent<{ path: string, peaks: number[] }>("waveform_peaks", 60000, (e) => e.path === path);
+      return ev.peaks ?? [];
+    } catch (e) {
+      console.error("[Core] getWaveformPeaks failed:", e);
+      return [];
+    }
+  });
+
   ipcMain.handle("startPreviewCapture", async (_event, sourceId: string) => {
     if (!coreProcess) throw new Error("Core not running");
 
@@ -1313,6 +1414,7 @@ const registerIpcHandlers = () => {
         outputHeight?: number;
         fitMode?: string;
         encoder?: string;
+        audioDeviceId?: string;
         sources: {
           source_id: string;
           is_primary: boolean;
@@ -1358,6 +1460,7 @@ const registerIpcHandlers = () => {
         output_height: options.outputHeight ?? null,
         fit_mode: options.fitMode ?? null,
         encoder: options.encoder ?? "libx264",
+        audio_device_id: options.audioDeviceId ?? null,
         sources: options.sources,
       });
 
@@ -1573,6 +1676,13 @@ const createWindow = async () => {
         },
       },
     };
+  });
+
+  mainWindow.on("close", (e) => {
+    if (!forceClose) {
+      e.preventDefault();
+      mainWindow.webContents.send("nativeWindowClose");
+    }
   });
 
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {

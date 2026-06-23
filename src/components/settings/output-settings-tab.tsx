@@ -82,8 +82,8 @@ export function OutputSettingsTab() {
     <TabsContent value="output" className="flex flex-col min-h-[360px] pr-2 pb-4">
       <Accordion className="w-full space-y-4">
         {/* FFmpeg Global Settings */}
-        <AccordionItem value="global" className="border-none bg-zinc-900/20 rounded-lg overflow-hidden">
-          <AccordionTrigger className="px-4 py-3 hover:bg-zinc-800/50 hover:no-underline data-[state=open]:border-b border-zinc-800/40">
+        <AccordionItem value="global" className="border-none bg-muted/20 rounded-lg overflow-hidden">
+          <AccordionTrigger className="px-4 py-3 hover:bg-secondary/50 hover:no-underline data-[state=open]:border-b border-border/40">
             <h3 className="text-sm font-bold m-0">Global Encoder Settings</h3>
           </AccordionTrigger>
           <AccordionContent className="p-4 flex flex-col gap-4">
@@ -138,7 +138,7 @@ export function OutputSettingsTab() {
             <Label className="text-xs">FPS</Label>
             <Select
               value={settings.streamFps?.toString() || "30"}
-              onValueChange={(v) => updateSettings({ streamFps: parseInt(v) as 30 | 60 })}
+              onValueChange={(v) => updateSettings({ streamFps: parseInt(v) as 30 | 60 | 90 | 120 })}
             >
               <SelectTrigger className="text-xs">
                 <SelectValue />
@@ -146,6 +146,8 @@ export function OutputSettingsTab() {
               <SelectContent>
                 <SelectItem value="30">30 FPS</SelectItem>
                 <SelectItem value="60">60 FPS</SelectItem>
+                <SelectItem value="90">90 FPS</SelectItem>
+                <SelectItem value="120">120 FPS</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -174,8 +176,8 @@ export function OutputSettingsTab() {
       </AccordionItem>
 
       {/* Recording Path */}
-      <AccordionItem value="recording" className="border-none bg-zinc-900/20 rounded-lg overflow-hidden">
-        <AccordionTrigger className="px-4 py-3 hover:bg-zinc-800/50 hover:no-underline data-[state=open]:border-b border-zinc-800/40">
+      <AccordionItem value="recording" className="border-none bg-muted/20 rounded-lg overflow-hidden">
+        <AccordionTrigger className="px-4 py-3 hover:bg-secondary/50 hover:no-underline data-[state=open]:border-b border-border/40">
           <h3 className="text-sm font-bold m-0">Recording Settings</h3>
         </AccordionTrigger>
         <AccordionContent className="p-4 flex flex-col gap-3">
@@ -236,8 +238,8 @@ export function OutputSettingsTab() {
       </AccordionItem>
 
       {/* Stream Services */}
-      <AccordionItem value="stream" className="border-none bg-zinc-900/20 rounded-lg overflow-hidden">
-        <AccordionTrigger className="px-4 py-3 hover:bg-zinc-800/50 hover:no-underline data-[state=open]:border-b border-zinc-800/40">
+      <AccordionItem value="stream" className="border-none bg-muted/20 rounded-lg overflow-hidden">
+        <AccordionTrigger className="px-4 py-3 hover:bg-secondary/50 hover:no-underline data-[state=open]:border-b border-border/40">
           <h3 className="text-sm font-bold m-0">Stream Services</h3>
         </AccordionTrigger>
         <AccordionContent className="p-4 flex flex-col gap-4">
@@ -252,7 +254,7 @@ export function OutputSettingsTab() {
             <p className="text-xs text-muted-foreground italic">No stream services configured.</p>
           ) : (
             settings.rtmpTargets.map((target) => (
-              <div key={target.id} className="flex flex-col gap-3 p-3 bg-zinc-900/50 border border-zinc-800 rounded-lg">
+              <div key={target.id} className="flex flex-col gap-3 p-3 bg-muted/50 border border-border rounded-lg">
                   <div className="flex items-center justify-between gap-4">
                     <Input 
                       value={target.label} 
