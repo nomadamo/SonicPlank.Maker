@@ -469,10 +469,9 @@ unsafe fn run_encoder_unsafe(
 
     // Encoder-specific tuning applied before av_opt_set options
     if opts.encoder == "h264_nvenc" {
-        // 2 B-frames: NVENC DTS-based B-frame reordering works correctly with
-        // av_write_frame (non-interleaved), which is what we already use.
-        // B-frames significantly improve compression efficiency at the same bitrate.
-        (*codec_ctx).max_b_frames = 2;
+        // B-frames require DTS reordering that FLV+av_write_frame cannot handle without
+        // av_interleaved_write_frame (which causes 300ms+ TCP burst stalls). Keep at 0.
+        (*codec_ctx).max_b_frames = 0;
         // NVENC CBR: rc_max_rate = rc_buffer_size = bit_rate for stable CBR
         (*codec_ctx).rc_max_rate = (*codec_ctx).bit_rate;
         (*codec_ctx).rc_buffer_size = (*codec_ctx).bit_rate as i32;
