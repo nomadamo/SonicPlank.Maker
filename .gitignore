@@ -16,3 +16,6 @@ Extensions
 
 # Rust build artifacts — Cargo.lock is committed, target/ is not
 src-native/target/
+
+temp_output.tsx
+update.js
