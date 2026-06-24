@@ -751,17 +751,12 @@ unsafe fn run_encoder_unsafe(
             .cloned()
             .unwrap_or_else(|| jitter[jitter_head].clone());
 
-        // Plan B: Derive PTS from the selected frame's actual WGC timestamp
-        // so the encoded stream reflects true capture timing, not a sequential
-        // integer clock that drifts from real presentation cadence.
-        let wgc_pts = (raw.timestamp_100ns - wgc_epoch_100ns)
-            .max(0) as u64
-            * target_fps as u64
-            / 10_000_000;
-        // Clamp to current_pts if the WGC timestamp would go backwards (can
-        // happen on the first few frames before the epoch stabilises).
-        let enc_pts = wgc_pts.max(current_pts as u64) as i64;
-        current_pts = enc_pts; // keep last_pts consistent
+        // Plan A selects the best frame above. Use the slot's sequential PTS for
+        // encoding — the sleeper pacing IS the PTS clock, so they must stay in sync.
+        // (Plan B — deriving PTS from WGC timestamp — was removed: the WGC epoch is
+        // ~500ms before stream_start, making wgc_pts always ~30 frames ahead of
+        // current_pts, which caused the sleeper to target the future → ~2fps output.)
+        let enc_pts = current_pts;
 
         last_pts = current_pts;
 
@@ -770,10 +765,10 @@ unsafe fn run_encoder_unsafe(
             frames_skipped += 1;
         } else {
             calls_this_interval += 1;
-            let mut enc_pts_mut = enc_pts;
+            let mut enc_pts_arg = enc_pts;
             encode_frame(codec_ctx, sws, yuv_frame, pkt,
                          crop_h, crop_x, crop_y, dst_h, dst_x, dst_y, &raw, &mut frames_this_interval,
-                         &mut bytes_since_status, &mut enc_pts_mut,
+                         &mut bytes_since_status, &mut enc_pts_arg,
                          &mut sws_ms_acc, &mut nvenc_ms_acc, &mut recv_ms_acc,
                          &pkt_tx, codec_tb, out_stream_tb, out_stream_idx,
                          &mut pkts_dropped, &queue_depth)?;
