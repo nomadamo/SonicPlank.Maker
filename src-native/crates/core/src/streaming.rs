@@ -244,7 +244,7 @@ pub enum StreamEvent {
 pub struct StreamSession {
     stop_tx: std::sync::mpsc::SyncSender<()>,
     thread: Option<std::thread::JoinHandle<()>>,
-    _audio_stream: Option<cpal::Stream>,
+    _audio_stream: Option<crate::audio::ActiveStream>,
 }
 
 impl StreamSession {
