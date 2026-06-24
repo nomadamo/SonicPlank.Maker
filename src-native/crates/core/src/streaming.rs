@@ -667,7 +667,7 @@ unsafe fn run_encoder_unsafe(
 
     // Encode the first frame.
     calls_this_interval += 1;
-    let mut first_pts = 0;
+    let mut first_pts = 0i64;
     let mut pip_scalers: HashMap<String, PipScaler> = HashMap::new();
     encode_frame(codec_ctx, sws, yuv_frame, pkt,
                  crop_h, crop_x, crop_y, dst_h, dst_x, dst_y, &first, &mut frames_this_interval, &mut bytes_since_status,
@@ -676,7 +676,21 @@ unsafe fn run_encoder_unsafe(
                  &mut pkts_dropped, &queue_depth)?;
     last_pts = 0;
     total_frames += 1;
-    let mut last_frame: Arc<RawFrame> = first;
+
+    // ── Jitter buffer: 3-slot ring of recent WGC frames ───────────────────────
+    // Holds the last 3 frames with their WGC timestamps. The encoder selects
+    // whichever slot is closest in time to the current encode slot's ideal time,
+    // rather than always using the most recently received frame. This smooths
+    // burst-and-gap delivery from GPU-bound games.
+    //
+    // Epoch: the WGC timestamp of the very first frame, used as t=0 for all
+    // subsequent PTS calculations (Plan B: timestamp-derived PTS).
+    const JITTER_SLOTS: usize = 3;
+    let wgc_epoch_100ns = first.timestamp_100ns;
+    let mut jitter: [Arc<RawFrame>; JITTER_SLOTS] = [
+        first.clone(), first.clone(), first.clone()
+    ];
+    let mut jitter_head: usize = 0; // next slot to overwrite (ring)
 
     let mut sleeper = spin_sleep::SpinSleeper::default();
 
@@ -720,26 +734,46 @@ unsafe fn run_encoder_unsafe(
             sleeper.sleep(target_duration - elapsed);
         }
 
-        let raw = {
-            let mut newest: Option<Arc<RawFrame>> = None;
-            while let Ok(f) = frame_rx.try_recv() { newest = Some(f); }
-            if let Some(f) = newest { f } else { last_frame.clone() }
-        };
+        // Drain all pending WGC frames into the jitter buffer.
+        while let Ok(f) = frame_rx.try_recv() {
+            jitter[jitter_head] = f;
+            jitter_head = (jitter_head + 1) % JITTER_SLOTS;
+        }
 
-        last_frame = raw.clone();
+        // Plan A: Select the frame whose WGC timestamp is closest to the ideal
+        // wall-clock time for this encode slot.
+        // ideal_wall_100ns = epoch + current_pts * (10_000_000 / fps)
+        let ideal_wall_100ns = wgc_epoch_100ns
+            + (current_pts as i64) * 10_000_000_i64 / target_fps as i64;
+        let raw = jitter
+            .iter()
+            .min_by_key(|f| (f.timestamp_100ns - ideal_wall_100ns).unsigned_abs())
+            .cloned()
+            .unwrap_or_else(|| jitter[jitter_head].clone());
+
+        // Plan B: Derive PTS from the selected frame's actual WGC timestamp
+        // so the encoded stream reflects true capture timing, not a sequential
+        // integer clock that drifts from real presentation cadence.
+        let wgc_pts = (raw.timestamp_100ns - wgc_epoch_100ns)
+            .max(0) as u64
+            * target_fps as u64
+            / 10_000_000;
+        // Clamp to current_pts if the WGC timestamp would go backwards (can
+        // happen on the first few frames before the epoch stabilises).
+        let enc_pts = wgc_pts.max(current_pts as u64) as i64;
+        current_pts = enc_pts; // keep last_pts consistent
+
         last_pts = current_pts;
 
         // Skip encoding entirely when the RTMP queue is >=80% full.
-        // This avoids wasting ~6ms of CPU per frame on sws+NVENC for packets
-        // that would just be dropped anyway.
         if queue_depth.load(Ordering::Relaxed) >= QUEUE_SKIP_THRESHOLD {
             frames_skipped += 1;
         } else {
             calls_this_interval += 1;
-            let mut enc_pts = current_pts;
+            let mut enc_pts_mut = enc_pts;
             encode_frame(codec_ctx, sws, yuv_frame, pkt,
                          crop_h, crop_x, crop_y, dst_h, dst_x, dst_y, &raw, &mut frames_this_interval,
-                         &mut bytes_since_status, &mut enc_pts,
+                         &mut bytes_since_status, &mut enc_pts_mut,
                          &mut sws_ms_acc, &mut nvenc_ms_acc, &mut recv_ms_acc,
                          &pkt_tx, codec_tb, out_stream_tb, out_stream_idx,
                          &mut pkts_dropped, &queue_depth)?;

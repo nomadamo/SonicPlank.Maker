@@ -52,6 +52,10 @@ pub struct RawFrame {
     pub height: u32,
     /// BGRA pixels, row-major, `width * height * 4` bytes.
     pub pixels: Vec<u8>,
+    /// WGC presentation timestamp in 100-nanosecond units (QPC-based).
+    /// Used by the encoder to select the temporally closest frame for each
+    /// encode slot rather than always using the most recently received frame.
+    pub timestamp_100ns: i64,
 }
 
 // ── GPU state shared across frames ───────────────────────────────────────────
@@ -224,6 +228,12 @@ fn process_frame(
     frame: &Direct3D11CaptureFrame,
     source_id: &str,
 ) -> Result<RawFrame> {
+    // Read the WGC presentation timestamp before acquiring the GPU lock.
+    // SystemRelativeTime is in 100-nanosecond units (same epoch as QPC).
+    let timestamp_100ns = frame
+        .SystemRelativeTime()
+        .map(|t| t.Duration)
+        .unwrap_or(0);
     let surface: IDirect3DSurface = frame.Surface().context("Frame had no surface")?;
     let dxgi_access: IDirect3DDxgiInterfaceAccess = surface
         .cast()
@@ -268,5 +278,5 @@ fn process_frame(
         gpu.ctx.Unmap(&gpu.staging, 0);
     }
 
-    Ok(RawFrame { source_id: source_id.to_string(), width, height, pixels })
+    Ok(RawFrame { source_id: source_id.to_string(), width, height, pixels, timestamp_100ns })
 }

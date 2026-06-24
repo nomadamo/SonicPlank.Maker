@@ -142,6 +142,8 @@ fn run_capture_loop(
                             width,
                             height,
                             pixels: slice.to_vec(),
+                            // MF timestamp is in 100ns units, same scale as WGC.
+                            timestamp_100ns: timestamp,
                         };
                         // We do not care if the receiver is dropped
                         let _ = tx.send(Arc::new(raw));

@@ -144,6 +144,9 @@ pub fn composite_frame(
         width: raw.primary.width,
         height: raw.primary.height,
         pixels: out_pixels,
+        // Inherit the primary frame's WGC timestamp so the encoder's
+        // jitter buffer can still select by temporal proximity.
+        timestamp_100ns: raw.primary.timestamp_100ns,
     })
 }
 
