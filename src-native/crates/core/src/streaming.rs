@@ -678,17 +678,16 @@ unsafe fn run_encoder_unsafe(
     total_frames += 1;
 
     // ── Jitter buffer: 3-slot ring of recent WGC frames ───────────────────────
-    // Holds the last 3 frames with their WGC timestamps. The encoder selects
-    // whichever slot is closest in time to the current encode slot's ideal time,
-    // rather than always using the most recently received frame. This smooths
-    // burst-and-gap delivery from GPU-bound games.
-    //
-    // Epoch: the WGC timestamp of the very first frame, used as t=0 for all
-    // subsequent PTS calculations (Plan B: timestamp-derived PTS).
+    // Each slot stores a (frame, arrival_instant) pair. At each encode tick,
+    // we select the slot whose arrival time is closest to the slot's ideal
+    // wall-clock time (stream_start + current_pts/fps). This smooths burst-and-
+    // gap delivery from GPU-bound games without depending on WGC timestamps.
     const JITTER_SLOTS: usize = 3;
-    let wgc_epoch_100ns = first.timestamp_100ns;
-    let mut jitter: [Arc<RawFrame>; JITTER_SLOTS] = [
-        first.clone(), first.clone(), first.clone()
+    let first_arrival = Instant::now();
+    let mut jitter: [(Arc<RawFrame>, Instant); JITTER_SLOTS] = [
+        (first.clone(), first_arrival),
+        (first.clone(), first_arrival),
+        (first.clone(), first_arrival),
     ];
     let mut jitter_head: usize = 0; // next slot to overwrite (ring)
 
@@ -734,30 +733,31 @@ unsafe fn run_encoder_unsafe(
             sleeper.sleep(target_duration - elapsed);
         }
 
-        // Drain all pending WGC frames into the jitter buffer.
+        // Drain all pending WGC frames into the jitter buffer with arrival timestamp.
         while let Ok(f) = frame_rx.try_recv() {
-            jitter[jitter_head] = f;
+            jitter[jitter_head] = (f, Instant::now());
             jitter_head = (jitter_head + 1) % JITTER_SLOTS;
         }
 
-        // Plan A: Select the frame whose WGC timestamp is closest to the ideal
-        // wall-clock time for this encode slot.
-        // ideal_wall_100ns = epoch + current_pts * (10_000_000 / fps)
-        let ideal_wall_100ns = wgc_epoch_100ns
-            + (current_pts as i64) * 10_000_000_i64 / target_fps as i64;
+        // Select the slot whose arrival time is closest to this slot's ideal wall time.
+        // This picks the frame that best represents what was happening at current_pts/fps
+        // seconds since stream start, smoothing over bursty WGC delivery.
+        let ideal_elapsed = Duration::from_secs_f64(current_pts as f64 / target_fps as f64);
+        let ideal_instant = stream_start + ideal_elapsed;
         let raw = jitter
             .iter()
-            .min_by_key(|f| (f.timestamp_100ns - ideal_wall_100ns).unsigned_abs())
-            .cloned()
-            .unwrap_or_else(|| jitter[jitter_head].clone());
+            .min_by_key(|(_, arrival)| {
+                // Saturating distance to avoid u128 overflow on early frames
+                if *arrival >= ideal_instant {
+                    arrival.duration_since(ideal_instant).as_nanos()
+                } else {
+                    ideal_instant.duration_since(*arrival).as_nanos()
+                }
+            })
+            .map(|(f, _)| f.clone())
+            .unwrap_or_else(|| jitter[0].0.clone());
 
-        // Plan A selects the best frame above. Use the slot's sequential PTS for
-        // encoding — the sleeper pacing IS the PTS clock, so they must stay in sync.
-        // (Plan B — deriving PTS from WGC timestamp — was removed: the WGC epoch is
-        // ~500ms before stream_start, making wgc_pts always ~30 frames ahead of
-        // current_pts, which caused the sleeper to target the future → ~2fps output.)
         let enc_pts = current_pts;
-
         last_pts = current_pts;
 
         // Skip encoding entirely when the RTMP queue is >=80% full.
