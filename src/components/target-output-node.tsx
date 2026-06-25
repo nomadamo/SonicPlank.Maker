@@ -298,6 +298,13 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
     [nodes],
   );
 
+  const isValidAudioConnection = useCallback(
+    (connection: any) => {
+      return isValidConnection(connection, nodes);
+    },
+    [nodes],
+  );
+
   // Find incoming nodes connected to this Target Node
   const connectedNodes = useMemo(() => {
     const incomingEdges = edges.filter((e) => e.target === node.id);
@@ -454,7 +461,35 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
 
   // Extract source parameters
   const captureSourceId = sourceNode?.data.captureSourceId;
-  const captureAudio = !!sourceNode?.data.captureAudio;
+
+  // Collect device IDs from ALL Audio Source nodes connected to this output's audio_target handle.
+  const connectedAudioDeviceIds = useMemo(() => {
+    return edges
+      .filter(
+        (e) =>
+          e.target === node.id &&
+          e.targetHandle === `handle_${node.id}_audio_target`,
+      )
+      .map((e) =>
+        nodes.find((n) => n.id === e.source && n.type === "audioSourceNode") as FlowNodeType | undefined,
+      )
+      .filter((n): n is FlowNodeType => !!n)
+      .map((n) => n.data.audioDeviceId as string | undefined)
+      .filter((id): id is string => !!id);
+  }, [edges, nodes, node.id]);
+
+  // Audio device priority: connected Audio Source nodes > settings audioStreamSourceId > settings audioOutputDeviceId.
+  const resolvedAudioDeviceIds: string[] =
+    connectedAudioDeviceIds.length > 0
+      ? connectedAudioDeviceIds
+      : settings.audioStreamSourceId
+        ? [settings.audioStreamSourceId]
+        : settings.audioOutputDeviceId
+          ? [settings.audioOutputDeviceId]
+          : [];
+
+  const captureAudio = resolvedAudioDeviceIds.length > 0;
+
   const captureResolution = sourceNode?.data.captureResolution || "original";
   const captureFrameRate = Number(sourceNode?.data.maxCaptureFrameRate) || 60;
 
@@ -1068,14 +1103,19 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
         captureSourceId.startsWith("window:")
       ) {
         const streamFps = finalFps;
-        const presetW =
-          typeof activePreset.width === "number" && activePreset.width > 0
-            ? activePreset.width
-            : undefined;
-        const presetH =
-          typeof activePreset.height === "number" && activePreset.height > 0
-            ? activePreset.height
-            : undefined;
+        const RESOLUTION_MAP: Record<string, [number, number]> = {
+          "1080p": [1920, 1080],
+          "936p":  [1664, 936],
+          "720p":  [1280, 720],
+        };
+        const resKey = settings.streamOutputResolution || "native";
+        const resolvedDims = RESOLUTION_MAP[resKey];
+        const presetW = resolvedDims
+          ? resolvedDims[0]
+          : (typeof activePreset.width === "number" && activePreset.width > 0 ? activePreset.width : undefined);
+        const presetH = resolvedDims
+          ? resolvedDims[1]
+          : (typeof activePreset.height === "number" && activePreset.height > 0 ? activePreset.height : undefined);
         const streamSources = activeStreamSources.map((s) => ({
           source_id: s.source_id,
           is_primary: s.is_primary,
@@ -1093,6 +1133,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
             outputHeight: presetH,
             fitMode: fitMode,
             encoder: (settings.streamEncoder as string) || "libx264",
+            audioDeviceIds: captureAudio ? resolvedAudioDeviceIds : undefined,
             sources: streamSources,
           });
         } catch (err: any) {
@@ -1315,6 +1356,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
     settings.streamFps,
     settings.streamDelayMs,
     settings.streamBitrateKbps,
+    settings.streamOutputResolution,
     settings.rtmpTargets,
     isPreviewActive,
     editOverlayOpen,
@@ -1407,7 +1449,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
         {/* Live Video Preview Area */}
         <div className="flex flex-col gap-1.5 nodrag nopan nowheel">
           <div className="flex items-center justify-between">
-            <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">
               Overlay
             </label>
             {captureSourceId && (
@@ -1442,7 +1484,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
                     "flex items-center gap-1 text-[10px] px-2 py-0.5 rounded transition-all font-semibold uppercase tracking-wider cursor-pointer",
                     editOverlayOpen
                       ? "bg-indigo-500/20 text-indigo-300 border border-indigo-500/30"
-                      : "bg-zinc-800 border border-zinc-700 hover:bg-zinc-700 text-zinc-300 hover:text-white",
+                      : "bg-secondary border border-border/80 hover:bg-secondary/80 text-foreground/80 hover:text-white",
                   )}
                   title="Open overlay editor in a separate window"
                 >
@@ -1455,10 +1497,10 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
           {/* Fit mode — how the source is mapped into a differently-shaped output */}
           {captureSourceId && (
             <div className="flex items-center justify-between gap-2">
-              <span className="text-[9px] font-semibold text-zinc-500 uppercase tracking-wider">
+              <span className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">
                 Fit
               </span>
-              <div className="flex items-center gap-0.5 rounded-md bg-zinc-900 border border-zinc-800 p-0.5">
+              <div className="flex items-center gap-0.5 rounded-md bg-muted border border-border p-0.5">
                 {(
                   [
                     ["contain", "Fit"],
@@ -1486,7 +1528,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
                         : "cursor-pointer",
                       fitMode === mode
                         ? "bg-indigo-500/20 text-indigo-300"
-                        : "text-zinc-500 hover:text-zinc-300",
+                        : "text-muted-foreground hover:text-foreground/80",
                     )}
                   >
                     {label}
@@ -1498,7 +1540,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
 
           <div
             className={cn(
-              "relative rounded-lg border border-zinc-800 overflow-hidden bg-black flex flex-col items-center justify-center shadow-inner group transition-all duration-300",
+              "relative rounded-lg border border-border overflow-hidden bg-black flex flex-col items-center justify-center shadow-inner group transition-all duration-300",
               !isPreviewActive && captureSourceId ? "hidden" : ""
             )}
             style={{
@@ -1543,7 +1585,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
               </>
             )}
             {!isPreviewActive && !isStreaming && !captureSourceId && (
-              <div className="flex flex-col items-center gap-2 text-zinc-500 text-center px-4 py-8">
+              <div className="flex flex-col items-center gap-2 text-muted-foreground text-center px-4 py-8">
                 <MonitorIcon className="w-8 h-8 text-zinc-700 stroke-[1.5]" />
                 <span className="text-[10px]">
                   Connect Capture Source Node
@@ -1568,8 +1610,8 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
                   isRecording
                     ? "bg-red-500/10 text-red-400 border-red-500/20 hover:bg-red-500/20 animate-pulse cursor-pointer"
                     : !isPreviewActive
-                      ? "bg-zinc-900/50 text-zinc-600 border-zinc-800/50 cursor-not-allowed"
-                      : "bg-zinc-900 text-zinc-300 border-zinc-800 hover:bg-zinc-800 hover:text-white cursor-pointer",
+                      ? "bg-muted/50 text-zinc-600 border-border/50 cursor-not-allowed"
+                      : "bg-muted text-foreground/80 border-border hover:bg-secondary hover:text-white cursor-pointer",
                 )}
               >
                 {isRecording ? (
@@ -1595,10 +1637,10 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
                 className={cn(
                   "flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-lg text-[10px] font-semibold uppercase tracking-wider border transition-all",
                   isStopping || isStarting
-                    ? "bg-zinc-800 text-zinc-500 border-zinc-700 cursor-not-allowed"
+                    ? "bg-secondary text-muted-foreground border-border/80 cursor-not-allowed"
                     : isStreaming
                       ? "bg-purple-500/10 text-purple-400 border-purple-500/20 hover:bg-purple-500/20 animate-pulse cursor-pointer"
-                      : "bg-zinc-900 text-zinc-300 border-zinc-800 hover:bg-zinc-800 hover:text-white cursor-pointer",
+                      : "bg-muted text-foreground/80 border-border hover:bg-secondary hover:text-white cursor-pointer",
                 )}
               >
                 {isStopping ? (
@@ -1626,10 +1668,10 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
           )}
 
           {showStreamInput && !isStreaming && (
-            <div className="flex flex-col gap-2 p-2.5 bg-zinc-950 border border-zinc-800 rounded-lg mt-1 text-[11px]">
+            <div className="flex flex-col gap-2 p-2.5 bg-background border border-border rounded-lg mt-1 text-[11px]">
               {/* Target Selection */}
               <div className="flex flex-col gap-1">
-                <span className="text-[9px] font-semibold text-zinc-400 uppercase tracking-wider">
+                <span className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">
                   Target
                 </span>
                 {(!settings.rtmpTargets || settings.rtmpTargets.length === 0) ? (
@@ -1638,7 +1680,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
                   <select
                     value={targetId}
                     onChange={(e) => updateNodeDataField("streamTargetId", e.target.value)}
-                    className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200 focus:border-indigo-500 focus:outline-none cursor-pointer"
+                    className="w-full bg-muted border border-border rounded px-2 py-1 text-xs text-foreground focus:border-indigo-500 focus:outline-none cursor-pointer"
                   >
                     {settings.rtmpTargets.map((t) => (
                       <option key={t.id} value={t.id}>{t.label} ({t.preset})</option>
@@ -1649,13 +1691,13 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
 
               {/* Stream Configuration Type */}
               <div className="flex flex-col gap-1 mt-1">
-                <span className="text-[9px] font-semibold text-zinc-400 uppercase tracking-wider">
+                <span className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">
                   Configuration
                 </span>
                 <select
                   value={configType}
                   onChange={(e) => updateNodeDataField("streamConfigType", e.target.value)}
-                  className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200 focus:border-indigo-500 focus:outline-none cursor-pointer"
+                  className="w-full bg-muted border border-border rounded px-2 py-1 text-xs text-foreground focus:border-indigo-500 focus:outline-none cursor-pointer"
                 >
                   <option value="global">Global Settings</option>
                   <option value="custom">Custom Override</option>
@@ -1667,40 +1709,42 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
                 <>
                   {/* Bitrate */}
                   <div className="flex flex-col gap-1 mt-1">
-                    <span className="text-[9px] font-semibold text-zinc-400 uppercase tracking-wider">
+                    <span className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">
                       Stream Bitrate (Kbps)
                     </span>
                     <input
                       type="number"
                       value={customConfig.streamBitrateKbps}
                       onChange={(e) => updateNodeDataField("streamCustomConfig", { ...customConfig, streamBitrateKbps: Number(e.target.value) || 6000 })}
-                      className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200 focus:border-indigo-500 focus:outline-none font-mono"
+                      className="w-full bg-muted border border-border rounded px-2 py-1 text-xs text-foreground focus:border-indigo-500 focus:outline-none font-mono"
                     />
                   </div>
                   
                   {/* FPS + Encoder + Delay */}
                   <div className="flex gap-2 mt-1">
                     <div className="flex flex-col gap-1 w-16 shrink-0">
-                      <span className="text-[9px] font-semibold text-zinc-400 uppercase tracking-wider">
+                      <span className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">
                         FPS
                       </span>
                       <select
                         value={customConfig.streamFps}
-                        onChange={(e) => updateNodeDataField("streamCustomConfig", { ...customConfig, streamFps: Number(e.target.value) as 30 | 60 })}
-                        className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200 focus:border-indigo-500 focus:outline-none cursor-pointer"
+                        onChange={(e) => updateNodeDataField("streamCustomConfig", { ...customConfig, streamFps: Number(e.target.value) as 30 | 60 | 90 | 120 })}
+                        className="w-full bg-muted border border-border rounded px-2 py-1 text-xs text-foreground focus:border-indigo-500 focus:outline-none cursor-pointer"
                       >
                         <option value={30}>30</option>
                         <option value={60}>60</option>
+                        <option value={90}>90</option>
+                        <option value={120}>120</option>
                       </select>
                     </div>
                     <div className="flex flex-col gap-1 flex-1">
-                      <span className="text-[9px] font-semibold text-zinc-400 uppercase tracking-wider">
+                      <span className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">
                         Encoder
                       </span>
                       <select
                         value={customConfig.streamEncoder}
                         onChange={(e) => updateNodeDataField("streamCustomConfig", { ...customConfig, streamEncoder: e.target.value })}
-                        className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200 focus:border-indigo-500 focus:outline-none cursor-pointer"
+                        className="w-full bg-muted border border-border rounded px-2 py-1 text-xs text-foreground focus:border-indigo-500 focus:outline-none cursor-pointer"
                       >
                         <option value="copy">Auto (WebCodecs)</option>
                         <option value="libx264">CPU (x264)</option>
@@ -1710,13 +1754,13 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
                       </select>
                     </div>
                     <div className="flex flex-col gap-1 w-16 shrink-0">
-                      <span className="text-[9px] font-semibold text-zinc-400 uppercase tracking-wider">
+                      <span className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">
                         Delay
                       </span>
                       <select
                         value={customConfig.streamDelayMs}
                         onChange={(e) => updateNodeDataField("streamCustomConfig", { ...customConfig, streamDelayMs: Number(e.target.value) })}
-                        className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200 focus:border-indigo-500 focus:outline-none cursor-pointer"
+                        className="w-full bg-muted border border-border rounded px-2 py-1 text-xs text-foreground focus:border-indigo-500 focus:outline-none cursor-pointer"
                       >
                         <option value={0}>None</option>
                         <option value={5000}>5s</option>
@@ -1729,14 +1773,14 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
               )}
 
               {!isPreviewActive && (
-                <span className="text-[9px] text-zinc-500 mt-0.5">
+                <span className="text-[9px] text-muted-foreground mt-0.5">
                   Preview will start automatically when streaming begins.
                 </span>
               )}
               <div className="flex gap-2 justify-end mt-1">
                 <button
                   onClick={() => setShowStreamInput(false)}
-                  className="text-[10px] text-zinc-400 hover:text-zinc-200 cursor-pointer"
+                  className="text-[10px] text-muted-foreground hover:text-foreground cursor-pointer"
                 >
                   Cancel
                 </button>
@@ -1746,7 +1790,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
                   className={cn(
                     "text-[10px] px-2 py-0.5 rounded font-medium flex items-center gap-1.5 transition-all",
                     isStarting
-                      ? "bg-zinc-700 text-zinc-400 cursor-not-allowed"
+                      ? "bg-secondary/80 text-muted-foreground cursor-not-allowed"
                       : "bg-indigo-600 hover:bg-indigo-500 text-white cursor-pointer",
                   )}
                 >
@@ -1765,10 +1809,10 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
         </div>
 
         {/* Node status / info */}
-        <div className="text-[10px] text-zinc-500 border-t border-zinc-800/80 pt-3 flex flex-col gap-1">
+        <div className="text-[10px] text-muted-foreground border-t border-border/80 pt-3 flex flex-col gap-1">
           <div>Connected overlays: {overlays.length}</div>
           {sourceNode ? (
-            <div className="text-zinc-400">
+            <div className="text-muted-foreground">
               Source:{" "}
               <span className="text-indigo-400 font-semibold">
                 {sourceNode.data.captureSourceName || "unnamed"}
@@ -1785,7 +1829,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
         {isStreaming && streamStats && (
           <div className="nodrag nopan nowheel flex flex-col gap-1">
             {/* Compact row — always visible */}
-            <div className="flex items-center gap-2 px-2 py-1.5 bg-zinc-950 border border-purple-500/20 rounded-lg text-[9px] font-mono">
+            <div className="flex items-center gap-2 px-2 py-1.5 bg-background border border-purple-500/20 rounded-lg text-[9px] font-mono">
               <span className="flex items-center gap-1 text-purple-400 font-sans font-semibold uppercase tracking-wider text-[8px] shrink-0">
                 <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse" />
                 Live
@@ -1805,7 +1849,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
               </span>
               <span className="text-zinc-600">fps</span>
               <span className="text-zinc-700">│</span>
-              <span className="text-zinc-400 tabular-nums">
+              <span className="text-muted-foreground tabular-nums">
                 {streamStats.time ?? "00:00:00"}
               </span>
               {streamStats.dropped != null && streamStats.dropped > 0 && (
@@ -1818,7 +1862,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
               )}
               <button
                 onClick={() => setStatsExpanded((v) => !v)}
-                className="ml-auto text-zinc-600 hover:text-zinc-300 cursor-pointer transition-colors"
+                className="ml-auto text-zinc-600 hover:text-foreground/80 cursor-pointer transition-colors"
                 title={statsExpanded ? "Hide stats" : "Show stats"}
               >
                 <ChevronDownIcon
@@ -1832,7 +1876,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
 
             {/* Expanded detail grid */}
             {statsExpanded && (
-              <div className="grid grid-cols-[3.5rem_1fr] gap-x-3 gap-y-0.5 px-2.5 py-2 bg-zinc-950 border border-zinc-800 rounded-lg text-[9px] font-mono">
+              <div className="grid grid-cols-[3.5rem_1fr] gap-x-3 gap-y-0.5 px-2.5 py-2 bg-background border border-border rounded-lg text-[9px] font-mono">
                 <span className="text-zinc-600 uppercase tracking-wider text-[8px] self-center">
                   FPS
                 </span>
@@ -1852,21 +1896,21 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
                 <span className="text-zinc-600 uppercase tracking-wider text-[8px] self-center">
                   Frames
                 </span>
-                <span className="text-zinc-300 tabular-nums">
+                <span className="text-foreground/80 tabular-nums">
                   {streamStats.frame?.toLocaleString() ?? "—"}
                 </span>
 
                 <span className="text-zinc-600 uppercase tracking-wider text-[8px] self-center">
                   Uptime
                 </span>
-                <span className="text-zinc-300 tabular-nums">
+                <span className="text-foreground/80 tabular-nums">
                   {streamStats.time ?? "—"}
                 </span>
 
                 <span className="text-zinc-600 uppercase tracking-wider text-[8px] self-center">
                   Bitrate
                 </span>
-                <span className="text-zinc-300 tabular-nums">
+                <span className="text-foreground/80 tabular-nums">
                   {streamStats.bitrate ?? "—"}
                 </span>
 
@@ -1878,7 +1922,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
                     "tabular-nums",
                     streamStats.dropped != null && streamStats.dropped > 0
                       ? "text-red-400"
-                      : "text-zinc-500",
+                      : "text-muted-foreground",
                   )}
                 >
                   {streamStats.dropped ?? 0}
@@ -1909,7 +1953,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
         )}
       </BaseNodeCard>
 
-      {/* Target input handle */}
+      {/* Overlay compositor input handle */}
       <Handle
         id={`handle_${node.id}_overlay_target`}
         type="target"
@@ -1918,6 +1962,17 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
         isValidConnection={isValidOverlayConnection}
         style={{ top: "34px" }}
         className="hover:!border-red-400 hover:!shadow-[0_0_10px_rgba(248,113,113,0.5)] hover:!scale-125"
+      />
+
+      {/* Audio Source input handle */}
+      <Handle
+        id={`handle_${node.id}_audio_target`}
+        type="target"
+        position={Position.Left}
+        isConnectable={node.isConnectable}
+        isValidConnection={isValidAudioConnection}
+        style={{ top: "58px" }}
+        className="hover:!border-purple-400 hover:!shadow-[0_0_10px_rgba(168,85,247,0.5)] hover:!scale-125"
       />
 
       <StatusDialog

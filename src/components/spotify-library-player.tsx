@@ -22,6 +22,7 @@ import {
   SpeakerIcon,
   TvIcon,
   CheckIcon,
+  XIcon,
 } from "lucide-react";
 import { IconBrandSpotify } from "@tabler/icons-react";
 import { AudioPlayer, AudioPlayerControlBar } from "@/components/audio/player";
@@ -607,6 +608,15 @@ export function SpotifyLibraryPlayer({
               className="w-20 h-1 accent-primary cursor-pointer"
               disabled={!isReady || !!error}
             />
+            <Button
+              variant="ghost"
+              size="icon"
+              className="text-muted-foreground hover:text-foreground shrink-0 rounded-full h-8 w-8 ml-2"
+              onClick={onStopRef.current}
+              title="Close player"
+            >
+              <XIcon className="h-4 w-4" />
+            </Button>
           </div>
         </AudioPlayerControlBar>
       </AudioPlayer>

@@ -39,10 +39,26 @@ use windows::{
     core::{IInspectable, Interface},
 };
 
-/// Shared channel for overlay BGRA frames arriving from the offscreen BrowserWindow.
-/// JS writes type-2 frames to the data pipe; `run_data_pipe` stores them here;
-/// `process_frame` picks them up and uploads to D2D on the next WGC callback.
-pub type SharedOverlay = Arc<Mutex<Option<(Vec<u8>, u32, u32)>>>;
+/// Page-file-backed shared memory section for overlay BGRA frames.
+/// Electron writes via `OpenFileMappingW`/`MapViewOfFile` (write view);
+/// the compositor reads via a seqlock embedded in the first 4 bytes.
+///
+/// Layout: `[u32 gen][u32 width][u32 height][BGRA pixels...]`
+/// - `gen == 0`   → no frame written yet
+/// - `gen` is odd → Electron write in progress, skip this frame
+/// - `gen` is even → data is consistent, safe to read
+pub struct ShmOverlay {
+    /// Base address of the read-only mapped view (owned by `main`).
+    pub view: *const u8,
+    /// Total mapped size in bytes (`1920 * 1080 * 4 + 12`).
+    pub size: usize,
+}
+// SAFETY: the view pointer is stable for the lifetime of the process and access
+// is synchronised via the seqlock in the first 4 bytes of the mapping.
+unsafe impl Send for ShmOverlay {}
+unsafe impl Sync for ShmOverlay {}
+
+pub type SharedShmOverlay = Arc<ShmOverlay>;
 
 /// Raw BGRA video frame from WGC. Shared between the preview pipe writer and
 /// the stream encoder via `Arc` to avoid copies.
@@ -52,6 +68,10 @@ pub struct RawFrame {
     pub height: u32,
     /// BGRA pixels, row-major, `width * height * 4` bytes.
     pub pixels: Vec<u8>,
+    /// WGC presentation timestamp in 100-nanosecond units (QPC-based).
+    /// Used by the encoder to select the temporally closest frame for each
+    /// encode slot rather than always using the most recently received frame.
+    pub timestamp_100ns: i64,
 }
 
 // ── GPU state shared across frames ───────────────────────────────────────────
@@ -224,6 +244,12 @@ fn process_frame(
     frame: &Direct3D11CaptureFrame,
     source_id: &str,
 ) -> Result<RawFrame> {
+    // Read the WGC presentation timestamp before acquiring the GPU lock.
+    // SystemRelativeTime is in 100-nanosecond units (same epoch as QPC).
+    let timestamp_100ns = frame
+        .SystemRelativeTime()
+        .map(|t| t.Duration)
+        .unwrap_or(0);
     let surface: IDirect3DSurface = frame.Surface().context("Frame had no surface")?;
     let dxgi_access: IDirect3DDxgiInterfaceAccess = surface
         .cast()
@@ -268,5 +294,5 @@ fn process_frame(
         gpu.ctx.Unmap(&gpu.staging, 0);
     }
 
-    Ok(RawFrame { source_id: source_id.to_string(), width, height, pixels })
+    Ok(RawFrame { source_id: source_id.to_string(), width, height, pixels, timestamp_100ns })
 }

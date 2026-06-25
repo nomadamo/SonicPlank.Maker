@@ -10,6 +10,9 @@ import {
   LibraryIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  Undo,
+  Redo,
+  SaveIcon,
 } from "lucide-react";
 import {
   AlertDialog,
@@ -27,6 +30,10 @@ import {
   timelineDataAtom,
   timelineCurrentTimeAtom,
   timelineIsPlayingAtom,
+  timelineZoomAtom,
+  timelineSelectionAtom,
+  timelineSelectedClipIdAtom,
+  sonicsHasUnsavedChangesAtom,
 } from "@/store/timelineStore";
 import {
   useLibraryStore,
@@ -41,6 +48,7 @@ import { useCallback, useState, useEffect, useRef } from "react";
 import { useStateMachine } from "@/store/stateMachine";
 import { useSettings } from "@/store/settingsStore";
 import { useTimelinePlayback } from "@/hooks/useTimelinePlayback";
+import { useTimelineHistory } from "@/hooks/useTimelineHistory";
 import { formatTime } from "@/utils/audio";
 
 
@@ -137,13 +145,17 @@ const PIXELS_PER_SECOND = 50;
 
 function Timeline() {
   const [tracks, setTracks] = useAtom(timelineTracksAtom);
+  const [zoom, setZoom] = useAtom(timelineZoomAtom);
   const [timelineData] = useAtom(timelineDataAtom);
+  const [selection, setSelection] = useAtom(timelineSelectionAtom);
+  const [selectedClipId, setSelectedClipId] = useAtom(timelineSelectedClipIdAtom);
   const { categories, items: libraryItems } = useLibraryStore();
   const displayLibraryItems = libraryItems.filter(
     (item) => !item.isStream && !item.isSpotifyStream && !item.isSpotifyPlaylist,
   );
-  const { setHasUnsavedChanges } = useStateMachine();
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useAtom(sonicsHasUnsavedChangesAtom);
   const { isPlaying, play, pause, togglePlay: baseTogglePlay, seek } = useTimelinePlayback();
+  const { undo, redo, canUndo, canRedo } = useTimelineHistory();
   const scrollRef = useRef<HTMLDivElement>(null);
   
   const isGlobalPlayerActive = useAtomValue(isGlobalPlayerActiveAtom);
@@ -251,12 +263,16 @@ function Timeline() {
     minScreenWidth,
   );
 
-  // Save timeline on changes
-  useEffect(() => {
-    window.electron.saveTimeline(timelineData).catch((err) => {
+  // Save timeline manually
+  const handleSave = useCallback(async () => {
+    try {
+      await window.electron.saveTimeline(timelineData);
+      setHasUnsavedChanges(false);
+      console.info("Timeline saved.");
+    } catch (err) {
       console.error("Failed to save timeline", err);
-    });
-  }, [timelineData]);
+    }
+  }, [timelineData, setHasUnsavedChanges]);
 
   const handleAddTrack = () => {
     setTracks((prev) => [
@@ -368,6 +384,51 @@ function Timeline() {
         }),
       );
       setHasUnsavedChanges(true);
+      if (selectedClipId === clipId) setSelectedClipId(null);
+    },
+    [setTracks, setHasUnsavedChanges, selectedClipId, setSelectedClipId],
+  );
+
+  const handleSplitClip = useCallback(
+    (trackId: string, clipId: string, splitTime: number) => {
+      setTracks((prev) =>
+        prev.map((track) => {
+          if (track.id !== trackId) return track;
+          
+          const clipIndex = track.clips.findIndex(c => c.id === clipId);
+          if (clipIndex === -1) return track;
+          const clip = track.clips[clipIndex];
+          
+          // Verify split time is strictly within the clip
+          if (splitTime <= clip.startTime || splitTime >= clip.startTime + clip.duration) {
+            return track;
+          }
+          
+          const timeFromStart = splitTime - clip.startTime;
+          
+          const clipA: TimelineClip = {
+            ...clip,
+            duration: timeFromStart
+          };
+          
+          const clipB: TimelineClip = {
+            ...clip,
+            id: crypto.randomUUID(),
+            startTime: splitTime,
+            startOffset: clip.startOffset + timeFromStart,
+            duration: clip.duration - timeFromStart
+          };
+          
+          const newClips = [...track.clips];
+          newClips.splice(clipIndex, 1, clipA, clipB);
+          
+          return {
+            ...track,
+            clips: newClips,
+          };
+        }),
+      );
+      setHasUnsavedChanges(true);
     },
     [setTracks, setHasUnsavedChanges],
   );
@@ -414,6 +475,161 @@ function Timeline() {
     },
     [setTracks, setHasUnsavedChanges],
   );
+
+  // Global Keyboard Shortcuts (Delete/Backspace)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't trigger if user is typing in an input field
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      
+      if (e.key === "Delete" || e.key === "Backspace") {
+        if (selectedClipId) {
+          // Delete selected clip
+          const track = tracks.find(t => t.clips.some(c => c.id === selectedClipId));
+          if (track) {
+            handleRemoveClip(track.id, selectedClipId);
+          }
+        } else if (selection) {
+          // Delete selected area
+          setTracks((prev) =>
+            prev.map((track) => {
+              if (track.id !== selection.trackId) return track;
+              
+              const newClips: TimelineClip[] = [];
+              
+              track.clips.forEach(clip => {
+                const clipEnd = clip.startTime + clip.duration;
+                
+                // Case 1: Clip completely inside selection -> drop it
+                if (clip.startTime >= selection.start && clipEnd <= selection.end) {
+                  return;
+                }
+                
+                // Case 2: Clip completely contains selection -> split it
+                if (clip.startTime < selection.start && clipEnd > selection.end) {
+                  const clipA: TimelineClip = {
+                    ...clip,
+                    duration: selection.start - clip.startTime
+                  };
+                  
+                  const clipB: TimelineClip = {
+                    ...clip,
+                    id: crypto.randomUUID(),
+                    startTime: selection.end,
+                    startOffset: clip.startOffset + (selection.end - clip.startTime),
+                    duration: clipEnd - selection.end
+                  };
+                  
+                  newClips.push(clipA, clipB);
+                  return;
+                }
+                
+                // Case 3: Clip overlaps start of selection -> trim right edge
+                if (clip.startTime < selection.start && clipEnd > selection.start && clipEnd <= selection.end) {
+                  newClips.push({
+                    ...clip,
+                    duration: selection.start - clip.startTime
+                  });
+                  return;
+                }
+                
+                // Case 4: Clip overlaps end of selection -> trim left edge
+                if (clip.startTime >= selection.start && clip.startTime < selection.end && clipEnd > selection.end) {
+                  const cutAmount = selection.end - clip.startTime;
+                  newClips.push({
+                    ...clip,
+                    startTime: selection.end,
+                    startOffset: clip.startOffset + cutAmount,
+                    duration: clip.duration - cutAmount
+                  });
+                  return;
+                }
+                
+                // Case 5: Clip is completely outside selection -> keep it untouched
+                newClips.push(clip);
+              });
+              
+              return {
+                ...track,
+                clips: newClips
+              };
+            })
+          );
+          setHasUnsavedChanges(true);
+          setSelection(null); // Clear selection after delete
+        }
+      } else if (e.key.toLowerCase() === "s") {
+        if (selection) {
+          // Split at selection boundaries
+          setTracks((prev) =>
+            prev.map((track) => {
+              if (track.id !== selection.trackId) return track;
+              
+              const newClips: TimelineClip[] = [];
+              let newSelectedClipId: string | null = null;
+              
+              track.clips.forEach(clip => {
+                const clipEnd = clip.startTime + clip.duration;
+                
+                // If it completely contains the selection -> split it into 3 clips
+                // (Since selection is clamped to a single clip, this is the only case we need)
+                if (clip.startTime <= selection.start && clipEnd >= selection.end) {
+                  // Clip A (before selection)
+                  if (selection.start > clip.startTime) {
+                    newClips.push({
+                      ...clip,
+                      id: crypto.randomUUID(),
+                      duration: selection.start - clip.startTime
+                    });
+                  }
+                  
+                  // Clip B (the selection itself)
+                  const middleClipId = crypto.randomUUID();
+                  newSelectedClipId = middleClipId;
+                  newClips.push({
+                    ...clip,
+                    id: middleClipId,
+                    startTime: selection.start,
+                    startOffset: clip.startOffset + (selection.start - clip.startTime),
+                    duration: selection.end - selection.start
+                  });
+                  
+                  // Clip C (after selection)
+                  if (clipEnd > selection.end) {
+                    newClips.push({
+                      ...clip,
+                      id: crypto.randomUUID(),
+                      startTime: selection.end,
+                      startOffset: clip.startOffset + (selection.end - clip.startTime),
+                      duration: clipEnd - selection.end
+                    });
+                  }
+                  return;
+                }
+                
+                newClips.push(clip);
+              });
+              
+              if (newSelectedClipId) {
+                // Auto-select the newly created middle clip!
+                setSelectedClipId(newSelectedClipId);
+              }
+              
+              return {
+                ...track,
+                clips: newClips
+              };
+            })
+          );
+          setHasUnsavedChanges(true);
+          setSelection(null);
+        }
+      }
+    };
+    
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [selectedClipId, selection, tracks, handleRemoveClip, setTracks, setHasUnsavedChanges, setSelection, setSelectedClipId]);
 
   return (
     <AnimatedRoute variant="fade">
@@ -538,10 +754,43 @@ function Timeline() {
               </Button>
               <div className="w-px h-6 bg-border mx-2" />
               <Button
+                variant="outline"
+                size="icon"
+                className="h-8 w-8"
+                disabled={!canUndo}
+                onClick={() => undo()}
+                title="Undo (Ctrl+Z)"
+              >
+                <Undo className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-8 w-8"
+                disabled={!canRedo}
+                onClick={() => redo()}
+                title="Redo (Ctrl+Y)"
+              >
+                <Redo className="h-4 w-4" />
+              </Button>
+              <div className="w-px h-6 bg-border mx-2" />
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-8 w-8 relative"
+                onClick={handleSave}
+                title="Save (Ctrl+S)"
+              >
+                <SaveIcon className="h-4 w-4" />
+                {hasUnsavedChanges && (
+                  <div className="absolute top-0 right-0 h-2 w-2 rounded-full bg-red-500 dark:bg-red-400" />
+                )}
+              </Button>
+              <Button
                 variant="secondary"
                 size="sm"
                 onClick={handleAddTrack}
-                className="gap-2"
+                className="gap-2 ml-2"
               >
                 <PlusIcon className="h-4 w-4" /> Add Track
               </Button>
@@ -620,7 +869,9 @@ function Timeline() {
                         onUpdateTrack={handleUpdateTrack}
                         onUpdateClip={handleUpdateClip}
                         onRemoveClip={handleRemoveClip}
+                        onSplitClip={handleSplitClip}
                         onMoveClipToTrack={handleMoveClipToTrack}
+                        onSeek={seek}
                       />
                     </motion.div>
                   ))}

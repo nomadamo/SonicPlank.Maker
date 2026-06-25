@@ -51,24 +51,24 @@ export function GlobalAudioNode(NodeRef: NodeProps<FlowNodeType>) {
         subtitle="Currently playing track"
         anchorName={`--globalAudioNode_${node.id}`}
       >
-        <div className="flex items-center gap-3 p-3 rounded-lg bg-zinc-900/50 border border-zinc-800/40 nodrag nopan nowheel">
+        <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/50 border border-border/40 nodrag nopan nowheel">
           {/* Status Icon */}
-          <div className="p-2.5 rounded-full flex items-center justify-center border shadow-md bg-zinc-900 border-zinc-800 text-emerald-400">
+          <div className="p-2.5 rounded-full flex items-center justify-center border shadow-md bg-muted border-border text-emerald-400">
             {isPlaying ? (
               <PlayIcon className="w-4 h-4 fill-emerald-400/20" />
             ) : (
-              <PauseIcon className="w-4 h-4 fill-zinc-500/20 text-zinc-500" />
+              <PauseIcon className="w-4 h-4 fill-zinc-500/20 text-muted-foreground" />
             )}
           </div>
 
           <div className="flex-1 min-w-0 flex flex-col gap-0.5">
             <div
-              className="text-xs font-semibold text-zinc-200 truncate"
+              className="text-xs font-semibold text-foreground truncate"
               title={trackTitle}
             >
               {trackTitle}
             </div>
-            <div className="flex justify-between items-center text-[10px] text-zinc-400">
+            <div className="flex justify-between items-center text-[10px] text-muted-foreground">
               <span className="truncate max-w-[110px]" title={trackArtist}>
                 {trackArtist}
               </span>

@@ -35,6 +35,9 @@ sonicplank-ipc   = { path = "crates/ipc" }
 # FFmpeg raw FFI bindings — bindgen generates them at build time from the
 # headers pointed to by FFMPEG_DIR (set in .cargo/config.toml).
 ffmpeg-sys-next  = "7"
+# Audio capture and lock-free ringbuffers
+cpal             = "0.15"
+ringbuf          = "0.4"
 # Windows API — required for WGC capture, DXGI, D3D11.
 # MSVC toolchain only (pinned in rust-toolchain.toml).
 windows          = { version = "0.61", features = [
@@ -43,7 +46,10 @@ windows          = { version = "0.61", features = [
     "Graphics_DirectX_Direct3D11",
     "Win32_Foundation",
     "Win32_Graphics_Direct3D",
+    "Win32_Media_Audio",
+    "Win32_Media_KernelStreaming",
     "Win32_Media_MediaFoundation",
+    "Win32_Media_Multimedia",
     "Win32_Graphics_Direct2D",
     "Win32_Graphics_Direct2D_Common",
     "Win32_Graphics_Direct3D11",
@@ -51,10 +57,16 @@ windows          = { version = "0.61", features = [
     "Win32_Graphics_Dxgi_Common",
     "Win32_Graphics_Gdi",
     "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Variant",
     "Win32_System_WinRT_Direct3D11",
     "Win32_System_WinRT_Graphics_Capture",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_PropertiesSystem",
     "Win32_UI_WindowsAndMessaging",
     "Win32_Graphics_Dwm",
+    "Win32_Security",
+    "Win32_System_Memory",
     "Win32_System_Threading",
     "Win32_System_ProcessStatus",
 ] }

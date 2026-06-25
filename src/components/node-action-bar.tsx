@@ -170,7 +170,7 @@ function ActionSelector({
 
       <Tooltip>
         <TooltipTrigger>
-          <InfoIcon className="w-5 h-5 text-zinc-400" />
+          <InfoIcon className="w-5 h-5 text-muted-foreground" />
         </TooltipTrigger>
         <TooltipContent>
           {type === "audioFlowNode" && (

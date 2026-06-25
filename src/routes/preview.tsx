@@ -508,7 +508,7 @@ function PreviewComponent() {
                       ?.replace("OverlayNode", "")
                       .replace("Node", "") ?? overlay.type}
                   </div>
-                  <div className="text-[9px] text-indigo-200 bg-zinc-950/80 px-1 py-0.5 rounded self-end font-mono">
+                  <div className="text-[9px] text-indigo-200 bg-background/80 px-1 py-0.5 rounded self-end font-mono">
                     {overlay.x}%, {overlay.y}%
                   </div>
 
@@ -574,7 +574,7 @@ function PreviewComponent() {
           )}
         </div>
       ) : (
-        <div className="flex flex-col items-center gap-3 text-zinc-400 text-center">
+        <div className="flex flex-col items-center gap-3 text-muted-foreground text-center">
           <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
           <span className="text-sm font-medium tracking-wide">
             Connecting to Compositor...
@@ -590,7 +590,7 @@ function PreviewComponent() {
       {hasFrame && (
         <div
           style={{ zIndex: 10000 }}
-          className={`absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-3 bg-zinc-950/80 backdrop-blur-md px-4 py-2.5 rounded-full border border-zinc-800 shadow-2xl transition-all duration-300 ${
+          className={`absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-3 bg-background/80 backdrop-blur-md px-4 py-2.5 rounded-full border border-border shadow-2xl transition-all duration-300 ${
             !isLocked
               ? "opacity-100 border-indigo-500/50 shadow-[0_0_20px_rgba(99,102,241,0.2)]"
               : "opacity-0 hover:opacity-100 group-hover:opacity-100"
@@ -601,7 +601,7 @@ function PreviewComponent() {
             className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold uppercase tracking-wider cursor-pointer border transition-all ${
               !isLocked
                 ? "bg-indigo-600 text-white border-indigo-500 shadow-[0_0_10px_rgba(99,102,241,0.5)] hover:bg-indigo-500"
-                : "bg-zinc-900 text-zinc-300 border-zinc-800 hover:bg-zinc-800 hover:text-white"
+                : "bg-muted text-foreground/80 border-border hover:bg-secondary hover:text-white"
             }`}
           >
             {!isLocked ? (

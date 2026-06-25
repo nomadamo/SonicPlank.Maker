@@ -11,6 +11,7 @@ use anyhow::{anyhow, Context, Result};
 use ffmpeg_sys_next::*;
 use serde::Deserialize;
 use tokio::sync::{broadcast, mpsc};
+use windows::Win32::System::Threading::{GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_HIGHEST};
 
 use crate::capture::RawFrame;
 use sonicplank_ipc::StreamSourceDef;
@@ -229,12 +230,14 @@ pub struct StreamOptions {
     /// "libx264" | "h264_nvenc" | "h264_amf" | "h264_qsv"
     pub encoder: String,
     pub sources: Vec<StreamSourceDef>,
+    pub audio_device_ids: Vec<String>,
 }
 
 #[derive(Debug)]
 pub enum StreamEvent {
     Started { width: u32, height: u32 },
     Status { frame: u64, fps: f32, bitrate_kbps: u32 },
+    AudioLevel { peak_db: f32 },
     Error(String),
     Stopped,
 }
@@ -242,6 +245,8 @@ pub enum StreamEvent {
 pub struct StreamSession {
     stop_tx: std::sync::mpsc::SyncSender<()>,
     thread: Option<std::thread::JoinHandle<()>>,
+    _audio_streams: Vec<crate::audio::ActiveStream>,
+    _mixer_stop_tx: Option<std::sync::mpsc::SyncSender<()>>,
 }
 
 impl StreamSession {
@@ -249,9 +254,128 @@ impl StreamSession {
         opts: StreamOptions,
         frame_rx: broadcast::Receiver<Arc<RawFrame>>,
         event_tx: mpsc::UnboundedSender<StreamEvent>,
-        shared_overlay: crate::capture::SharedOverlay,
     ) -> Self {
         let (stop_tx, stop_rx) = std::sync::mpsc::sync_channel::<()>(1);
+
+        // ── Audio capture (one per audio_device_ids entry) ────────────────────────
+        let (peak_tx, peak_rx) = std::sync::mpsc::sync_channel::<f32>(4 * opts.audio_device_ids.len().max(1));
+        let mut raw_captures: Vec<(crate::audio::ActiveStream, ringbuf::HeapCons<f32>, cpal::StreamConfig)> = Vec::new();
+
+        for dev_id in &opts.audio_device_ids {
+            match crate::audio::start_audio_capture(dev_id, Some(peak_tx.clone())) {
+                Ok(cap) => {
+                    tracing::info!("audio capture started: device='{}'", dev_id);
+                    raw_captures.push(cap);
+                }
+                Err(e) => tracing::error!("audio capture failed: device='{}' error={e}", dev_id),
+            }
+        }
+
+        // Bridge: peak values from any capture thread → StreamEvent::AudioLevel.
+        if !raw_captures.is_empty() {
+            let audio_level_evt_tx = event_tx.clone();
+            std::thread::Builder::new()
+                .name("audio-peak-bridge".into())
+                .spawn(move || {
+                    while let Ok(peak) = peak_rx.recv() {
+                        let db = if peak > 0.0 { 20.0 * peak.log10() } else { f32::NEG_INFINITY };
+                        let _ = audio_level_evt_tx.send(StreamEvent::AudioLevel { peak_db: db });
+                    }
+                })
+                .ok();
+        }
+        drop(peak_tx); // each WASAPI/CPAL thread holds a clone; release ours
+
+        // Resolve (audio_cons, audio_config, audio_streams), mixing N sources when needed.
+        let mut mixer_stop: Option<std::sync::mpsc::SyncSender<()>> = None;
+        let (audio_cons, audio_config, audio_streams) = if raw_captures.is_empty() {
+            (None, None, Vec::new())
+        } else if raw_captures.len() == 1 {
+            let (stream, cons, config) = raw_captures.remove(0);
+            (Some(cons), Some(config), vec![stream])
+        } else {
+            let primary_channels = raw_captures[0].2.channels;
+            let primary_rate     = raw_captures[0].2.sample_rate;
+
+            let mut streams: Vec<crate::audio::ActiveStream> = Vec::new();
+            let mut consumers: Vec<ringbuf::HeapCons<f32>> = Vec::new();
+            for (stream, cons, config) in raw_captures {
+                if config.channels == primary_channels && config.sample_rate == primary_rate {
+                    streams.push(stream);
+                    consumers.push(cons);
+                } else {
+                    tracing::warn!(
+                        "audio mixer: skipping device with mismatched format \
+                         ({} ch @ {}Hz vs primary {} ch @ {}Hz)",
+                        config.channels, config.sample_rate.0,
+                        primary_channels, primary_rate.0,
+                    );
+                    // stream drops here → that capture thread stops
+                }
+            }
+
+            let n_ch = primary_channels as usize;
+            let mix_buf_samples = primary_rate.0 as usize * n_ch * 4; // 4-second ring
+            let mix_rb = ringbuf::HeapRb::<f32>::new(mix_buf_samples);
+            let (mut mix_prod, mix_cons) = {
+                use ringbuf::traits::Split;
+                mix_rb.split()
+            };
+
+            let (mixer_stop_tx, mixer_stop_rx) = std::sync::mpsc::sync_channel::<()>(1);
+
+            std::thread::Builder::new()
+                .name("audio-mixer".into())
+                .spawn(move || {
+                    use ringbuf::traits::{Consumer as _, Observer as _, Producer as _};
+                    use std::sync::mpsc::TryRecvError;
+                    const CHUNK: usize = 512;
+                    let mut sources = consumers;
+                    let mut bufs: Vec<Vec<f32>> = (0..sources.len())
+                        .map(|_| vec![0.0f32; CHUNK])
+                        .collect();
+
+                    loop {
+                        match mixer_stop_rx.try_recv() {
+                            Ok(()) | Err(TryRecvError::Disconnected) => break,
+                            Err(TryRecvError::Empty) => {}
+                        }
+
+                        let available = sources.iter()
+                            .map(|c| c.occupied_len())
+                            .min()
+                            .unwrap_or(0);
+
+                        if available == 0 {
+                            std::thread::sleep(std::time::Duration::from_millis(5));
+                            continue;
+                        }
+
+                        let to_mix = available.min(CHUNK);
+                        let mut mixed = vec![0.0f32; to_mix];
+
+                        for (i, src) in sources.iter_mut().enumerate() {
+                            let buf = &mut bufs[i];
+                            buf.resize(to_mix, 0.0);
+                            src.pop_slice(&mut buf[..to_mix]);
+                            for (m, s) in mixed.iter_mut().zip(buf[..to_mix].iter()) {
+                                *m = (*m + s).clamp(-1.0, 1.0);
+                            }
+                        }
+
+                        mix_prod.push_slice(&mixed);
+                    }
+                })
+                .ok();
+
+            let primary_config = cpal::StreamConfig {
+                channels: primary_channels,
+                sample_rate: primary_rate,
+                buffer_size: cpal::BufferSize::Default,
+            };
+            mixer_stop = Some(mixer_stop_tx);
+            (Some(mix_cons), Some(primary_config), streams)
+        };
 
         // Bridge: async broadcast receiver -> bounded sync channel for the encoder thread.
         let (bridge_tx, bridge_rx) = std::sync::mpsc::sync_channel::<Arc<RawFrame>>(8);
@@ -278,14 +402,14 @@ impl StreamSession {
         });
 
         let thread = std::thread::spawn(move || {
-            if let Err(e) = run_encoder(opts, bridge_rx, stop_rx, &event_tx, shared_overlay) {
+            if let Err(e) = run_encoder(opts, bridge_rx, audio_cons, audio_config, stop_rx, &event_tx) {
                 tracing::error!("stream encoder error: {e:#}");
                 let _ = event_tx.send(StreamEvent::Error(format!("{e:#}")));
             }
             let _ = event_tx.send(StreamEvent::Stopped);
         });
 
-        Self { stop_tx, thread: Some(thread) }
+        Self { stop_tx, thread: Some(thread), _audio_streams: audio_streams, _mixer_stop_tx: mixer_stop }
     }
 
     pub fn stop(&mut self) {
@@ -293,6 +417,8 @@ impl StreamSession {
         if let Some(t) = self.thread.take() {
             let _ = t.join();
         }
+        // Signal mixer thread to exit (drops the sender, disconnecting the channel).
+        let _ = self._mixer_stop_tx.take();
     }
 }
 
@@ -307,26 +433,32 @@ impl Drop for StreamSession {
 fn run_encoder(
     opts: StreamOptions,
     frame_rx: std::sync::mpsc::Receiver<Arc<RawFrame>>,
+    audio_cons: Option<ringbuf::HeapCons<f32>>,
+    audio_config: Option<cpal::StreamConfig>,
     stop_rx: std::sync::mpsc::Receiver<()>,
     event_tx: &mpsc::UnboundedSender<StreamEvent>,
-    shared_overlay: crate::capture::SharedOverlay,
 ) -> Result<()> {
     // Clone config while the lock is briefly held - avoids holding RwLock across unsafe FFI.
     let enc_cfg = config_cache()
         .read()
         .map_err(|_| anyhow!("encoder config lock poisoned"))?
         .clone();
-    unsafe { run_encoder_unsafe(opts, enc_cfg, frame_rx, stop_rx, event_tx, shared_overlay) }
+    unsafe { run_encoder_unsafe(opts, enc_cfg, frame_rx, audio_cons, audio_config, stop_rx, event_tx) }
 }
 
 unsafe fn run_encoder_unsafe(
     opts: StreamOptions,
     enc_cfg: EncoderConfig,
     frame_rx: std::sync::mpsc::Receiver<Arc<RawFrame>>,
+    audio_cons: Option<ringbuf::HeapCons<f32>>,
+    audio_config: Option<cpal::StreamConfig>,
     stop_rx: std::sync::mpsc::Receiver<()>,
     event_tx: &mpsc::UnboundedSender<StreamEvent>,
-    shared_overlay: crate::capture::SharedOverlay,
 ) -> Result<()> {
+    // Elevate thread priority to prevent Windows Game Mode from starving the 
+    // background encode thread while the user plays the game.
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
+
     av_log_set_level(AV_LOG_WARNING);
 
     // ── Wait for the first frame (gives us source dimensions) ─────────────────
@@ -438,13 +570,18 @@ unsafe fn run_encoder_unsafe(
 
     // Encoder-specific tuning applied before av_opt_set options
     if opts.encoder == "h264_nvenc" {
-        // B-frames add interleaving delay: av_interleaved_write_frame buffers 2-3 packets
-        // and flushes in bursts, causing large TCP writes that block for 300-1000ms.
-        // 0 B-frames = one packet per frame, written immediately, no burst writes.
+        // B-frames require DTS reordering that FLV+av_write_frame cannot handle without
+        // av_interleaved_write_frame (which causes 300ms+ TCP burst stalls). Keep at 0.
         (*codec_ctx).max_b_frames = 0;
         // NVENC CBR: rc_max_rate = rc_buffer_size = bit_rate for stable CBR
         (*codec_ctx).rc_max_rate = (*codec_ctx).bit_rate;
         (*codec_ctx).rc_buffer_size = (*codec_ctx).bit_rate as i32;
+        // Adaptive Quantization: redistributes bitrate from flat/dark regions to
+        // high-detail areas (text, faces, edges) within each frame.
+        // aq-strength 8 is a balanced default (range 1-15).
+        set_opt(codec_ctx, "spatial-aq", "1");
+        set_opt(codec_ctx, "temporal-aq", "1");
+        set_opt(codec_ctx, "aq-strength", "8");
     }
 
     for (key, val) in &preset.options {
@@ -482,6 +619,19 @@ unsafe fn run_encoder_unsafe(
           "avcodec_parameters_from_context")?;
     (*out_stream).time_base = (*codec_ctx).time_base;
 
+    // ── Setup Audio Encoder ───────────────────────────────────────────────────
+    let mut audio_enc = if let (Some(cons), Some(config)) = (audio_cons, audio_config) {
+        match crate::audio_encoder::AudioEncoder::new(ofmt_ctx, &config, cons) {
+            Ok(enc) => Some(enc),
+            Err(e) => {
+                tracing::error!("Failed to initialize audio encoder: {e}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     // ── Open RTMP output & write header ───────────────────────────────────────
     // rw_timeout (µs): caps how long avio blocks on a single TCP read/write.
     // Without this, av_interleaved_write_frame can block indefinitely on a
@@ -496,6 +646,10 @@ unsafe fn run_encoder_unsafe(
     check(ret, "avio_open2 - check RTMP URL and network")?;
     check(avformat_write_header(ofmt_ctx, ptr::null_mut()),
           "avformat_write_header - RTMP server rejected connection")?;
+
+    if let Some(ref mut enc) = audio_enc {
+        unsafe { enc.update_stream_timebase(ofmt_ctx); }
+    }
 
     tracing::info!(
         "Stream started: {}x{} (mode: {})  {}x{} @{}fps via {} at {}kbps",
@@ -574,7 +728,7 @@ unsafe fn run_encoder_unsafe(
     let sws = sws_getContext(
         crop_w, crop_h, AVPixelFormat::AV_PIX_FMT_BGRA,
         dst_w, dst_h, AVPixelFormat::AV_PIX_FMT_YUV420P,
-        SWS_BILINEAR as i32,
+        SWS_FAST_BILINEAR as i32,
         ptr::null_mut(), ptr::null_mut(), ptr::null(),
     );
     if sws.is_null() {
@@ -595,7 +749,6 @@ unsafe fn run_encoder_unsafe(
     std::ptr::write_bytes((*yuv_frame).data[2], 128, ((*yuv_frame).linesize[2] * out_h / 2) as usize);
 
     let pkt = av_packet_alloc();
-    let shared_overlay_enc = Arc::clone(&shared_overlay);
 
     // ── Encode loop ───────────────────────────────────────────────────────────
     let stream_start = Instant::now();
@@ -614,7 +767,7 @@ unsafe fn run_encoder_unsafe(
 
     // Encode the first frame.
     calls_this_interval += 1;
-    let mut first_pts = 0;
+    let mut first_pts = 0i64;
     let mut pip_scalers: HashMap<String, PipScaler> = HashMap::new();
     encode_frame(codec_ctx, sws, yuv_frame, pkt,
                  crop_h, crop_x, crop_y, dst_h, dst_x, dst_y, &first, &mut frames_this_interval, &mut bytes_since_status,
@@ -623,77 +776,99 @@ unsafe fn run_encoder_unsafe(
                  &mut pkts_dropped, &queue_depth)?;
     last_pts = 0;
     total_frames += 1;
-    let mut last_frame: Arc<RawFrame> = first;
+
+    // ── Jitter buffer: 3-slot ring of recent WGC frames ───────────────────────
+    // Each slot stores a (frame, arrival_instant) pair. At each encode tick,
+    // we select the slot whose arrival time is closest to the slot's ideal
+    // wall-clock time (stream_start + current_pts/fps). This smooths burst-and-
+    // gap delivery from GPU-bound games without depending on WGC timestamps.
+    const JITTER_SLOTS: usize = 3;
+    let first_arrival = Instant::now();
+    let mut jitter: [(Arc<RawFrame>, Instant); JITTER_SLOTS] = [
+        (first.clone(), first_arrival),
+        (first.clone(), first_arrival),
+        (first.clone(), first_arrival),
+    ];
+    let mut jitter_head: usize = 0; // next slot to overwrite (ring)
+
+    let mut sleeper = spin_sleep::SpinSleeper::default();
 
     let mut forced_stop = false;
     loop {
         if stop_rx.try_recv().is_ok() { forced_stop = true; break; }
 
-        // Drain all pending frames so we always encode the most recent one.
-        // If none arrive within `frame_wait`, repeat the last frame to keep the
-        // CBR bitrate filled and prevent Twitch's receive buffer from draining.
-        let raw = {
-            // Consume everything currently queued, keeping the newest.
-            let mut newest: Option<Arc<RawFrame>> = None;
-            loop {
-                match frame_rx.try_recv() {
-                    Ok(f) => { newest = Some(f); }
-                    Err(_) => break,
+        if let Some(ref mut enc) = audio_enc {
+            let mut send_audio = |pkt: *mut AVPacket| -> Result<()> {
+                queue_depth.fetch_add(1, Ordering::Relaxed);
+                bytes_since_status += unsafe { (*pkt).size } as u64;
+                if pkt_tx.try_send(OwnedPacket(pkt)).is_err() {
+                    pkts_dropped += 1;
+                    queue_depth.fetch_sub(1, Ordering::Relaxed);
                 }
+                Ok(())
+            };
+            if let Err(e) = enc.poll(stream_start.elapsed().as_secs_f64(), &mut send_audio) {
+                tracing::warn!("Audio encode error: {}", e);
             }
-            if let Some(f) = newest {
-                f
-            } else {
-                // Nothing queued - block briefly for the next frame.
-                match frame_rx.recv_timeout(frame_wait) {
-                    Ok(f) => {
-                        // Drain again in case more arrived while we waited.
-                        let mut newest = f;
-                        loop {
-                            match frame_rx.try_recv() {
-                                Ok(n) => { newest = n; }
-                                Err(_) => break,
-                            }
-                        }
-                        newest
-                    }
-                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                        // Repeat last frame to maintain CBR output.
-                        last_frame.clone()
-                    }
-                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
-                }
-            }
-        };
-
-        last_frame = raw.clone();
+        }
 
         let elapsed_secs = stream_start.elapsed().as_secs_f64();
-        let mut current_pts = (elapsed_secs * target_fps as f64).round() as i64;
+        let ideal_pts = (elapsed_secs * target_fps as f64).round() as i64;
         
-        if current_pts <= last_pts {
-            let next_pts = last_pts + 1;
-            let target_time_secs = next_pts as f64 / target_fps as f64;
-            let target_duration = Duration::from_secs_f64(target_time_secs);
-            let elapsed = stream_start.elapsed();
-            if target_duration > elapsed {
-                std::thread::sleep(target_duration - elapsed);
-            }
-            current_pts = next_pts;
+        let mut current_pts = last_pts + 1;
+        if ideal_pts > current_pts + 1 {
+            // We fell behind real-time. Drop exactly ONE frame to smoothly pace catch-up 
+            // without chunked stutters (e.g., effectively outputs 30 FPS instead of 60 FPS 
+            // uniformly, rather than dropping 3 frames at once and causing a huge visual jerk).
+            frames_skipped += 1;
+            last_pts = current_pts;
+            continue; // Physically skip encoding this frame to save CPU
         }
+
+        let target_time_secs = current_pts as f64 / target_fps as f64;
+        let target_duration = Duration::from_secs_f64(target_time_secs);
+        let elapsed = stream_start.elapsed();
+
+        if target_duration > elapsed {
+            sleeper.sleep(target_duration - elapsed);
+        }
+
+        // Drain all pending WGC frames into the jitter buffer with arrival timestamp.
+        while let Ok(f) = frame_rx.try_recv() {
+            jitter[jitter_head] = (f, Instant::now());
+            jitter_head = (jitter_head + 1) % JITTER_SLOTS;
+        }
+
+        // Select the slot whose arrival time is closest to this slot's ideal wall time.
+        // This picks the frame that best represents what was happening at current_pts/fps
+        // seconds since stream start, smoothing over bursty WGC delivery.
+        let ideal_elapsed = Duration::from_secs_f64(current_pts as f64 / target_fps as f64);
+        let ideal_instant = stream_start + ideal_elapsed;
+        let raw = jitter
+            .iter()
+            .min_by_key(|(_, arrival)| {
+                // Saturating distance to avoid u128 overflow on early frames
+                if *arrival >= ideal_instant {
+                    arrival.duration_since(ideal_instant).as_nanos()
+                } else {
+                    ideal_instant.duration_since(*arrival).as_nanos()
+                }
+            })
+            .map(|(f, _)| f.clone())
+            .unwrap_or_else(|| jitter[0].0.clone());
+
+        let enc_pts = current_pts;
         last_pts = current_pts;
 
         // Skip encoding entirely when the RTMP queue is >=80% full.
-        // This avoids wasting ~6ms of CPU per frame on sws+NVENC for packets
-        // that would just be dropped anyway.
         if queue_depth.load(Ordering::Relaxed) >= QUEUE_SKIP_THRESHOLD {
             frames_skipped += 1;
         } else {
             calls_this_interval += 1;
-            let mut enc_pts = current_pts;
+            let mut enc_pts_arg = enc_pts;
             encode_frame(codec_ctx, sws, yuv_frame, pkt,
                          crop_h, crop_x, crop_y, dst_h, dst_x, dst_y, &raw, &mut frames_this_interval,
-                         &mut bytes_since_status, &mut enc_pts,
+                         &mut bytes_since_status, &mut enc_pts_arg,
                          &mut sws_ms_acc, &mut nvenc_ms_acc, &mut recv_ms_acc,
                          &pkt_tx, codec_tb, out_stream_tb, out_stream_idx,
                          &mut pkts_dropped, &queue_depth)?;
@@ -708,7 +883,7 @@ unsafe fn run_encoder_unsafe(
             let fps = frames_this_interval as f32 / elapsed.as_secs_f32();
             let n = calls_this_interval.max(1) as f64;
             let qd = queue_depth.load(Ordering::Relaxed);
-            tracing::info!(
+            tracing::debug!(
                 "Stream status: {fps:.1}fps {bitrate_kbps}kbps | \
                  sws={:.1}ms send={:.1}ms recv={:.1}ms | \
                  queue={}/{QUEUE_CAP} skipped={frames_skipped} dropped={pkts_dropped}",

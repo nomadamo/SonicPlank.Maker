@@ -7,6 +7,7 @@ import {
   flowNodesAtom,
   flowDataAtom,
   flowEdgesAtom,
+  flowHasUnsavedChangesAtom,
 } from "@/store/flowStore";
 import { useStateMachine } from "@/store/stateMachine";
 import { toast } from "sonner";
@@ -131,7 +132,7 @@ const iconColors = {
   orange: "bg-orange-500/10 border-orange-500/20 text-orange-400",
   amber: "bg-amber-500/10 border-amber-500/20 text-amber-400",
   red: "bg-red-500/10 border-red-500/20 text-red-400",
-  zinc: "bg-zinc-500/10 border-zinc-500/20 text-zinc-400",
+  zinc: "bg-muted/10 border-border/20 text-muted-foreground",
 };
 
 interface BaseNodeCardProps {
@@ -171,7 +172,8 @@ export function BaseNodeCard({
   const nodes = useAtomValue(flowNodesAtom);
   const setNodes = useSetAtom(flowNodesAtom);
   const setEdges = useSetAtom(flowEdgesAtom);
-  const { setHasUnsavedChanges, setPersistRequested } = useStateMachine();
+  const { setPersistRequested } = useStateMachine();
+  const setFlowUnsaved = useSetAtom(flowHasUnsavedChangesAtom);
 
   const [propertiesOpen, setPropertiesOpen] = useState(false);
 
@@ -205,9 +207,9 @@ export function BaseNodeCard({
       currentEdges.filter((e) => e.source !== id && e.target !== id),
     );
     setPersistRequested(true);
-    setHasUnsavedChanges(true);
+    setFlowUnsaved(true);
     toast("Node deleted");
-  }, [id, setNodes, setEdges, setPersistRequested, setHasUnsavedChanges]);
+  }, [id, setNodes, setEdges, setPersistRequested, setFlowUnsaved]);
 
   const isDuplicateDisabled = nodeType === "targetOutputNode";
 
@@ -228,14 +230,14 @@ export function BaseNodeCard({
       return [...currentNodes, newNode];
     });
     setPersistRequested(true);
-    setHasUnsavedChanges(true);
+    setFlowUnsaved(true);
     toast("Node duplicated");
   }, [
     id,
     isDuplicateDisabled,
     setNodes,
     setPersistRequested,
-    setHasUnsavedChanges,
+    setFlowUnsaved,
   ]);
 
   const showProperties = [
@@ -257,9 +259,9 @@ export function BaseNodeCard({
         render={
           <Card
             className={cn(
-              "w-80 panel flex flex-col select-none bg-zinc-950/95 backdrop-blur-md border text-white rounded-xl shadow-2xl transition-all duration-200",
+              "w-80 panel flex flex-col select-none bg-background/95 backdrop-blur-md border text-white rounded-xl shadow-2xl transition-all duration-200",
               isMinimized ? "p-3.5 gap-0" : "p-4 gap-4",
-              selected ? borderClass : "border-zinc-800",
+              selected ? borderClass : "border-border",
               className,
             )}
             id={`flow-node-${id}`}
@@ -283,14 +285,14 @@ export function BaseNodeCard({
                   />
                   <DropdownMenuContent
                     align="start"
-                    className="bg-zinc-950/95 border border-zinc-800 text-zinc-100 backdrop-blur-md rounded-lg shadow-xl min-w-40 p-1 nodrag nopan nowheel z-[9999]"
+                    className="bg-background/95 border border-border text-foreground backdrop-blur-md rounded-lg shadow-xl min-w-40 p-1 nodrag nopan nowheel z-[9999]"
                   >
                     {showProperties && (
                       <DropdownMenuItem
                         onClick={() => setPropertiesOpen(true)}
-                        className="flex items-center gap-2 px-2.5 py-1.5 text-xs text-zinc-200 hover:bg-zinc-800 hover:text-white rounded cursor-pointer"
+                        className="flex items-center gap-2 px-2.5 py-1.5 text-xs text-foreground hover:bg-secondary hover:text-white rounded cursor-pointer"
                       >
-                        <TablePropertiesIcon className="w-4 h-4 text-zinc-400" />
+                        <TablePropertiesIcon className="w-4 h-4 text-muted-foreground" />
                         Properties
                       </DropdownMenuItem>
                     )}
@@ -301,10 +303,10 @@ export function BaseNodeCard({
                         "flex items-center gap-2 px-2.5 py-1.5 text-xs rounded cursor-pointer",
                         isDuplicateDisabled
                           ? "text-zinc-600 cursor-not-allowed opacity-50"
-                          : "text-zinc-200 hover:bg-zinc-800 hover:text-white",
+                          : "text-foreground hover:bg-secondary hover:text-white",
                       )}
                     >
-                      <CopyIcon className="w-4 h-4 text-zinc-400" />
+                      <CopyIcon className="w-4 h-4 text-muted-foreground" />
                       Duplicate {isDuplicateDisabled && "(Limit 1)"}
                     </DropdownMenuItem>
                     <DropdownMenuItem
@@ -317,11 +319,11 @@ export function BaseNodeCard({
                   </DropdownMenuContent>
                 </DropdownMenu>
                 <div>
-                  <h4 className="text-sm font-semibold text-zinc-100">
+                  <h4 className="text-sm font-semibold text-foreground">
                     {title}
                   </h4>
                   {subtitle && (
-                    <p className="text-[11px] text-zinc-400">{subtitle}</p>
+                    <p className="text-[11px] text-muted-foreground">{subtitle}</p>
                   )}
                 </div>
               </div>
@@ -330,7 +332,7 @@ export function BaseNodeCard({
                 {headerActions}
                 <button
                   onClick={toggleMinimize}
-                  className="p-1.5 rounded hover:bg-zinc-800 text-zinc-400 hover:text-zinc-100 transition-colors cursor-pointer"
+                  className="p-1.5 rounded hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
                   title={isMinimized ? "Expand" : "Collapse"}
                 >
                   {isMinimized ? (
@@ -347,13 +349,13 @@ export function BaseNodeCard({
           </Card>
         }
       />
-      <ContextMenuContent className="bg-zinc-950/95 border border-zinc-800 text-zinc-100 backdrop-blur-md rounded-lg shadow-xl min-w-40 p-1 nodrag nopan nowheel z-[9999]">
+      <ContextMenuContent className="bg-background/95 border border-border text-foreground backdrop-blur-md rounded-lg shadow-xl min-w-40 p-1 nodrag nopan nowheel z-[9999]">
         {showProperties && (
           <ContextMenuItem
             onClick={() => setPropertiesOpen(true)}
-            className="flex items-center gap-2 px-2.5 py-1.5 text-xs text-zinc-200 hover:bg-zinc-800 hover:text-white rounded cursor-pointer"
+            className="flex items-center gap-2 px-2.5 py-1.5 text-xs text-foreground hover:bg-secondary hover:text-white rounded cursor-pointer"
           >
-            <TablePropertiesIcon className="w-4 h-4 text-zinc-400" />
+            <TablePropertiesIcon className="w-4 h-4 text-muted-foreground" />
             Properties
           </ContextMenuItem>
         )}
@@ -364,10 +366,10 @@ export function BaseNodeCard({
             "flex items-center gap-2 px-2.5 py-1.5 text-xs rounded cursor-pointer",
             isDuplicateDisabled
               ? "text-zinc-600 cursor-not-allowed opacity-50"
-              : "text-zinc-200 hover:bg-zinc-800 hover:text-white",
+              : "text-foreground hover:bg-secondary hover:text-white",
           )}
         >
-          <CopyIcon className="w-4 h-4 text-zinc-400" />
+          <CopyIcon className="w-4 h-4 text-muted-foreground" />
           Duplicate {isDuplicateDisabled && "(Limit 1)"}
         </ContextMenuItem>
         <ContextMenuItem

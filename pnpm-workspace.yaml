@@ -1,5 +1,6 @@
 allowBuilds:
   electron-winstaller: true
+  koffi: true
 nodeLinker: hoisted
 overrides:
   "@electron/node-gyp": "*"

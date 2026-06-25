@@ -142,7 +142,7 @@ export function AudioNode(NodeRef: NodeProps<FlowNodeType>) {
         anchorName={`--audioFlowNode_${node.id}`}
       >
         {/* Metadata Details & Interactive Controls */}
-        <div className="flex items-center gap-3 p-3 rounded-lg bg-zinc-900/50 border border-zinc-800/40">
+        <div className="flex items-center gap-3 p-3 rounded-lg bg-muted/50 border border-border/40">
           {/* Play / Pause Toggle Button */}
           <button
             onClick={togglePlayState}
@@ -150,10 +150,10 @@ export function AudioNode(NodeRef: NodeProps<FlowNodeType>) {
             className={cn(
               "p-2.5 rounded-full flex items-center justify-center transition-all duration-150 nodrag nopan nowheel border shadow-md",
               !mediaPath
-                ? "bg-zinc-800/40 border-zinc-800 text-zinc-600 cursor-not-allowed"
+                ? "bg-secondary/40 border-border text-zinc-600 cursor-not-allowed"
                 : isPlayingVal
                   ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20 hover:scale-105 cursor-pointer"
-                  : "bg-zinc-900 border-zinc-800 text-zinc-200 hover:bg-zinc-800 hover:scale-105 cursor-pointer",
+                  : "bg-muted border-border text-foreground hover:bg-secondary hover:scale-105 cursor-pointer",
             )}
           >
             {isPlayingVal ? (
@@ -165,12 +165,12 @@ export function AudioNode(NodeRef: NodeProps<FlowNodeType>) {
 
           <div className="flex-1 min-w-0 flex flex-col gap-0.5">
             <div
-              className="text-xs font-semibold text-zinc-200 truncate"
+              className="text-xs font-semibold text-foreground truncate"
               title={trackTitle}
             >
               {trackTitle}
             </div>
-            <div className="flex justify-between items-center text-[10px] text-zinc-400">
+            <div className="flex justify-between items-center text-[10px] text-muted-foreground">
               <span className="truncate max-w-[110px]" title={trackArtist}>
                 {trackArtist}
               </span>
@@ -182,21 +182,21 @@ export function AudioNode(NodeRef: NodeProps<FlowNodeType>) {
         {/* Volume Slider & Mute Toggle */}
         <div className="flex flex-col gap-1.5 nodrag nopan nowheel">
           <div className="flex justify-between items-center">
-            <label className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider flex items-center gap-1">
+            <label className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1">
               <button
                 onClick={toggleMuteState}
                 disabled={!mediaPath}
-                className="hover:text-zinc-200 transition-colors p-0.5 rounded cursor-pointer"
+                className="hover:text-foreground transition-colors p-0.5 rounded cursor-pointer"
               >
                 {isMutedVal ? (
-                  <MuteIcon className="w-3.5 h-3.5 text-zinc-500" />
+                  <MuteIcon className="w-3.5 h-3.5 text-muted-foreground" />
                 ) : (
-                  <UnmuteIcon className="w-3.5 h-3.5 text-zinc-400" />
+                  <UnmuteIcon className="w-3.5 h-3.5 text-muted-foreground" />
                 )}
               </button>
               Volume
             </label>
-            <span className="text-[11px] text-zinc-400">
+            <span className="text-[11px] text-muted-foreground">
               {isMutedVal ? "Muted" : `${Math.round(volumeVal * 100)}%`}
             </span>
           </div>
@@ -208,7 +208,7 @@ export function AudioNode(NodeRef: NodeProps<FlowNodeType>) {
             value={isMutedVal ? 0 : volumeVal}
             onChange={(e) => handleVolumeChange(Number(e.target.value))}
             disabled={isMutedVal || !mediaPath}
-            className="w-full h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-emerald-500 focus:outline-none disabled:opacity-40"
+            className="w-full h-1 bg-secondary rounded-lg appearance-none cursor-pointer accent-emerald-500 focus:outline-none disabled:opacity-40"
           />
         </div>
       </BaseNodeCard>

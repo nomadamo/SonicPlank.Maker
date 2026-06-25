@@ -13,8 +13,9 @@ export type RtmpTarget = {
 export type AppSettings = {
   autoSave: boolean;
   autoSaveIntervalMs: number; // milliseconds; e.g. 30000 = 30s
-  audioOutputDeviceId?: string; // empty means default
-  audioInputDeviceId?: string; // empty means default
+  audioOutputDeviceId?: string; // app audio playback device; empty means default
+  audioInputDeviceId?: string; // microphone for recording; empty means default
+  audioStreamSourceId?: string; // audio capture source for streaming (output/microphone/capture device)
   theme: "light" | "dark" | "system";
   timelineSidebarWidth?: number;
   timelineSidebarOpen?: boolean;
@@ -25,11 +26,13 @@ export type AppSettings = {
   
   // FFmpeg Output Global Settings
   streamEncoder?: "copy" | "libx264" | "h264_nvenc" | "h264_amf" | "h264_qsv";
-  streamFps?: 30 | 60;
+  streamFps?: 30 | 60 | 90 | 120;
   streamDelayMs?: number;
   streamBitrateKbps?: number;
   recordingBitrateKbps?: number;
   selectedGpu?: string;
+  /** Output resolution: "native" | "1080p" | "936p" | "720p" */
+  streamOutputResolution?: string;
 
   // Global RTMP Targets
   rtmpTargets: RtmpTarget[];
@@ -59,6 +62,7 @@ export const defaultSettings: AppSettings = {
   streamEncoder: "copy",
   streamDelayMs: 0,
   selectedGpu: "auto",
+  streamOutputResolution: "native",
   rtmpTargets: [],
 };
 

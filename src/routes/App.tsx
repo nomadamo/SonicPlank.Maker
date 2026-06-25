@@ -1,4 +1,4 @@
-import { ComponentProps, ReactNode, useState, useEffect } from "react";
+import { ComponentProps, ReactNode, useState, useEffect, useRef } from "react";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 import { Separator } from "@/components/ui/separator";
 import {
@@ -35,7 +35,7 @@ import {
 } from "@fluentui/react-icons-mdl2";
 import { Button } from "@/components/ui/button";
 import { RouteAnimationContainer } from "@/components/route-animation-container";
-import { createRootRoute, Outlet } from "@tanstack/react-router";
+import { createRootRoute, Outlet, useLocation, useNavigate } from "@tanstack/react-router";
 import LicenseViewer from "@/components/license-viewer";
 import FloatingNav, { TabProps } from "@/components/floating-nav";
 import { LoadingAnimation } from "@/components/animations/loading-animation";
@@ -48,8 +48,25 @@ import { useSettings } from "@/store/settingsStore";
 import { SettingsDialog } from "@/components/settings-dialog";
 import { inDevelopment } from "@/constants";
 import appIcon from "@/img/icon.png";
-import { useAtom, useAtomValue } from "jotai";
-import { globalPlayingItemIdAtom, currentPlaybackAtom, useLibraryStore } from "@/store/libraryStore";
+import { useAtom, useAtomValue, useSetAtom } from "jotai";
+import {
+  globalPlayingItemIdAtom,
+  currentPlaybackAtom,
+  useLibraryStore,
+  pollSpotifyPlaybackAtom,
+} from "@/store/libraryStore";
+import {
+  timelineDataAtom,
+  loadTimelineDataAtom,
+  sonicsCurrentPathAtom,
+  sonicsHasUnsavedChangesAtom,
+} from "@/store/timelineStore";
+import {
+  flowDataAtom,
+  loadFlowDataAtom,
+  flowCurrentPathAtom,
+  flowHasUnsavedChangesAtom,
+} from "@/store/flowStore";
 import { LibraryAudioPlayerWrapper } from "@/components/library-audio-player";
 import { SpotifyLibraryPlayer } from "@/components/spotify-library-player";
 import { VisualizerBackdrop } from "@/components/visualizer-backdrop";
@@ -95,7 +112,10 @@ function TitleBarButton({
 }
 
 function CloseAppButton() {
-  const { hasUnsavedChanges, setQuitRequested } = useStateMachine();
+  const { setQuitRequested } = useStateMachine();
+  const sonicsUnsaved = useAtomValue(sonicsHasUnsavedChangesAtom);
+  const flowUnsaved = useAtomValue(flowHasUnsavedChangesAtom);
+  const hasUnsavedChanges = sonicsUnsaved || flowUnsaved;
 
   function CheckUnsaved() {
     if (hasUnsavedChanges) {
@@ -113,7 +133,10 @@ function CloseAppButton() {
 }
 
 function ExitMenuItem() {
-  const { hasUnsavedChanges, setQuitRequested } = useStateMachine();
+  const { setQuitRequested } = useStateMachine();
+  const sonicsUnsaved = useAtomValue(sonicsHasUnsavedChangesAtom);
+  const flowUnsaved = useAtomValue(flowHasUnsavedChangesAtom);
+  const hasUnsavedChanges = sonicsUnsaved || flowUnsaved;
 
   function CheckUnsaved() {
     if (hasUnsavedChanges) {
@@ -138,6 +161,40 @@ export default function App() {
   const [currentPlayback, setCurrentPlayback] = useAtom(currentPlaybackAtom);
   const { items: libraryItems } = useLibraryStore();
   const [showVisualizer, setShowVisualizer] = useState(false);
+  const pollPlayback = useSetAtom(pollSpotifyPlaybackAtom);
+
+  const [sonicsData] = useAtom(timelineDataAtom);
+  const loadSonicsData = useSetAtom(loadTimelineDataAtom);
+  const [sonicsPath, setSonicsPath] = useAtom(sonicsCurrentPathAtom);
+  const [sonicsUnsaved, setSonicsUnsaved] = useAtom(sonicsHasUnsavedChangesAtom);
+
+  const [flowData] = useAtom(flowDataAtom);
+  const loadFlowData = useSetAtom(loadFlowDataAtom);
+  const [flowPath, setFlowPath] = useAtom(flowCurrentPathAtom);
+  const [flowUnsaved, setFlowUnsaved] = useAtom(flowHasUnsavedChangesAtom);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      pollPlayback();
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [pollPlayback]);
+
+  const { setQuitRequested } = useStateMachine();
+
+  useEffect(() => {
+    window.electron.onNativeWindowClose(() => {
+      const hasUnsavedChanges = sonicsUnsaved || flowUnsaved;
+      if (hasUnsavedChanges) {
+        setQuitRequested(true);
+      } else {
+        appControl("closeApp");
+      }
+    });
+    return () => {
+      window.electron.removeOnNativeWindowClose();
+    };
+  }, [sonicsUnsaved, flowUnsaved, setQuitRequested]);
 
   const items: TabProps[] = [
     {
@@ -170,11 +227,176 @@ export default function App() {
     },
   ];
 
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.key === "Tab") {
+        e.preventDefault();
+        const currentPath = location.pathname;
+        const currentIndex = items.findIndex((item) => item.to === currentPath);
+        if (currentIndex !== -1) {
+          const nextIndex = (currentIndex + 1) % items.length;
+          navigate({ to: items[nextIndex].to });
+        } else {
+          navigate({ to: items[0].to });
+        }
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [location.pathname, navigate]);
+
+  const activeItem = items.find((item) => item.to === location.pathname);
+  const activeTitle = activeItem ? activeItem.label : "";
+
+  const initialSonicsRef = useRef(sonicsData);
+  useEffect(() => {
+    if (sonicsData !== initialSonicsRef.current) {
+      setSonicsUnsaved(true);
+      initialSonicsRef.current = sonicsData;
+    }
+  }, [sonicsData, setSonicsUnsaved]);
+
+  const initialFlowRef = useRef(flowData);
+  useEffect(() => {
+    if (flowData !== initialFlowRef.current) {
+      setFlowUnsaved(true);
+      initialFlowRef.current = flowData;
+    }
+  }, [flowData, setFlowUnsaved]);
+
+  const handleLoadSonics = async () => {
+    const result = await window.electron.showOpenDialog({
+      filters: [{ name: "SonicPlank Project", extensions: ["sonic"] }],
+      properties: ["openFile"],
+    });
+    if (!result.canceled && result.filePaths.length > 0) {
+      const path = result.filePaths[0];
+      const dataStr = await window.electron.readProject(path);
+      if (dataStr) {
+        try {
+          const parsed = JSON.parse(dataStr);
+          initialSonicsRef.current = parsed;
+          loadSonicsData(parsed);
+          setSonicsPath(path);
+          setSonicsUnsaved(false);
+        } catch (e) {
+          console.error("Failed to parse sonics project", e);
+        }
+      }
+    }
+  };
+
+  const handleSaveSonics = async () => {
+    if (sonicsPath) {
+      const success = await window.electron.saveProject(sonicsPath, JSON.stringify(sonicsData));
+      if (success) {
+        initialSonicsRef.current = sonicsData;
+        setSonicsUnsaved(false);
+      }
+    } else {
+      handleSaveSonicsAs();
+    }
+  };
+
+  const handleSaveSonicsAs = async () => {
+    const result = await window.electron.showSaveDialog({
+      filters: [{ name: "SonicPlank Project", extensions: ["sonic"] }],
+    });
+    if (!result.canceled && result.filePath) {
+      const success = await window.electron.saveProject(result.filePath, JSON.stringify(sonicsData));
+      if (success) {
+        initialSonicsRef.current = sonicsData;
+        setSonicsPath(result.filePath);
+        setSonicsUnsaved(false);
+      }
+    }
+  };
+
+  const handleLoadFlow = async () => {
+    const result = await window.electron.showOpenDialog({
+      filters: [{ name: "SonicPlank Flow", extensions: ["flow"] }],
+      properties: ["openFile"],
+    });
+    if (!result.canceled && result.filePaths.length > 0) {
+      const path = result.filePaths[0];
+      const dataStr = await window.electron.readProject(path);
+      if (dataStr) {
+        try {
+          const parsed = JSON.parse(dataStr);
+          initialFlowRef.current = parsed;
+          loadFlowData(parsed);
+          setFlowPath(path);
+          setFlowUnsaved(false);
+        } catch (e) {
+          console.error("Failed to parse flow project", e);
+        }
+      }
+    }
+  };
+
+  const handleSaveFlow = async () => {
+    if (flowPath) {
+      const success = await window.electron.saveProject(flowPath, JSON.stringify(flowData));
+      if (success) {
+        initialFlowRef.current = flowData;
+        setFlowUnsaved(false);
+      }
+    } else {
+      handleSaveFlowAs();
+    }
+  };
+
+  const handleSaveFlowAs = async () => {
+    const result = await window.electron.showSaveDialog({
+      filters: [{ name: "SonicPlank Flow", extensions: ["flow"] }],
+    });
+    if (!result.canceled && result.filePath) {
+      const success = await window.electron.saveProject(result.filePath, JSON.stringify(flowData));
+      if (success) {
+        initialFlowRef.current = flowData;
+        setFlowPath(result.filePath);
+        setFlowUnsaved(false);
+      }
+    }
+  };
+
+  useEffect(() => {
+    const handleSaveShortcut = (e: KeyboardEvent) => {
+      // Use e.ctrlKey for Windows/Linux or e.metaKey for Mac
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+        e.preventDefault();
+        if (activeTitle === "Sonics" && sonicsUnsaved) {
+          void handleSaveSonics();
+        } else if (activeTitle === "Flow" && flowUnsaved) {
+          void handleSaveFlow();
+        }
+      }
+    };
+    window.addEventListener("keydown", handleSaveShortcut);
+    return () => window.removeEventListener("keydown", handleSaveShortcut);
+  });
+
+  const getFileName = (path: string | null) => {
+    if (!path) return "";
+    return path.split(/[/\\]/).pop() || "";
+  };
+
+  const activeFilePath =
+    activeTitle === "Sonics"
+      ? sonicsPath
+      : activeTitle === "Flow"
+      ? flowPath
+      : null;
+  const activeFileName = getFileName(activeFilePath);
+
   // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
   return (
     <>
       <div
-        className="border-zinc-800/60 bg-zinc-950/40 backdrop-blur-md flex items-center justify-between"
+        className="border-border/60 bg-background/40 backdrop-blur-md flex items-center justify-between"
         style={{
           width: "100%",
           height: "35px",
@@ -184,7 +406,7 @@ export default function App() {
         <Dialog>
           <DialogTrigger
             render={
-              <button className="flex items-center justify-center h-[35px] w-[35px] hover:bg-zinc-800/40 transition-colors duration-150 outline-none cursor-pointer">
+              <button className="flex items-center justify-center h-[35px] w-[35px] hover:bg-secondary/40 transition-colors duration-150 outline-none cursor-pointer">
                 <img
                   src={appIcon}
                   width={"20px"}
@@ -199,7 +421,7 @@ export default function App() {
               <DialogTitle>SonicPlank.Maker</DialogTitle>
             </DialogHeader>
             <Separator />
-            <div className="text-zinc-300 space-y-3">
+            <div className="text-foreground/80 space-y-3">
               <p>
                 A high-fidelity digital audio workstation, flow-based routing
                 engine, and compositor environment.
@@ -223,12 +445,21 @@ export default function App() {
         >
           <div
             id="windowTitle"
-            className="text-[11px] font-semibold text-zinc-400 select-none tracking-wide"
+            className="text-[11px] font-semibold text-muted-foreground select-none tracking-wide flex items-center gap-2"
             style={{
               marginLeft: "10px",
             }}
           >
-            SonicPlank.Maker
+            <span>SonicPlank.Maker {activeTitle ? `[${activeTitle}]` : ""}</span>
+            {activeFileName && (
+              <span className="text-muted-foreground font-normal">
+                — {activeFileName}
+              </span>
+            )}
+            <span className="text-red-400">
+              {activeTitle === "Sonics" && sonicsUnsaved ? "*" : ""}
+              {activeTitle === "Flow" && flowUnsaved ? "*" : ""}
+            </span>
           </div>
         </div>
         <Menubar style={{ height: "35px", border: "0" }}>
@@ -292,9 +523,25 @@ export default function App() {
           <MenubarMenu>
             <MenubarTrigger>File</MenubarTrigger>
             <MenubarContent>
+              {activeTitle === "Sonics" && (
+                <MenubarGroup>
+                  <MenubarItem onClick={handleLoadSonics}>Load Sonics Project...</MenubarItem>
+                  <MenubarItem onClick={handleSaveSonics}>Save Sonics Project</MenubarItem>
+                  <MenubarItem onClick={handleSaveSonicsAs}>Save Sonics Project As...</MenubarItem>
+                  <Separator className="my-1" />
+                </MenubarGroup>
+              )}
+              {activeTitle === "Flow" && (
+                <MenubarGroup>
+                  <MenubarItem onClick={handleLoadFlow}>Load Flow...</MenubarItem>
+                  <MenubarItem onClick={handleSaveFlow}>Save Flow</MenubarItem>
+                  <MenubarItem onClick={handleSaveFlowAs}>Save Flow As...</MenubarItem>
+                  <Separator className="my-1" />
+                </MenubarGroup>
+              )}
               <MenubarGroup>
                 <MenubarItem onClick={() => appControl("toggleDevTools")}>
-                  Toggle Dev Tools
+                  Dev Tools
                   <MenubarShortcut>
                     <Kbd>Ctrl</Kbd>T
                   </MenubarShortcut>
@@ -316,18 +563,23 @@ export default function App() {
       {/* Global Player Container */}
       <motion.div
         initial={false}
-        animate={{ y: (playingItemId || currentPlayback) ? 0 : "100%" }}
+        animate={{ y: playingItemId || currentPlayback ? 0 : "100%" }}
         transition={{ type: "spring", bounce: 0, duration: 0.4 }}
         className="fixed bottom-0 left-0 right-0 z-50 p-0 border-t shadow-2xl rounded-t-xl bg-card max-h-[80vh] flex flex-col overflow-hidden"
-        style={{ pointerEvents: (playingItemId || currentPlayback) ? "auto" : "none" }}
+        style={{
+          pointerEvents: playingItemId || currentPlayback ? "auto" : "none",
+        }}
       >
         <VisualizerBackdrop visible={!!playingItemId && showVisualizer} />
         <div className="w-full flex flex-col py-1 relative z-10">
           {(() => {
             if (playingItemId) {
-              const playingItem = libraryItems.find((i) => i.id === playingItemId);
+              const playingItem = libraryItems.find(
+                (i) => i.id === playingItemId,
+              );
               if (!playingItem) return null;
-              return playingItem.isSpotifyStream || playingItem.isSpotifyPlaylist ? (
+              return playingItem.isSpotifyStream ||
+                playingItem.isSpotifyPlaylist ? (
                 <SpotifyLibraryPlayer
                   key={playingItemId}
                   item={playingItem}

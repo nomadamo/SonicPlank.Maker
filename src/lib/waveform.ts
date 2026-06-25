@@ -1,36 +1,22 @@
 export async function getAudioPeaks(
-  arrayBuffer: ArrayBuffer,
+  audioPathOrUrl: string,
   pixelsPerSecond: number,
 ): Promise<number[]> {
-  const audioContext = new (
-    window.AudioContext || (window as any).webkitAudioContext
-  )();
-  const audioBufferData = await audioContext.decodeAudioData(arrayBuffer);
-  const channelData = audioBufferData.getChannelData(0); // Use left channel
-
-  // Calculate exactly how many audio samples represent one pixel
-  const step = Math.ceil(audioBufferData.sampleRate / pixelsPerSecond);
-  const peaks: number[] = [];
-
-  // Calculate the total number of peaks (pixels) needed for the entire file
-  const totalWidth = Math.ceil(channelData.length / step);
-
-  for (let i = 0; i < totalWidth; i++) {
-    let min = 1.0;
-    let max = -1.0;
-
-    for (let j = 0; j < step; j++) {
-      const index = i * step + j;
-      if (index >= channelData.length) break; // Don't read past the end
-
-      const datum = channelData[index];
-      if (datum < min) min = datum;
-      if (datum > max) max = datum;
-    }
-
-    // Push the peak magnitude
-    peaks.push((max - min) / 2);
+  let localPath = audioPathOrUrl;
+  
+  if (localPath.startsWith("file:///")) {
+    localPath = decodeURIComponent(localPath.replace("file:///", ""));
+  } else if (localPath.startsWith("file://")) {
+    localPath = decodeURIComponent(localPath.replace("file://", ""));
+  } else if (localPath.startsWith("local-media://")) {
+    // Note: If you have a custom protocol for local media, handle it here
+    localPath = decodeURIComponent(localPath.replace("local-media://", ""));
   }
 
-  return peaks;
+  // Under Windows, remove the leading slash if it's like /C:/
+  if (localPath.match(/^\/[a-zA-Z]:\//)) {
+    localPath = localPath.substring(1);
+  }
+
+  return await window.electron.getWaveformPeaks(localPath, pixelsPerSecond);
 }

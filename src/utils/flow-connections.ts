@@ -16,6 +16,10 @@ export const CONNECTION_RULES: Record<string, Record<string, HandleConnectionRul
       allowedSourceTypes: ["overlayGroupNode"],
       allowedSourceHandleSuffix: "source",
     },
+    audio_target: {
+      allowedSourceTypes: ["audioSourceNode"],
+      allowedSourceHandleSuffix: "source",
+    },
   },
   overlayGroupNode: {
     target: {
@@ -33,19 +37,19 @@ export const CONNECTION_RULES: Record<string, Record<string, HandleConnectionRul
   },
   nowPlayingNode: {
     target: {
-      allowedSourceTypes: ["audioFlowNode"],
+      allowedSourceTypes: ["audioFlowNode", "globalAudioNode"],
       allowedSourceHandleSuffix: "source",
     },
   },
   visualizerOverlayNode: {
     target: {
-      allowedSourceTypes: ["audioFlowNode"],
+      allowedSourceTypes: ["audioFlowNode", "globalAudioNode"],
       allowedSourceHandleSuffix: "source",
     },
   },
   masterOutputNode: {
     target: {
-      allowedSourceTypes: ["audioFlowNode"],
+      allowedSourceTypes: ["audioFlowNode", "globalAudioNode"],
       allowedSourceHandleSuffix: "source",
     },
   },

@@ -109,8 +109,10 @@ export function TwitchChatNode(NodeRef: NodeProps<FlowNodeType>) {
         };
         const max = committed.maxMessages;
         const existing = chatMessagesStore.get(node.id) ?? [];
-        const next = [...existing, newMsg];
-        chatMessagesStore.set(node.id, next.length > max ? next.slice(-max) : next);
+        let next = [...existing, newMsg];
+        if (next.length > max) next = next.slice(-max);
+        chatMessagesStore.set(node.id, next);
+        window.electron.sendChatMessages(node.id, next);
         setMessageCount((c) => c + 1);
       });
 
@@ -126,6 +128,7 @@ export function TwitchChatNode(NodeRef: NodeProps<FlowNodeType>) {
     clientRef.current?.disconnect().catch(() => {});
     clientRef.current = null;
     chatMessagesStore.delete(node.id);
+    window.electron.sendChatMessages(node.id, []);
     setStatus("idle");
     setMessageCount(0);
   }, [node.id]);
@@ -135,11 +138,12 @@ export function TwitchChatNode(NodeRef: NodeProps<FlowNodeType>) {
     return () => {
       clientRef.current?.disconnect().catch(() => {});
       chatMessagesStore.delete(node.id);
+      window.electron.sendChatMessages(node.id, []);
     };
   }, [node.id]);
 
   const statusDot = {
-    idle: "bg-zinc-600",
+    idle: "bg-secondary/60",
     connecting: "bg-yellow-500 animate-pulse",
     connected: "bg-green-500",
     error: "bg-red-500",
@@ -170,7 +174,7 @@ export function TwitchChatNode(NodeRef: NodeProps<FlowNodeType>) {
         <div className="flex flex-col gap-3 nodrag nopan nowheel">
           {/* Channel + connect */}
           <div className="flex flex-col gap-1">
-            <label className="text-[9px] font-semibold text-zinc-400 uppercase tracking-wider">
+            <label className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">
               Channel
             </label>
             <div className="flex gap-1.5">
@@ -180,12 +184,12 @@ export function TwitchChatNode(NodeRef: NodeProps<FlowNodeType>) {
                 onChange={(e) => set("channel", e.target.value)}
                 placeholder="channelname"
                 disabled={isActive}
-                className="flex-1 min-w-0 bg-zinc-900 border border-zinc-800 rounded px-2.5 py-1.5 text-xs text-zinc-200 focus:border-indigo-500 focus:outline-none disabled:opacity-40"
+                className="flex-1 min-w-0 bg-muted border border-border rounded px-2.5 py-1.5 text-xs text-foreground focus:border-indigo-500 focus:outline-none disabled:opacity-40"
               />
               {isActive ? (
                 <button
                   onClick={disconnect}
-                  className="px-2.5 py-1 bg-zinc-700 hover:bg-zinc-600 text-white text-[10px] font-semibold rounded cursor-pointer transition-colors shrink-0"
+                  className="px-2.5 py-1 bg-secondary/80 hover:bg-secondary/60 text-white text-[10px] font-semibold rounded cursor-pointer transition-colors shrink-0"
                 >
                   Stop
                 </button>
@@ -204,54 +208,54 @@ export function TwitchChatNode(NodeRef: NodeProps<FlowNodeType>) {
             </div>
             <div className="flex items-center gap-1.5 mt-0.5">
               <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${statusDot}`} />
-              <span className="text-[9px] text-zinc-400">{statusLabel}</span>
+              <span className="text-[9px] text-muted-foreground">{statusLabel}</span>
             </div>
           </div>
 
           {/* Position & size */}
           <div className="grid grid-cols-2 gap-2">
             <div className="flex flex-col gap-1">
-              <label className="text-[9px] font-semibold text-zinc-400 uppercase tracking-wider">
+              <label className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">
                 Position X (%)
               </label>
               <input
                 type="number" min="0" max="100"
                 value={draft.x}
                 onChange={(e) => set("x", Number(e.target.value) || 0)}
-                className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200 focus:border-indigo-500 focus:outline-none"
+                className="w-full bg-muted border border-border rounded px-2 py-1 text-xs text-foreground focus:border-indigo-500 focus:outline-none"
               />
             </div>
             <div className="flex flex-col gap-1">
-              <label className="text-[9px] font-semibold text-zinc-400 uppercase tracking-wider">
+              <label className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">
                 Position Y (%)
               </label>
               <input
                 type="number" min="0" max="100"
                 value={draft.y}
                 onChange={(e) => set("y", Number(e.target.value) || 0)}
-                className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200 focus:border-indigo-500 focus:outline-none"
+                className="w-full bg-muted border border-border rounded px-2 py-1 text-xs text-foreground focus:border-indigo-500 focus:outline-none"
               />
             </div>
             <div className="flex flex-col gap-1">
-              <label className="text-[9px] font-semibold text-zinc-400 uppercase tracking-wider">
+              <label className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">
                 Width (%)
               </label>
               <input
                 type="number" min="1" max="100"
                 value={draft.width}
                 onChange={(e) => set("width", Number(e.target.value) || 1)}
-                className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200 focus:border-indigo-500 focus:outline-none"
+                className="w-full bg-muted border border-border rounded px-2 py-1 text-xs text-foreground focus:border-indigo-500 focus:outline-none"
               />
             </div>
             <div className="flex flex-col gap-1">
-              <label className="text-[9px] font-semibold text-zinc-400 uppercase tracking-wider">
+              <label className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">
                 Height (%)
               </label>
               <input
                 type="number" min="1" max="100"
                 value={draft.height}
                 onChange={(e) => set("height", Number(e.target.value) || 1)}
-                className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200 focus:border-indigo-500 focus:outline-none"
+                className="w-full bg-muted border border-border rounded px-2 py-1 text-xs text-foreground focus:border-indigo-500 focus:outline-none"
               />
             </div>
           </div>
@@ -259,10 +263,10 @@ export function TwitchChatNode(NodeRef: NodeProps<FlowNodeType>) {
           {/* Opacity */}
           <div className="flex flex-col gap-1">
             <div className="flex justify-between items-center">
-              <label className="text-[9px] font-semibold text-zinc-400 uppercase tracking-wider">
+              <label className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">
                 Opacity
               </label>
-              <span className="text-[10px] text-zinc-400">
+              <span className="text-[10px] text-muted-foreground">
                 {Math.round(draft.opacity * 100)}%
               </span>
             </div>
@@ -270,31 +274,31 @@ export function TwitchChatNode(NodeRef: NodeProps<FlowNodeType>) {
               type="range" min="0" max="1" step="0.05"
               value={draft.opacity}
               onChange={(e) => set("opacity", Number(e.target.value))}
-              className="w-full h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-indigo-500 focus:outline-none"
+              className="w-full h-1 bg-secondary rounded-lg appearance-none cursor-pointer accent-indigo-500 focus:outline-none"
             />
           </div>
 
           {/* Font & display settings */}
-          <div className="grid grid-cols-2 gap-2 border-t border-zinc-800/40 pt-2.5">
+          <div className="grid grid-cols-2 gap-2 border-t border-border/40 pt-2.5">
             <div className="flex flex-col gap-1">
-              <label className="text-[9px] font-semibold text-zinc-400 uppercase tracking-wider">
+              <label className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">
                 Font Size (%)
               </label>
               <input
                 type="number" min="0.5" max="10" step="0.5"
                 value={draft.fontSize}
                 onChange={(e) => set("fontSize", Number(e.target.value) || 1)}
-                className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200 focus:border-indigo-500 focus:outline-none"
+                className="w-full bg-muted border border-border rounded px-2 py-1 text-xs text-foreground focus:border-indigo-500 focus:outline-none"
               />
             </div>
             <div className="flex flex-col gap-1">
-              <label className="text-[9px] font-semibold text-zinc-400 uppercase tracking-wider">
+              <label className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">
                 Max Messages
               </label>
               <select
                 value={draft.maxMessages}
                 onChange={(e) => set("maxMessages", Number(e.target.value))}
-                className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200 focus:border-indigo-500 focus:outline-none cursor-pointer"
+                className="w-full bg-muted border border-border rounded px-2 py-1 text-xs text-foreground focus:border-indigo-500 focus:outline-none cursor-pointer"
               >
                 <option value={5}>5</option>
                 <option value={10}>10</option>
@@ -305,13 +309,13 @@ export function TwitchChatNode(NodeRef: NodeProps<FlowNodeType>) {
           </div>
 
           <div className="flex flex-col gap-1">
-            <label className="text-[9px] font-semibold text-zinc-400 uppercase tracking-wider">
+            <label className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">
               Font Family
             </label>
             <select
               value={draft.fontFamily}
               onChange={(e) => set("fontFamily", e.target.value)}
-              className="w-full bg-zinc-900 border border-zinc-800 rounded px-2.5 py-1.5 text-xs text-zinc-200 focus:border-indigo-500 focus:outline-none cursor-pointer"
+              className="w-full bg-muted border border-border rounded px-2.5 py-1.5 text-xs text-foreground focus:border-indigo-500 focus:outline-none cursor-pointer"
             >
               <option value="Inter, sans-serif">Inter</option>
               <option value="Roboto, sans-serif">Roboto</option>
@@ -324,13 +328,13 @@ export function TwitchChatNode(NodeRef: NodeProps<FlowNodeType>) {
 
           <div className="grid grid-cols-2 gap-2">
             <div className="flex flex-col gap-1">
-              <label className="text-[9px] font-semibold text-zinc-400 uppercase tracking-wider">
+              <label className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">
                 Weight
               </label>
               <select
                 value={draft.fontWeight}
                 onChange={(e) => set("fontWeight", e.target.value)}
-                className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200 focus:border-indigo-500 focus:outline-none cursor-pointer"
+                className="w-full bg-muted border border-border rounded px-2 py-1 text-xs text-foreground focus:border-indigo-500 focus:outline-none cursor-pointer"
               >
                 <option value="300">Light</option>
                 <option value="normal">Regular</option>
@@ -340,13 +344,13 @@ export function TwitchChatNode(NodeRef: NodeProps<FlowNodeType>) {
               </select>
             </div>
             <div className="flex flex-col gap-1">
-              <label className="text-[9px] font-semibold text-zinc-400 uppercase tracking-wider">
+              <label className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">
                 Style
               </label>
               <select
                 value={draft.fontStyle}
                 onChange={(e) => set("fontStyle", e.target.value)}
-                className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-200 focus:border-indigo-500 focus:outline-none cursor-pointer"
+                className="w-full bg-muted border border-border rounded px-2 py-1 text-xs text-foreground focus:border-indigo-500 focus:outline-none cursor-pointer"
               >
                 <option value="normal">Normal</option>
                 <option value="italic">Italic</option>

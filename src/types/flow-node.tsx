@@ -43,6 +43,8 @@ export type FlowNodeType<
     duration?: number;
     captureSourceId?: string;
     captureSourceName?: string;
+    audioDeviceId?: string;
+    audioDeviceName?: string;
     captureType?: string;
     captureAudio?: boolean;
     captureResolution?: string;

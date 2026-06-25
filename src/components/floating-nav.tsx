@@ -37,7 +37,7 @@ const ButtonLinkComponent = React.forwardRef<
       variant="ghost"
       type="button"
       className={cn(
-        "relative flex flex-row rounded-full items-center justify-center flex-1 px-3 py-1.5 font-medium text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800/20 transition-all duration-200 [&.active]:text-zinc-100 [&.active]:font-semibold",
+        "relative flex flex-row rounded-full items-center justify-center flex-1 px-3 py-1.5 font-medium text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-all duration-200 [&.active]:text-foreground [&.active]:font-semibold",
         className,
       )}
     />
@@ -93,7 +93,7 @@ const FloatingNav = ({ items }: { items: TabProps[] }) => {
     <div className="absolute left-1/2 z-50 -translate-x-1/2 w-dvw rounded-full max-w-lg mt-15 px-20">
       <div
         ref={containerRef}
-        className="relative bg-zinc-950/80 backdrop-blur-md flex items-center justify-between font-medium shadow-2xl rounded-full gap-2 px-1 py-1 border border-zinc-800"
+        className="relative bg-background/80 backdrop-blur-md flex items-center justify-between font-medium shadow-2xl rounded-full gap-2 px-1 py-1 border border-border"
       >
         {items.map((item, index) => (
           <RouteButton
@@ -114,7 +114,7 @@ const FloatingNav = ({ items }: { items: TabProps[] }) => {
         <motion.div
           animate={indicatorStyle}
           transition={{ type: "spring", stiffness: 400, damping: 30 }}
-          className="absolute top-1 bottom-1 rounded-full bg-zinc-800/85 border border-zinc-700/60 shadow-lg"
+          className="absolute top-1 bottom-1 rounded-full bg-muted/80 border border-border/60 shadow-lg"
         />
       </div>
     </div>

@@ -1,11 +1,11 @@
 {
-  "ts": "2026-06-21T09:13:22.161Z",
+  "ts": "2026-06-22T17:15:55.325Z",
   "source": "auto-on-generation-start",
   "contexts": [
     {
       "ctxId": "main",
       "frameUrl": "vscode-file://vscode-app/c:/Users/voidd/AppData/Local/Programs/Antigravity%20IDE/resources/app/out/vs/code/electron-browser/workbench/workbench.html",
-      "totalBtns": 432,
+      "totalBtns": 177,
       "inputBoxFound": true,
       "inputBoxBtns": [
         {
@@ -16,12 +16,12 @@
           "innerHTML": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\" viewBox=\"0 -960 960 960\" fill=\"currentColor\" class=\"w-4 h-4\"><path d=\"M450-450H220v-60H450V-740h60v230H740v60H510v230H450V-450Z\"></path><",
           "hasSvg": true,
           "dataAttrs": {
-            "data-tooltip-id": "P0-2582"
+            "data-tooltip-id": "P0-6143"
           },
           "visible": true,
           "rect": {
-            "x": 1608,
-            "y": 1261,
+            "x": 1856,
+            "y": 1327,
             "w": 28,
             "h": 28
           }
@@ -31,13 +31,13 @@
           "title": "",
           "cls": "",
           "text": "Gemini 3.1 Pro (High)",
-          "innerHTML": "<button type=\"button\" data-tooltip-id=\"P0-2584\" aria-label=\"Select model, current: Gemini 3.1 Pro (High)\" class=\"flex min-w-0 max-w-full cursor-pointer items-center h-7 gap-1 rounded-lg pr-1 pl-2 text",
+          "innerHTML": "<button type=\"button\" data-tooltip-id=\"P0-6145\" aria-label=\"Select model, current: Gemini 3.1 Pro (High)\" class=\"flex min-w-0 max-w-full cursor-pointer items-center h-7 gap-1 rounded-lg pr-1 pl-2 text",
           "hasSvg": true,
           "dataAttrs": {},
           "visible": true,
           "rect": {
-            "x": 1637,
-            "y": 1261,
+            "x": 1885,
+            "y": 1327,
             "w": 134,
             "h": 28
           }
@@ -50,12 +50,12 @@
           "innerHTML": "<span class=\"min-w-0 select-none overflow-hidden text-ellipsis whitespace-nowrap text-xs text-secondary-foreground\">Gemini 3.1 Pro (High)</span><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"14\" heigh",
           "hasSvg": true,
           "dataAttrs": {
-            "data-tooltip-id": "P0-2584"
+            "data-tooltip-id": "P0-6145"
           },
           "visible": true,
           "rect": {
-            "x": 1637,
-            "y": 1261,
+            "x": 1885,
+            "y": 1327,
             "w": 134,
             "h": 28
           }
@@ -72,8 +72,8 @@
           },
           "visible": true,
           "rect": {
-            "x": 2187,
-            "y": 1261,
+            "x": 2435,
+            "y": 1327,
             "w": 28,
             "h": 28
           }
@@ -90,8 +90,8 @@
           },
           "visible": true,
           "rect": {
-            "x": 2219,
-            "y": 1263,
+            "x": 2467,
+            "y": 1329,
             "w": 24,
             "h": 24
           }
@@ -108,7 +108,7 @@
           "dataAttrs": {},
           "visible": true,
           "rect": {
-            "x": 1897,
+            "x": 2145,
             "y": 7,
             "w": 22,
             "h": 22
@@ -156,7 +156,7 @@
           "dataAttrs": {},
           "visible": true,
           "rect": {
-            "x": 1993,
+            "x": 2241,
             "y": 7,
             "w": 22,
             "h": 22
@@ -172,7 +172,7 @@
           "dataAttrs": {},
           "visible": true,
           "rect": {
-            "x": 2026,
+            "x": 2274,
             "y": 7,
             "w": 22,
             "h": 22
@@ -188,7 +188,7 @@
           "dataAttrs": {},
           "visible": true,
           "rect": {
-            "x": 2050,
+            "x": 2298,
             "y": 7,
             "w": 22,
             "h": 22
@@ -204,30 +204,366 @@
           "dataAttrs": {},
           "visible": true,
           "rect": {
-            "x": 2074,
+            "x": 2322,
             "y": 5,
             "w": 43,
             "h": 26
           }
         },
         {
-          "aria": "Refresh",
+          "aria": "Close (Ctrl+F4)",
           "title": "",
-          "cls": "action-label codicon codicon-extensions-refresh",
+          "cls": "action-label codicon codicon-close",
           "text": "",
           "innerHTML": "",
           "hasSvg": false,
           "dataAttrs": {},
           "visible": true,
           "rect": {
-            "x": 352,
-            "y": 77,
+            "x": 183,
+            "y": 40,
+            "w": 20,
+            "h": 20
+          }
+        },
+        {
+          "aria": "Close (Ctrl+F4)",
+          "title": "",
+          "cls": "action-label codicon codicon-close",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 323,
+            "y": 40,
+            "w": 20,
+            "h": 20
+          }
+        },
+        {
+          "aria": "Close (Ctrl+F4)",
+          "title": "",
+          "cls": "action-label codicon codicon-close",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 503,
+            "y": 40,
+            "w": 20,
+            "h": 20
+          }
+        },
+        {
+          "aria": "Close (Ctrl+F4)",
+          "title": "",
+          "cls": "action-label codicon codicon-close",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 668,
+            "y": 40,
+            "w": 20,
+            "h": 20
+          }
+        },
+        {
+          "aria": "Close (Ctrl+F4)",
+          "title": "",
+          "cls": "action-label codicon codicon-close",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 819,
+            "y": 40,
+            "w": 20,
+            "h": 20
+          }
+        },
+        {
+          "aria": "Close (Ctrl+F4)",
+          "title": "",
+          "cls": "action-label codicon codicon-close",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 966,
+            "y": 40,
+            "w": 20,
+            "h": 20
+          }
+        },
+        {
+          "aria": "Close (Ctrl+F4)",
+          "title": "",
+          "cls": "action-label codicon codicon-close",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 1101,
+            "y": 40,
+            "w": 20,
+            "h": 20
+          }
+        },
+        {
+          "aria": "Close (Ctrl+F4)",
+          "title": "",
+          "cls": "action-label codicon codicon-close",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 1258,
+            "y": 40,
+            "w": 20,
+            "h": 20
+          }
+        },
+        {
+          "aria": "Close (Ctrl+F4)",
+          "title": "",
+          "cls": "action-label codicon codicon-close",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 1407,
+            "y": 40,
+            "w": 20,
+            "h": 20
+          }
+        },
+        {
+          "aria": "Close (Ctrl+F4)",
+          "title": "",
+          "cls": "action-label codicon codicon-close",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 1573,
+            "y": 40,
+            "w": 20,
+            "h": 20
+          }
+        },
+        {
+          "aria": "Close (Ctrl+F4)",
+          "title": "",
+          "cls": "action-label codicon codicon-close",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 1709,
+            "y": 40,
+            "w": 20,
+            "h": 20
+          }
+        },
+        {
+          "aria": "Close (Ctrl+F4)",
+          "title": "",
+          "cls": "action-label codicon codicon-close",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 1855,
+            "y": 40,
+            "w": 20,
+            "h": 20
+          }
+        },
+        {
+          "aria": "Close (Ctrl+F4)",
+          "title": "",
+          "cls": "action-label codicon codicon-close",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 1993,
+            "y": 40,
+            "w": 20,
+            "h": 20
+          }
+        },
+        {
+          "aria": "Close (Ctrl+F4)",
+          "title": "",
+          "cls": "action-label codicon codicon-close",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 2113,
+            "y": 40,
+            "w": 20,
+            "h": 20
+          }
+        },
+        {
+          "aria": "Close (Ctrl+F4)",
+          "title": "",
+          "cls": "action-label codicon codicon-close",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 2242,
+            "y": 40,
+            "w": 20,
+            "h": 20
+          }
+        },
+        {
+          "aria": "Close (Ctrl+F4)",
+          "title": "",
+          "cls": "action-label codicon codicon-close",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 2385,
+            "y": 40,
+            "w": 20,
+            "h": 20
+          }
+        },
+        {
+          "aria": "Close (Ctrl+F4)",
+          "title": "",
+          "cls": "action-label codicon codicon-close",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 2510,
+            "y": 40,
+            "w": 20,
+            "h": 20
+          }
+        },
+        {
+          "aria": "Claude Code: Open",
+          "title": "",
+          "cls": "action-label icon",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 1677,
+            "y": 39,
             "w": 22,
             "h": 22
           }
         },
         {
-          "aria": "Views and More Actions...",
+          "aria": "Open Changes",
+          "title": "",
+          "cls": "action-label codicon codicon-compare-changes",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 1703,
+            "y": 39,
+            "w": 22,
+            "h": 22
+          }
+        },
+        {
+          "aria": "Split Editor Right (Ctrl+\\) [Alt] Split Editor Down",
+          "title": "",
+          "cls": "action-label codicon codicon-split-horizontal",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 1729,
+            "y": 39,
+            "w": 22,
+            "h": 22
+          }
+        },
+        {
+          "aria": "Go Back (Alt+LeftArrow)",
+          "title": "",
+          "cls": "action-label codicon codicon-arrow-left",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 1755,
+            "y": 39,
+            "w": 22,
+            "h": 22
+          }
+        },
+        {
+          "aria": "Go Forward (Alt+RightArrow)",
+          "title": "",
+          "cls": "action-label codicon codicon-arrow-right",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 1781,
+            "y": 39,
+            "w": 22,
+            "h": 22
+          }
+        },
+        {
+          "aria": "More Actions...",
           "title": "",
           "cls": "action-label codicon codicon-toolbar-more",
           "text": "",
@@ -236,480 +572,80 @@
           "dataAttrs": {},
           "visible": true,
           "rect": {
-            "x": 378,
-            "y": 77,
+            "x": 1807,
+            "y": 39,
             "w": 22,
             "h": 22
           }
         },
         {
-          "aria": "Clear Extensions Search Results",
-          "title": "",
-          "cls": "action-label codicon codicon-extensions-clear-search-results",
-          "text": "",
-          "innerHTML": "",
+          "aria": "",
+          "title": "Open CSS Controls docs and settings (css-controls)",
+          "cls": "",
+          "text": "?",
+          "innerHTML": "?",
           "hasSvg": false,
           "dataAttrs": {},
           "visible": true,
           "rect": {
-            "x": 356,
-            "y": 112,
-            "w": 22,
-            "h": 22
-          }
-        },
-        {
-          "aria": "Filter Extensions...",
-          "title": "",
-          "cls": "action-label codicon codicon-extensions-filter",
-          "text": "",
-          "innerHTML": "",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": true,
-          "rect": {
-            "x": 378,
-            "y": 112,
-            "w": 22,
-            "h": 22
-          }
-        },
-        {
-          "aria": "Marketplace Section",
-          "title": "",
-          "cls": "pane-header extension-view-header expanded hidden",
-          "text": "Marketplace251",
-          "innerHTML": "<div class=\"twisty-container codicon-view-pane-container-expanded codicon\"></div><div class=\"icon codicon codicon-default-view-icon\" custom-hover=\"true\" aria-label=\"Marketplace\" style=\"color: var(--vs",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "",
-          "title": "",
-          "cls": "action-label codicon extension-action text extension-status-label hide disabled",
-          "text": "",
-          "innerHTML": "",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Migrate",
-          "title": "",
-          "cls": "action-label codicon extension-action label migrate disabled",
-          "text": "Migrate",
-          "innerHTML": "Migrate",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Restart Extensions",
-          "title": "",
-          "cls": "action-label codicon disabled extension-action label reload",
-          "text": "Restart Extensions",
-          "innerHTML": "Restart Extensions",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Update",
-          "title": "",
-          "cls": "action-label codicon extension-action label prominent update disabled",
-          "text": "Update",
-          "innerHTML": "Update",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "",
-          "title": "",
-          "cls": "action-label codicon disabled extension-action label prominent install action-dropdown",
-          "text": "",
-          "innerHTML": "",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "More Actions...",
-          "title": "",
-          "cls": "action-label dropdown codicon codicon-drop-down-button extension-action label prominent install acti",
-          "text": "",
-          "innerHTML": "",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Installing",
-          "title": "",
-          "cls": "action-label codicon disabled extension-action label install installing hide",
-          "text": "Installing",
-          "innerHTML": "Installing",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Set Display Language",
-          "title": "",
-          "cls": "action-label codicon extension-action label language disabled",
-          "text": "Set Display Language",
-          "innerHTML": "Set Display Language",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Clear Display Language",
-          "title": "",
-          "cls": "action-label codicon extension-action label language disabled",
-          "text": "Clear Display Language",
-          "innerHTML": "Clear Display Language",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Install",
-          "title": "",
-          "cls": "action-label codicon extension-action label prominent install-other-server disabled",
-          "text": "Install",
-          "innerHTML": "Install",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Install",
-          "title": "",
-          "cls": "action-label codicon extension-action label prominent install-other-server disabled",
-          "text": "Install",
-          "innerHTML": "Install",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Install",
-          "title": "",
-          "cls": "action-label codicon extension-action label prominent install-other-server disabled",
-          "text": "Install",
-          "innerHTML": "Install",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "",
-          "title": "",
-          "cls": "action-label codicon extension-action icon extension-status hide disabled",
-          "text": "",
-          "innerHTML": "",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Manage",
-          "title": "",
-          "cls": "action-label codicon extension-action icon manage codicon-extensions-manage",
-          "text": "",
-          "innerHTML": "",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": true,
-          "rect": {
-            "x": 381,
-            "y": 236,
-            "w": 20,
-            "h": 18
-          }
-        },
-        {
-          "aria": "",
-          "title": "",
-          "cls": "action-label codicon extension-action text extension-status-label hide disabled",
-          "text": "",
-          "innerHTML": "",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Migrate",
-          "title": "",
-          "cls": "action-label codicon extension-action label migrate disabled",
-          "text": "Migrate",
-          "innerHTML": "Migrate",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "",
-          "title": "",
-          "cls": "action-label codicon extension-action label reload disabled",
-          "text": "",
-          "innerHTML": "",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Update",
-          "title": "",
-          "cls": "action-label codicon extension-action label prominent update disabled",
-          "text": "Update",
-          "innerHTML": "Update",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Install",
-          "title": "",
-          "cls": "action-label codicon extension-action label prominent install action-dropdown",
-          "text": "Install",
-          "innerHTML": "Install",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": true,
-          "rect": {
-            "x": 356,
-            "y": 309,
-            "w": 41,
+            "x": 83,
+            "y": 315,
+            "w": 5,
             "h": 16
           }
         },
         {
-          "aria": "More Actions...",
-          "title": "",
-          "cls": "action-label dropdown codicon codicon-drop-down-button extension-action label prominent install acti",
-          "text": "",
-          "innerHTML": "",
+          "aria": "",
+          "title": "Cycle CSS Controls step (0.1, 1, 10) (css-controls)",
+          "cls": "",
+          "text": "x1",
+          "innerHTML": "x1",
           "hasSvg": false,
           "dataAttrs": {},
-          "visible": false,
+          "visible": true,
           "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Installing",
-          "title": "",
-          "cls": "action-label codicon disabled extension-action label install installing hide",
-          "text": "Installing",
-          "innerHTML": "Installing",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Set Display Language",
-          "title": "",
-          "cls": "action-label codicon extension-action label language disabled",
-          "text": "Set Display Language",
-          "innerHTML": "Set Display Language",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Clear Display Language",
-          "title": "",
-          "cls": "action-label codicon extension-action label language disabled",
-          "text": "Clear Display Language",
-          "innerHTML": "Clear Display Language",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Install",
-          "title": "",
-          "cls": "action-label codicon extension-action label prominent install-other-server disabled",
-          "text": "Install",
-          "innerHTML": "Install",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Install",
-          "title": "",
-          "cls": "action-label codicon extension-action label prominent install-other-server disabled",
-          "text": "Install",
-          "innerHTML": "Install",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Install",
-          "title": "",
-          "cls": "action-label codicon extension-action label prominent install-other-server disabled",
-          "text": "Install",
-          "innerHTML": "Install",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
+            "x": 98,
+            "y": 315,
+            "w": 12,
+            "h": 16
           }
         },
         {
           "aria": "",
+          "title": "Decrement value by 1 (css-controls)",
+          "cls": "",
+          "text": "▼",
+          "innerHTML": "▼",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 119,
+            "y": 315,
+            "w": 10,
+            "h": 16
+          }
+        },
+        {
+          "aria": "",
+          "title": "Increment value by 1 (css-controls)",
+          "cls": "",
+          "text": "▲",
+          "innerHTML": "▲",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 139,
+            "y": 315,
+            "w": 10,
+            "h": 16
+          }
+        },
+        {
+          "aria": "Toggle Replace",
           "title": "",
-          "cls": "action-label codicon extension-action icon extension-status hide disabled",
+          "cls": "button toggle left codicon-find-collapsed codicon disabled",
           "text": "",
           "innerHTML": "",
           "hasSvg": false,
@@ -723,9 +659,73 @@
           }
         },
         {
-          "aria": "Manage",
+          "aria": "Previous Match (Shift+Enter)",
           "title": "",
-          "cls": "action-label codicon extension-action icon manage codicon-extensions-manage hide disabled",
+          "cls": "button codicon codicon-find-previous-match disabled",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 1592,
+            "y": 49,
+            "w": 22,
+            "h": 22
+          }
+        },
+        {
+          "aria": "Next Match (Enter)",
+          "title": "",
+          "cls": "button codicon codicon-find-next-match disabled",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 1617,
+            "y": 49,
+            "w": 22,
+            "h": 22
+          }
+        },
+        {
+          "aria": "Close (Escape)",
+          "title": "",
+          "cls": "button codicon codicon-widget-close disabled",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 1666,
+            "y": 49,
+            "w": 22,
+            "h": 22
+          }
+        },
+        {
+          "aria": "Replace (Enter)",
+          "title": "",
+          "cls": "button codicon codicon-find-replace disabled",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": false,
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "w": 0,
+            "h": 0
+          }
+        },
+        {
+          "aria": "Replace All (Ctrl+Alt+Enter)",
+          "title": "",
+          "cls": "button codicon codicon-find-replace-all disabled",
           "text": "",
           "innerHTML": "",
           "hasSvg": false,
@@ -743,7 +743,7 @@
     {
       "ctxId": 2,
       "frameUrl": "vscode-file://vscode-app/c:/Users/voidd/AppData/Local/Programs/Antigravity%20IDE/resources/app/out/vs/code/electron-browser/workbench/workbench.html",
-      "totalBtns": 432,
+      "totalBtns": 177,
       "inputBoxFound": true,
       "inputBoxBtns": [
         {
@@ -754,12 +754,12 @@
           "innerHTML": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\" viewBox=\"0 -960 960 960\" fill=\"currentColor\" class=\"w-4 h-4\"><path d=\"M450-450H220v-60H450V-740h60v230H740v60H510v230H450V-450Z\"></path><",
           "hasSvg": true,
           "dataAttrs": {
-            "data-tooltip-id": "P0-2582"
+            "data-tooltip-id": "P0-6143"
           },
           "visible": true,
           "rect": {
-            "x": 1608,
-            "y": 1261,
+            "x": 1856,
+            "y": 1327,
             "w": 28,
             "h": 28
           }
@@ -769,13 +769,13 @@
           "title": "",
           "cls": "",
           "text": "Gemini 3.1 Pro (High)",
-          "innerHTML": "<button type=\"button\" data-tooltip-id=\"P0-2584\" aria-label=\"Select model, current: Gemini 3.1 Pro (High)\" class=\"flex min-w-0 max-w-full cursor-pointer items-center h-7 gap-1 rounded-lg pr-1 pl-2 text",
+          "innerHTML": "<button type=\"button\" data-tooltip-id=\"P0-6145\" aria-label=\"Select model, current: Gemini 3.1 Pro (High)\" class=\"flex min-w-0 max-w-full cursor-pointer items-center h-7 gap-1 rounded-lg pr-1 pl-2 text",
           "hasSvg": true,
           "dataAttrs": {},
           "visible": true,
           "rect": {
-            "x": 1637,
-            "y": 1261,
+            "x": 1885,
+            "y": 1327,
             "w": 134,
             "h": 28
           }
@@ -788,12 +788,12 @@
           "innerHTML": "<span class=\"min-w-0 select-none overflow-hidden text-ellipsis whitespace-nowrap text-xs text-secondary-foreground\">Gemini 3.1 Pro (High)</span><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"14\" heigh",
           "hasSvg": true,
           "dataAttrs": {
-            "data-tooltip-id": "P0-2584"
+            "data-tooltip-id": "P0-6145"
           },
           "visible": true,
           "rect": {
-            "x": 1637,
-            "y": 1261,
+            "x": 1885,
+            "y": 1327,
             "w": 134,
             "h": 28
           }
@@ -810,8 +810,8 @@
           },
           "visible": true,
           "rect": {
-            "x": 2187,
-            "y": 1261,
+            "x": 2435,
+            "y": 1327,
             "w": 28,
             "h": 28
           }
@@ -828,8 +828,8 @@
           },
           "visible": true,
           "rect": {
-            "x": 2219,
-            "y": 1263,
+            "x": 2467,
+            "y": 1329,
             "w": 24,
             "h": 24
           }
@@ -846,7 +846,7 @@
           "dataAttrs": {},
           "visible": true,
           "rect": {
-            "x": 1897,
+            "x": 2145,
             "y": 7,
             "w": 22,
             "h": 22
@@ -894,7 +894,7 @@
           "dataAttrs": {},
           "visible": true,
           "rect": {
-            "x": 1993,
+            "x": 2241,
             "y": 7,
             "w": 22,
             "h": 22
@@ -910,7 +910,7 @@
           "dataAttrs": {},
           "visible": true,
           "rect": {
-            "x": 2026,
+            "x": 2274,
             "y": 7,
             "w": 22,
             "h": 22
@@ -926,7 +926,7 @@
           "dataAttrs": {},
           "visible": true,
           "rect": {
-            "x": 2050,
+            "x": 2298,
             "y": 7,
             "w": 22,
             "h": 22
@@ -942,30 +942,366 @@
           "dataAttrs": {},
           "visible": true,
           "rect": {
-            "x": 2074,
+            "x": 2322,
             "y": 5,
             "w": 43,
             "h": 26
           }
         },
         {
-          "aria": "Refresh",
+          "aria": "Close (Ctrl+F4)",
           "title": "",
-          "cls": "action-label codicon codicon-extensions-refresh",
+          "cls": "action-label codicon codicon-close",
           "text": "",
           "innerHTML": "",
           "hasSvg": false,
           "dataAttrs": {},
           "visible": true,
           "rect": {
-            "x": 352,
-            "y": 77,
+            "x": 183,
+            "y": 40,
+            "w": 20,
+            "h": 20
+          }
+        },
+        {
+          "aria": "Close (Ctrl+F4)",
+          "title": "",
+          "cls": "action-label codicon codicon-close",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 323,
+            "y": 40,
+            "w": 20,
+            "h": 20
+          }
+        },
+        {
+          "aria": "Close (Ctrl+F4)",
+          "title": "",
+          "cls": "action-label codicon codicon-close",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 503,
+            "y": 40,
+            "w": 20,
+            "h": 20
+          }
+        },
+        {
+          "aria": "Close (Ctrl+F4)",
+          "title": "",
+          "cls": "action-label codicon codicon-close",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 668,
+            "y": 40,
+            "w": 20,
+            "h": 20
+          }
+        },
+        {
+          "aria": "Close (Ctrl+F4)",
+          "title": "",
+          "cls": "action-label codicon codicon-close",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 819,
+            "y": 40,
+            "w": 20,
+            "h": 20
+          }
+        },
+        {
+          "aria": "Close (Ctrl+F4)",
+          "title": "",
+          "cls": "action-label codicon codicon-close",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 966,
+            "y": 40,
+            "w": 20,
+            "h": 20
+          }
+        },
+        {
+          "aria": "Close (Ctrl+F4)",
+          "title": "",
+          "cls": "action-label codicon codicon-close",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 1101,
+            "y": 40,
+            "w": 20,
+            "h": 20
+          }
+        },
+        {
+          "aria": "Close (Ctrl+F4)",
+          "title": "",
+          "cls": "action-label codicon codicon-close",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 1258,
+            "y": 40,
+            "w": 20,
+            "h": 20
+          }
+        },
+        {
+          "aria": "Close (Ctrl+F4)",
+          "title": "",
+          "cls": "action-label codicon codicon-close",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 1407,
+            "y": 40,
+            "w": 20,
+            "h": 20
+          }
+        },
+        {
+          "aria": "Close (Ctrl+F4)",
+          "title": "",
+          "cls": "action-label codicon codicon-close",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 1573,
+            "y": 40,
+            "w": 20,
+            "h": 20
+          }
+        },
+        {
+          "aria": "Close (Ctrl+F4)",
+          "title": "",
+          "cls": "action-label codicon codicon-close",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 1709,
+            "y": 40,
+            "w": 20,
+            "h": 20
+          }
+        },
+        {
+          "aria": "Close (Ctrl+F4)",
+          "title": "",
+          "cls": "action-label codicon codicon-close",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 1855,
+            "y": 40,
+            "w": 20,
+            "h": 20
+          }
+        },
+        {
+          "aria": "Close (Ctrl+F4)",
+          "title": "",
+          "cls": "action-label codicon codicon-close",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 1993,
+            "y": 40,
+            "w": 20,
+            "h": 20
+          }
+        },
+        {
+          "aria": "Close (Ctrl+F4)",
+          "title": "",
+          "cls": "action-label codicon codicon-close",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 2113,
+            "y": 40,
+            "w": 20,
+            "h": 20
+          }
+        },
+        {
+          "aria": "Close (Ctrl+F4)",
+          "title": "",
+          "cls": "action-label codicon codicon-close",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 2242,
+            "y": 40,
+            "w": 20,
+            "h": 20
+          }
+        },
+        {
+          "aria": "Close (Ctrl+F4)",
+          "title": "",
+          "cls": "action-label codicon codicon-close",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 2385,
+            "y": 40,
+            "w": 20,
+            "h": 20
+          }
+        },
+        {
+          "aria": "Close (Ctrl+F4)",
+          "title": "",
+          "cls": "action-label codicon codicon-close",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 2510,
+            "y": 40,
+            "w": 20,
+            "h": 20
+          }
+        },
+        {
+          "aria": "Claude Code: Open",
+          "title": "",
+          "cls": "action-label icon",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 1677,
+            "y": 39,
             "w": 22,
             "h": 22
           }
         },
         {
-          "aria": "Views and More Actions...",
+          "aria": "Open Changes",
+          "title": "",
+          "cls": "action-label codicon codicon-compare-changes",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 1703,
+            "y": 39,
+            "w": 22,
+            "h": 22
+          }
+        },
+        {
+          "aria": "Split Editor Right (Ctrl+\\) [Alt] Split Editor Down",
+          "title": "",
+          "cls": "action-label codicon codicon-split-horizontal",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 1729,
+            "y": 39,
+            "w": 22,
+            "h": 22
+          }
+        },
+        {
+          "aria": "Go Back (Alt+LeftArrow)",
+          "title": "",
+          "cls": "action-label codicon codicon-arrow-left",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 1755,
+            "y": 39,
+            "w": 22,
+            "h": 22
+          }
+        },
+        {
+          "aria": "Go Forward (Alt+RightArrow)",
+          "title": "",
+          "cls": "action-label codicon codicon-arrow-right",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 1781,
+            "y": 39,
+            "w": 22,
+            "h": 22
+          }
+        },
+        {
+          "aria": "More Actions...",
           "title": "",
           "cls": "action-label codicon codicon-toolbar-more",
           "text": "",
@@ -974,480 +1310,80 @@
           "dataAttrs": {},
           "visible": true,
           "rect": {
-            "x": 378,
-            "y": 77,
+            "x": 1807,
+            "y": 39,
             "w": 22,
             "h": 22
           }
         },
         {
-          "aria": "Clear Extensions Search Results",
-          "title": "",
-          "cls": "action-label codicon codicon-extensions-clear-search-results",
-          "text": "",
-          "innerHTML": "",
+          "aria": "",
+          "title": "Open CSS Controls docs and settings (css-controls)",
+          "cls": "",
+          "text": "?",
+          "innerHTML": "?",
           "hasSvg": false,
           "dataAttrs": {},
           "visible": true,
           "rect": {
-            "x": 356,
-            "y": 112,
-            "w": 22,
-            "h": 22
-          }
-        },
-        {
-          "aria": "Filter Extensions...",
-          "title": "",
-          "cls": "action-label codicon codicon-extensions-filter",
-          "text": "",
-          "innerHTML": "",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": true,
-          "rect": {
-            "x": 378,
-            "y": 112,
-            "w": 22,
-            "h": 22
-          }
-        },
-        {
-          "aria": "Marketplace Section",
-          "title": "",
-          "cls": "pane-header extension-view-header expanded hidden",
-          "text": "Marketplace251",
-          "innerHTML": "<div class=\"twisty-container codicon-view-pane-container-expanded codicon\"></div><div class=\"icon codicon codicon-default-view-icon\" custom-hover=\"true\" aria-label=\"Marketplace\" style=\"color: var(--vs",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "",
-          "title": "",
-          "cls": "action-label codicon extension-action text extension-status-label hide disabled",
-          "text": "",
-          "innerHTML": "",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Migrate",
-          "title": "",
-          "cls": "action-label codicon extension-action label migrate disabled",
-          "text": "Migrate",
-          "innerHTML": "Migrate",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Restart Extensions",
-          "title": "",
-          "cls": "action-label codicon disabled extension-action label reload",
-          "text": "Restart Extensions",
-          "innerHTML": "Restart Extensions",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Update",
-          "title": "",
-          "cls": "action-label codicon extension-action label prominent update disabled",
-          "text": "Update",
-          "innerHTML": "Update",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "",
-          "title": "",
-          "cls": "action-label codicon disabled extension-action label prominent install action-dropdown",
-          "text": "",
-          "innerHTML": "",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "More Actions...",
-          "title": "",
-          "cls": "action-label dropdown codicon codicon-drop-down-button extension-action label prominent install acti",
-          "text": "",
-          "innerHTML": "",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Installing",
-          "title": "",
-          "cls": "action-label codicon disabled extension-action label install installing hide",
-          "text": "Installing",
-          "innerHTML": "Installing",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Set Display Language",
-          "title": "",
-          "cls": "action-label codicon extension-action label language disabled",
-          "text": "Set Display Language",
-          "innerHTML": "Set Display Language",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Clear Display Language",
-          "title": "",
-          "cls": "action-label codicon extension-action label language disabled",
-          "text": "Clear Display Language",
-          "innerHTML": "Clear Display Language",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Install",
-          "title": "",
-          "cls": "action-label codicon extension-action label prominent install-other-server disabled",
-          "text": "Install",
-          "innerHTML": "Install",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Install",
-          "title": "",
-          "cls": "action-label codicon extension-action label prominent install-other-server disabled",
-          "text": "Install",
-          "innerHTML": "Install",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Install",
-          "title": "",
-          "cls": "action-label codicon extension-action label prominent install-other-server disabled",
-          "text": "Install",
-          "innerHTML": "Install",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "",
-          "title": "",
-          "cls": "action-label codicon extension-action icon extension-status hide disabled",
-          "text": "",
-          "innerHTML": "",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Manage",
-          "title": "",
-          "cls": "action-label codicon extension-action icon manage codicon-extensions-manage",
-          "text": "",
-          "innerHTML": "",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": true,
-          "rect": {
-            "x": 381,
-            "y": 236,
-            "w": 20,
-            "h": 18
-          }
-        },
-        {
-          "aria": "",
-          "title": "",
-          "cls": "action-label codicon extension-action text extension-status-label hide disabled",
-          "text": "",
-          "innerHTML": "",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Migrate",
-          "title": "",
-          "cls": "action-label codicon extension-action label migrate disabled",
-          "text": "Migrate",
-          "innerHTML": "Migrate",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "",
-          "title": "",
-          "cls": "action-label codicon extension-action label reload disabled",
-          "text": "",
-          "innerHTML": "",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Update",
-          "title": "",
-          "cls": "action-label codicon extension-action label prominent update disabled",
-          "text": "Update",
-          "innerHTML": "Update",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Install",
-          "title": "",
-          "cls": "action-label codicon extension-action label prominent install action-dropdown",
-          "text": "Install",
-          "innerHTML": "Install",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": true,
-          "rect": {
-            "x": 356,
-            "y": 309,
-            "w": 41,
+            "x": 83,
+            "y": 315,
+            "w": 5,
             "h": 16
           }
         },
         {
-          "aria": "More Actions...",
-          "title": "",
-          "cls": "action-label dropdown codicon codicon-drop-down-button extension-action label prominent install acti",
-          "text": "",
-          "innerHTML": "",
+          "aria": "",
+          "title": "Cycle CSS Controls step (0.1, 1, 10) (css-controls)",
+          "cls": "",
+          "text": "x1",
+          "innerHTML": "x1",
           "hasSvg": false,
           "dataAttrs": {},
-          "visible": false,
+          "visible": true,
           "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Installing",
-          "title": "",
-          "cls": "action-label codicon disabled extension-action label install installing hide",
-          "text": "Installing",
-          "innerHTML": "Installing",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Set Display Language",
-          "title": "",
-          "cls": "action-label codicon extension-action label language disabled",
-          "text": "Set Display Language",
-          "innerHTML": "Set Display Language",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Clear Display Language",
-          "title": "",
-          "cls": "action-label codicon extension-action label language disabled",
-          "text": "Clear Display Language",
-          "innerHTML": "Clear Display Language",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Install",
-          "title": "",
-          "cls": "action-label codicon extension-action label prominent install-other-server disabled",
-          "text": "Install",
-          "innerHTML": "Install",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Install",
-          "title": "",
-          "cls": "action-label codicon extension-action label prominent install-other-server disabled",
-          "text": "Install",
-          "innerHTML": "Install",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Install",
-          "title": "",
-          "cls": "action-label codicon extension-action label prominent install-other-server disabled",
-          "text": "Install",
-          "innerHTML": "Install",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
+            "x": 98,
+            "y": 315,
+            "w": 12,
+            "h": 16
           }
         },
         {
           "aria": "",
+          "title": "Decrement value by 1 (css-controls)",
+          "cls": "",
+          "text": "▼",
+          "innerHTML": "▼",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 119,
+            "y": 315,
+            "w": 10,
+            "h": 16
+          }
+        },
+        {
+          "aria": "",
+          "title": "Increment value by 1 (css-controls)",
+          "cls": "",
+          "text": "▲",
+          "innerHTML": "▲",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 139,
+            "y": 315,
+            "w": 10,
+            "h": 16
+          }
+        },
+        {
+          "aria": "Toggle Replace",
           "title": "",
-          "cls": "action-label codicon extension-action icon extension-status hide disabled",
+          "cls": "button toggle left codicon-find-collapsed codicon disabled",
           "text": "",
           "innerHTML": "",
           "hasSvg": false,
@@ -1461,9 +1397,73 @@
           }
         },
         {
-          "aria": "Manage",
+          "aria": "Previous Match (Shift+Enter)",
           "title": "",
-          "cls": "action-label codicon extension-action icon manage codicon-extensions-manage hide disabled",
+          "cls": "button codicon codicon-find-previous-match disabled",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 1592,
+            "y": 49,
+            "w": 22,
+            "h": 22
+          }
+        },
+        {
+          "aria": "Next Match (Enter)",
+          "title": "",
+          "cls": "button codicon codicon-find-next-match disabled",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 1617,
+            "y": 49,
+            "w": 22,
+            "h": 22
+          }
+        },
+        {
+          "aria": "Close (Escape)",
+          "title": "",
+          "cls": "button codicon codicon-widget-close disabled",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 1666,
+            "y": 49,
+            "w": 22,
+            "h": 22
+          }
+        },
+        {
+          "aria": "Replace (Enter)",
+          "title": "",
+          "cls": "button codicon codicon-find-replace disabled",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": false,
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "w": 0,
+            "h": 0
+          }
+        },
+        {
+          "aria": "Replace All (Ctrl+Alt+Enter)",
+          "title": "",
+          "cls": "button codicon codicon-find-replace-all disabled",
           "text": "",
           "innerHTML": "",
           "hasSvg": false,
@@ -1481,7 +1481,7 @@
     {
       "ctxId": 1,
       "frameUrl": "vscode-file://vscode-app/c:/Users/voidd/AppData/Local/Programs/Antigravity%20IDE/resources/app/out/vs/code/electron-browser/workbench/workbench.html",
-      "totalBtns": 432,
+      "totalBtns": 177,
       "inputBoxFound": true,
       "inputBoxBtns": [
         {
@@ -1492,12 +1492,12 @@
           "innerHTML": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\" viewBox=\"0 -960 960 960\" fill=\"currentColor\" class=\"w-4 h-4\"><path d=\"M450-450H220v-60H450V-740h60v230H740v60H510v230H450V-450Z\"></path><",
           "hasSvg": true,
           "dataAttrs": {
-            "data-tooltip-id": "P0-2582"
+            "data-tooltip-id": "P0-6143"
           },
           "visible": true,
           "rect": {
-            "x": 1608,
-            "y": 1261,
+            "x": 1856,
+            "y": 1327,
             "w": 28,
             "h": 28
           }
@@ -1507,13 +1507,13 @@
           "title": "",
           "cls": "",
           "text": "Gemini 3.1 Pro (High)",
-          "innerHTML": "<button type=\"button\" data-tooltip-id=\"P0-2584\" aria-label=\"Select model, current: Gemini 3.1 Pro (High)\" class=\"flex min-w-0 max-w-full cursor-pointer items-center h-7 gap-1 rounded-lg pr-1 pl-2 text",
+          "innerHTML": "<button type=\"button\" data-tooltip-id=\"P0-6145\" aria-label=\"Select model, current: Gemini 3.1 Pro (High)\" class=\"flex min-w-0 max-w-full cursor-pointer items-center h-7 gap-1 rounded-lg pr-1 pl-2 text",
           "hasSvg": true,
           "dataAttrs": {},
           "visible": true,
           "rect": {
-            "x": 1637,
-            "y": 1261,
+            "x": 1885,
+            "y": 1327,
             "w": 134,
             "h": 28
           }
@@ -1526,12 +1526,12 @@
           "innerHTML": "<span class=\"min-w-0 select-none overflow-hidden text-ellipsis whitespace-nowrap text-xs text-secondary-foreground\">Gemini 3.1 Pro (High)</span><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"14\" heigh",
           "hasSvg": true,
           "dataAttrs": {
-            "data-tooltip-id": "P0-2584"
+            "data-tooltip-id": "P0-6145"
           },
           "visible": true,
           "rect": {
-            "x": 1637,
-            "y": 1261,
+            "x": 1885,
+            "y": 1327,
             "w": 134,
             "h": 28
           }
@@ -1548,8 +1548,8 @@
           },
           "visible": true,
           "rect": {
-            "x": 2187,
-            "y": 1261,
+            "x": 2435,
+            "y": 1327,
             "w": 28,
             "h": 28
           }
@@ -1566,8 +1566,8 @@
           },
           "visible": true,
           "rect": {
-            "x": 2219,
-            "y": 1263,
+            "x": 2467,
+            "y": 1329,
             "w": 24,
             "h": 24
           }
@@ -1584,7 +1584,7 @@
           "dataAttrs": {},
           "visible": true,
           "rect": {
-            "x": 1897,
+            "x": 2145,
             "y": 7,
             "w": 22,
             "h": 22
@@ -1632,7 +1632,7 @@
           "dataAttrs": {},
           "visible": true,
           "rect": {
-            "x": 1993,
+            "x": 2241,
             "y": 7,
             "w": 22,
             "h": 22
@@ -1648,7 +1648,7 @@
           "dataAttrs": {},
           "visible": true,
           "rect": {
-            "x": 2026,
+            "x": 2274,
             "y": 7,
             "w": 22,
             "h": 22
@@ -1664,7 +1664,7 @@
           "dataAttrs": {},
           "visible": true,
           "rect": {
-            "x": 2050,
+            "x": 2298,
             "y": 7,
             "w": 22,
             "h": 22
@@ -1680,30 +1680,366 @@
           "dataAttrs": {},
           "visible": true,
           "rect": {
-            "x": 2074,
+            "x": 2322,
             "y": 5,
             "w": 43,
             "h": 26
           }
         },
         {
-          "aria": "Refresh",
+          "aria": "Close (Ctrl+F4)",
           "title": "",
-          "cls": "action-label codicon codicon-extensions-refresh",
+          "cls": "action-label codicon codicon-close",
           "text": "",
           "innerHTML": "",
           "hasSvg": false,
           "dataAttrs": {},
           "visible": true,
           "rect": {
-            "x": 352,
-            "y": 77,
+            "x": 183,
+            "y": 40,
+            "w": 20,
+            "h": 20
+          }
+        },
+        {
+          "aria": "Close (Ctrl+F4)",
+          "title": "",
+          "cls": "action-label codicon codicon-close",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 323,
+            "y": 40,
+            "w": 20,
+            "h": 20
+          }
+        },
+        {
+          "aria": "Close (Ctrl+F4)",
+          "title": "",
+          "cls": "action-label codicon codicon-close",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 503,
+            "y": 40,
+            "w": 20,
+            "h": 20
+          }
+        },
+        {
+          "aria": "Close (Ctrl+F4)",
+          "title": "",
+          "cls": "action-label codicon codicon-close",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 668,
+            "y": 40,
+            "w": 20,
+            "h": 20
+          }
+        },
+        {
+          "aria": "Close (Ctrl+F4)",
+          "title": "",
+          "cls": "action-label codicon codicon-close",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 819,
+            "y": 40,
+            "w": 20,
+            "h": 20
+          }
+        },
+        {
+          "aria": "Close (Ctrl+F4)",
+          "title": "",
+          "cls": "action-label codicon codicon-close",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 966,
+            "y": 40,
+            "w": 20,
+            "h": 20
+          }
+        },
+        {
+          "aria": "Close (Ctrl+F4)",
+          "title": "",
+          "cls": "action-label codicon codicon-close",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 1101,
+            "y": 40,
+            "w": 20,
+            "h": 20
+          }
+        },
+        {
+          "aria": "Close (Ctrl+F4)",
+          "title": "",
+          "cls": "action-label codicon codicon-close",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 1258,
+            "y": 40,
+            "w": 20,
+            "h": 20
+          }
+        },
+        {
+          "aria": "Close (Ctrl+F4)",
+          "title": "",
+          "cls": "action-label codicon codicon-close",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 1407,
+            "y": 40,
+            "w": 20,
+            "h": 20
+          }
+        },
+        {
+          "aria": "Close (Ctrl+F4)",
+          "title": "",
+          "cls": "action-label codicon codicon-close",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 1573,
+            "y": 40,
+            "w": 20,
+            "h": 20
+          }
+        },
+        {
+          "aria": "Close (Ctrl+F4)",
+          "title": "",
+          "cls": "action-label codicon codicon-close",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 1709,
+            "y": 40,
+            "w": 20,
+            "h": 20
+          }
+        },
+        {
+          "aria": "Close (Ctrl+F4)",
+          "title": "",
+          "cls": "action-label codicon codicon-close",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 1855,
+            "y": 40,
+            "w": 20,
+            "h": 20
+          }
+        },
+        {
+          "aria": "Close (Ctrl+F4)",
+          "title": "",
+          "cls": "action-label codicon codicon-close",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 1993,
+            "y": 40,
+            "w": 20,
+            "h": 20
+          }
+        },
+        {
+          "aria": "Close (Ctrl+F4)",
+          "title": "",
+          "cls": "action-label codicon codicon-close",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 2113,
+            "y": 40,
+            "w": 20,
+            "h": 20
+          }
+        },
+        {
+          "aria": "Close (Ctrl+F4)",
+          "title": "",
+          "cls": "action-label codicon codicon-close",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 2242,
+            "y": 40,
+            "w": 20,
+            "h": 20
+          }
+        },
+        {
+          "aria": "Close (Ctrl+F4)",
+          "title": "",
+          "cls": "action-label codicon codicon-close",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 2385,
+            "y": 40,
+            "w": 20,
+            "h": 20
+          }
+        },
+        {
+          "aria": "Close (Ctrl+F4)",
+          "title": "",
+          "cls": "action-label codicon codicon-close",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 2510,
+            "y": 40,
+            "w": 20,
+            "h": 20
+          }
+        },
+        {
+          "aria": "Claude Code: Open",
+          "title": "",
+          "cls": "action-label icon",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 1677,
+            "y": 39,
             "w": 22,
             "h": 22
           }
         },
         {
-          "aria": "Views and More Actions...",
+          "aria": "Open Changes",
+          "title": "",
+          "cls": "action-label codicon codicon-compare-changes",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 1703,
+            "y": 39,
+            "w": 22,
+            "h": 22
+          }
+        },
+        {
+          "aria": "Split Editor Right (Ctrl+\\) [Alt] Split Editor Down",
+          "title": "",
+          "cls": "action-label codicon codicon-split-horizontal",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 1729,
+            "y": 39,
+            "w": 22,
+            "h": 22
+          }
+        },
+        {
+          "aria": "Go Back (Alt+LeftArrow)",
+          "title": "",
+          "cls": "action-label codicon codicon-arrow-left",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 1755,
+            "y": 39,
+            "w": 22,
+            "h": 22
+          }
+        },
+        {
+          "aria": "Go Forward (Alt+RightArrow)",
+          "title": "",
+          "cls": "action-label codicon codicon-arrow-right",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 1781,
+            "y": 39,
+            "w": 22,
+            "h": 22
+          }
+        },
+        {
+          "aria": "More Actions...",
           "title": "",
           "cls": "action-label codicon codicon-toolbar-more",
           "text": "",
@@ -1712,480 +2048,80 @@
           "dataAttrs": {},
           "visible": true,
           "rect": {
-            "x": 378,
-            "y": 77,
+            "x": 1807,
+            "y": 39,
             "w": 22,
             "h": 22
           }
         },
         {
-          "aria": "Clear Extensions Search Results",
-          "title": "",
-          "cls": "action-label codicon codicon-extensions-clear-search-results",
-          "text": "",
-          "innerHTML": "",
+          "aria": "",
+          "title": "Open CSS Controls docs and settings (css-controls)",
+          "cls": "",
+          "text": "?",
+          "innerHTML": "?",
           "hasSvg": false,
           "dataAttrs": {},
           "visible": true,
           "rect": {
-            "x": 356,
-            "y": 112,
-            "w": 22,
-            "h": 22
-          }
-        },
-        {
-          "aria": "Filter Extensions...",
-          "title": "",
-          "cls": "action-label codicon codicon-extensions-filter",
-          "text": "",
-          "innerHTML": "",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": true,
-          "rect": {
-            "x": 378,
-            "y": 112,
-            "w": 22,
-            "h": 22
-          }
-        },
-        {
-          "aria": "Marketplace Section",
-          "title": "",
-          "cls": "pane-header extension-view-header expanded hidden",
-          "text": "Marketplace251",
-          "innerHTML": "<div class=\"twisty-container codicon-view-pane-container-expanded codicon\"></div><div class=\"icon codicon codicon-default-view-icon\" custom-hover=\"true\" aria-label=\"Marketplace\" style=\"color: var(--vs",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "",
-          "title": "",
-          "cls": "action-label codicon extension-action text extension-status-label hide disabled",
-          "text": "",
-          "innerHTML": "",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Migrate",
-          "title": "",
-          "cls": "action-label codicon extension-action label migrate disabled",
-          "text": "Migrate",
-          "innerHTML": "Migrate",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Restart Extensions",
-          "title": "",
-          "cls": "action-label codicon disabled extension-action label reload",
-          "text": "Restart Extensions",
-          "innerHTML": "Restart Extensions",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Update",
-          "title": "",
-          "cls": "action-label codicon extension-action label prominent update disabled",
-          "text": "Update",
-          "innerHTML": "Update",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "",
-          "title": "",
-          "cls": "action-label codicon disabled extension-action label prominent install action-dropdown",
-          "text": "",
-          "innerHTML": "",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "More Actions...",
-          "title": "",
-          "cls": "action-label dropdown codicon codicon-drop-down-button extension-action label prominent install acti",
-          "text": "",
-          "innerHTML": "",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Installing",
-          "title": "",
-          "cls": "action-label codicon disabled extension-action label install installing hide",
-          "text": "Installing",
-          "innerHTML": "Installing",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Set Display Language",
-          "title": "",
-          "cls": "action-label codicon extension-action label language disabled",
-          "text": "Set Display Language",
-          "innerHTML": "Set Display Language",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Clear Display Language",
-          "title": "",
-          "cls": "action-label codicon extension-action label language disabled",
-          "text": "Clear Display Language",
-          "innerHTML": "Clear Display Language",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Install",
-          "title": "",
-          "cls": "action-label codicon extension-action label prominent install-other-server disabled",
-          "text": "Install",
-          "innerHTML": "Install",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Install",
-          "title": "",
-          "cls": "action-label codicon extension-action label prominent install-other-server disabled",
-          "text": "Install",
-          "innerHTML": "Install",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Install",
-          "title": "",
-          "cls": "action-label codicon extension-action label prominent install-other-server disabled",
-          "text": "Install",
-          "innerHTML": "Install",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "",
-          "title": "",
-          "cls": "action-label codicon extension-action icon extension-status hide disabled",
-          "text": "",
-          "innerHTML": "",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Manage",
-          "title": "",
-          "cls": "action-label codicon extension-action icon manage codicon-extensions-manage",
-          "text": "",
-          "innerHTML": "",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": true,
-          "rect": {
-            "x": 381,
-            "y": 236,
-            "w": 20,
-            "h": 18
-          }
-        },
-        {
-          "aria": "",
-          "title": "",
-          "cls": "action-label codicon extension-action text extension-status-label hide disabled",
-          "text": "",
-          "innerHTML": "",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Migrate",
-          "title": "",
-          "cls": "action-label codicon extension-action label migrate disabled",
-          "text": "Migrate",
-          "innerHTML": "Migrate",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "",
-          "title": "",
-          "cls": "action-label codicon extension-action label reload disabled",
-          "text": "",
-          "innerHTML": "",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Update",
-          "title": "",
-          "cls": "action-label codicon extension-action label prominent update disabled",
-          "text": "Update",
-          "innerHTML": "Update",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Install",
-          "title": "",
-          "cls": "action-label codicon extension-action label prominent install action-dropdown",
-          "text": "Install",
-          "innerHTML": "Install",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": true,
-          "rect": {
-            "x": 356,
-            "y": 309,
-            "w": 41,
+            "x": 83,
+            "y": 315,
+            "w": 5,
             "h": 16
           }
         },
         {
-          "aria": "More Actions...",
-          "title": "",
-          "cls": "action-label dropdown codicon codicon-drop-down-button extension-action label prominent install acti",
-          "text": "",
-          "innerHTML": "",
+          "aria": "",
+          "title": "Cycle CSS Controls step (0.1, 1, 10) (css-controls)",
+          "cls": "",
+          "text": "x1",
+          "innerHTML": "x1",
           "hasSvg": false,
           "dataAttrs": {},
-          "visible": false,
+          "visible": true,
           "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Installing",
-          "title": "",
-          "cls": "action-label codicon disabled extension-action label install installing hide",
-          "text": "Installing",
-          "innerHTML": "Installing",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Set Display Language",
-          "title": "",
-          "cls": "action-label codicon extension-action label language disabled",
-          "text": "Set Display Language",
-          "innerHTML": "Set Display Language",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Clear Display Language",
-          "title": "",
-          "cls": "action-label codicon extension-action label language disabled",
-          "text": "Clear Display Language",
-          "innerHTML": "Clear Display Language",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Install",
-          "title": "",
-          "cls": "action-label codicon extension-action label prominent install-other-server disabled",
-          "text": "Install",
-          "innerHTML": "Install",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Install",
-          "title": "",
-          "cls": "action-label codicon extension-action label prominent install-other-server disabled",
-          "text": "Install",
-          "innerHTML": "Install",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
-          }
-        },
-        {
-          "aria": "Install",
-          "title": "",
-          "cls": "action-label codicon extension-action label prominent install-other-server disabled",
-          "text": "Install",
-          "innerHTML": "Install",
-          "hasSvg": false,
-          "dataAttrs": {},
-          "visible": false,
-          "rect": {
-            "x": 0,
-            "y": 0,
-            "w": 0,
-            "h": 0
+            "x": 98,
+            "y": 315,
+            "w": 12,
+            "h": 16
           }
         },
         {
           "aria": "",
+          "title": "Decrement value by 1 (css-controls)",
+          "cls": "",
+          "text": "▼",
+          "innerHTML": "▼",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 119,
+            "y": 315,
+            "w": 10,
+            "h": 16
+          }
+        },
+        {
+          "aria": "",
+          "title": "Increment value by 1 (css-controls)",
+          "cls": "",
+          "text": "▲",
+          "innerHTML": "▲",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 139,
+            "y": 315,
+            "w": 10,
+            "h": 16
+          }
+        },
+        {
+          "aria": "Toggle Replace",
           "title": "",
-          "cls": "action-label codicon extension-action icon extension-status hide disabled",
+          "cls": "button toggle left codicon-find-collapsed codicon disabled",
           "text": "",
           "innerHTML": "",
           "hasSvg": false,
@@ -2199,9 +2135,73 @@
           }
         },
         {
-          "aria": "Manage",
+          "aria": "Previous Match (Shift+Enter)",
           "title": "",
-          "cls": "action-label codicon extension-action icon manage codicon-extensions-manage hide disabled",
+          "cls": "button codicon codicon-find-previous-match disabled",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 1592,
+            "y": 49,
+            "w": 22,
+            "h": 22
+          }
+        },
+        {
+          "aria": "Next Match (Enter)",
+          "title": "",
+          "cls": "button codicon codicon-find-next-match disabled",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 1617,
+            "y": 49,
+            "w": 22,
+            "h": 22
+          }
+        },
+        {
+          "aria": "Close (Escape)",
+          "title": "",
+          "cls": "button codicon codicon-widget-close disabled",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": true,
+          "rect": {
+            "x": 1666,
+            "y": 49,
+            "w": 22,
+            "h": 22
+          }
+        },
+        {
+          "aria": "Replace (Enter)",
+          "title": "",
+          "cls": "button codicon codicon-find-replace disabled",
+          "text": "",
+          "innerHTML": "",
+          "hasSvg": false,
+          "dataAttrs": {},
+          "visible": false,
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "w": 0,
+            "h": 0
+          }
+        },
+        {
+          "aria": "Replace All (Ctrl+Alt+Enter)",
+          "title": "",
+          "cls": "button codicon codicon-find-replace-all disabled",
           "text": "",
           "innerHTML": "",
           "hasSvg": false,

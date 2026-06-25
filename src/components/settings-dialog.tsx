@@ -59,7 +59,7 @@ interface SettingsDialogProps {
 function FieldRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="grid grid-cols-[7.5rem_1fr] items-center gap-2">
-      <span className="text-xs text-zinc-400 text-right">{label}</span>
+      <span className="text-xs text-muted-foreground text-right">{label}</span>
       {children}
     </div>
   );
@@ -80,7 +80,7 @@ function OptionSelect({
         <SelectValue />
       </SelectTrigger>
       <SelectContent>
-        <SelectItem value="__none__" className="text-xs font-mono text-zinc-500">— default —</SelectItem>
+        <SelectItem value="__none__" className="text-xs font-mono text-muted-foreground">— default —</SelectItem>
         {options.map((o) => (
           <SelectItem key={o} value={o} className="text-xs font-mono">{o}</SelectItem>
         ))}
@@ -172,7 +172,7 @@ function CoreTab() {
   if (!config) {
     return (
       <TabsContent value="core" className="flex items-center justify-center min-h-[360px]">
-        <span className="text-xs text-zinc-500">Loading…</span>
+        <span className="text-xs text-muted-foreground">Loading…</span>
       </TabsContent>
     );
   }
@@ -228,7 +228,7 @@ function CoreTab() {
           <span className="text-xs text-green-500">Saved</span>
         )}
         {isDirty && applyState !== "saved" && (
-          <span className="text-xs text-zinc-500">Unsaved changes</span>
+          <span className="text-xs text-muted-foreground">Unsaved changes</span>
         )}
         <Button size="sm" disabled={!isDirty} onClick={handleApply}>
           Apply
@@ -248,40 +248,47 @@ const INTERVAL_OPTIONS: { label: string; value: number }[] = [
 
 export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   const { settings, updateSettings } = useSettings();
-  const [outputDevices, setOutputDevices] = React.useState<MediaDeviceInfo[]>(
-    [],
-  );
-  const [inputDevices, setInputDevices] = React.useState<MediaDeviceInfo[]>([]);
+  type AudioDevice = { id: string; name: string; kind: "output" | "microphone" | "capture"; is_default: boolean };
+  const [outputDevices,  setOutputDevices]  = React.useState<AudioDevice[]>([]);
+  const [micDevices,     setMicDevices]     = React.useState<AudioDevice[]>([]);
+  const [captureDevices, setCaptureDevices] = React.useState<AudioDevice[]>([]);
   const { theme, setTheme } = useStateMachine();
 
   React.useEffect(() => {
     if (open) {
-      navigator.mediaDevices
-        .getUserMedia({ audio: true })
-        .then(() => navigator.mediaDevices.enumerateDevices())
-        .catch(() => navigator.mediaDevices.enumerateDevices())
-        .then((devices) => {
-          setOutputDevices(devices.filter((d) => d.kind === "audiooutput"));
-          setInputDevices(devices.filter((d) => d.kind === "audioinput"));
-        });
+      window.electron.getAudioDevices().then((devices) => {
+        setOutputDevices(devices.filter((d) => d.kind === "output"));
+        setMicDevices(devices.filter((d) => d.kind === "microphone"));
+        setCaptureDevices(devices.filter((d) => d.kind === "capture"));
+      });
     }
   }, [open]);
 
+  const allDevices = [...outputDevices, ...micDevices, ...captureDevices];
+
   const selectedOutputDevice = outputDevices.find(
-    (d) => d.deviceId === settings.audioOutputDeviceId,
+    (d) => d.id === settings.audioOutputDeviceId,
   );
   const outputDisplayLabel = settings.audioOutputDeviceId
-    ? selectedOutputDevice?.label ||
+    ? selectedOutputDevice?.name ||
       `Speaker (${settings.audioOutputDeviceId.slice(0, 5)}...)`
     : "System Default";
 
-  const selectedInputDevice = inputDevices.find(
-    (d) => d.deviceId === settings.audioInputDeviceId,
+  const selectedMicDevice = micDevices.find(
+    (d) => d.id === settings.audioInputDeviceId,
   );
   const inputDisplayLabel = settings.audioInputDeviceId
-    ? selectedInputDevice?.label ||
+    ? selectedMicDevice?.name ||
       `Microphone (${settings.audioInputDeviceId.slice(0, 5)}...)`
     : "System Default";
+
+  const selectedStreamSource = allDevices.find(
+    (d) => d.id === settings.audioStreamSourceId,
+  );
+  const streamSourceLabel = settings.audioStreamSourceId
+    ? selectedStreamSource?.name ||
+      `Device (${settings.audioStreamSourceId.slice(0, 8)}...)`
+    : "None";
 
   const themeOptions: {
     value: "light" | "dark" | "system";
@@ -482,6 +489,73 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
 
           {/* Audio Tab */}
           <TabsContent value="audio" className="flex flex-col gap-4 min-h-[360px]">
+            {/* Stream Audio Source */}
+            <div className="flex flex-col gap-3">
+              <div className="flex flex-col gap-0.5">
+                <label className="text-sm font-medium text-left">Stream Audio Source</label>
+                <span className="text-xs text-muted-foreground text-left">
+                  Audio captured and mixed into the stream. Select an Audio Capture Device
+                  (e.g. VoiceMeeter Output) for software routing, a Microphone for direct
+                  mic capture, or a System Audio device for WASAPI loopback.
+                </span>
+              </div>
+              <Select
+                value={settings.audioStreamSourceId || "none"}
+                onValueChange={(val) => {
+                  if (typeof val === "string") {
+                    updateSettings({ audioStreamSourceId: val === "none" ? "" : val });
+                  }
+                }}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Select stream audio source">
+                    {streamSourceLabel}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">None</SelectItem>
+                  {captureDevices.length > 0 && (
+                    <>
+                      <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground">
+                        Audio Capture Devices
+                      </div>
+                      {captureDevices.map((device) => (
+                        <SelectItem key={device.id} value={device.id}>
+                          {device.name}
+                        </SelectItem>
+                      ))}
+                    </>
+                  )}
+                  {micDevices.length > 0 && (
+                    <>
+                      <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground">
+                        Microphones
+                      </div>
+                      {micDevices.map((device) => (
+                        <SelectItem key={device.id} value={device.id}>
+                          {device.name}
+                        </SelectItem>
+                      ))}
+                    </>
+                  )}
+                  {outputDevices.length > 0 && (
+                    <>
+                      <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground">
+                        System Audio (Loopback)
+                      </div>
+                      {outputDevices.map((device) => (
+                        <SelectItem key={device.id} value={device.id}>
+                          {device.name}
+                        </SelectItem>
+                      ))}
+                    </>
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <Separator />
+
             {/* Audio Output Device */}
             <div className="flex flex-col gap-3">
               <label className="text-sm font-medium text-left">Audio Output</label>
@@ -503,9 +577,9 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                 <SelectContent>
                   <SelectItem value="default">System Default</SelectItem>
                   {outputDevices.map((device) => (
-                    <SelectItem key={device.deviceId} value={device.deviceId}>
-                      {device.label ||
-                        `Speaker (${device.deviceId.slice(0, 5)}...)`}
+                    <SelectItem key={device.id} value={device.id}>
+                      {device.name ||
+                        `Speaker (${device.id.slice(0, 5)}...)`}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -514,9 +588,9 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
 
             <Separator />
 
-            {/* Audio Input Device */}
+            {/* Microphone */}
             <div className="flex flex-col gap-3">
-              <label className="text-sm font-medium text-left">Audio Input</label>
+              <label className="text-sm font-medium text-left">Microphone</label>
               <Select
                 value={settings.audioInputDeviceId || "default"}
                 onValueChange={(val) => {
@@ -528,16 +602,16 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                 }}
               >
                 <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Select input device">
+                  <SelectValue placeholder="Select microphone">
                     {inputDisplayLabel}
                   </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="default">System Default</SelectItem>
-                  {inputDevices.map((device) => (
-                    <SelectItem key={device.deviceId} value={device.deviceId}>
-                      {device.label ||
-                        `Microphone (${device.deviceId.slice(0, 5)}...)`}
+                  {micDevices.map((device) => (
+                    <SelectItem key={device.id} value={device.id}>
+                      {device.name ||
+                        `Microphone (${device.id.slice(0, 5)}...)`}
                     </SelectItem>
                   ))}
                 </SelectContent>

@@ -12,9 +12,28 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { Trash2Icon } from "lucide-react";
+import {
+  Trash2Icon,
+  ScissorsIcon,
+  Volume2,
+  VolumeX,
+  Activity,
+} from "lucide-react";
+import { useAtom, useAtomValue, useSetAtom } from "jotai";
+import {
+  timelineSelectedClipIdAtom,
+  timelineCurrentTimeAtom,
+  timelineTracksAtom,
+} from "@/store/timelineStore";
+import { Knob } from "@/components/audio/knob";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 
 import { StaticWaveform } from "@/components/ui/staticwaveform";
+import { VolumeEnvelopeOverlay } from "./VolumeEnvelopeOverlay";
 
 interface ClipProps {
   clip: TimelineClip;
@@ -22,6 +41,7 @@ interface ClipProps {
   pixelsPerSecond: number;
   onUpdate?: (updates: Partial<TimelineClip>) => void;
   onRemove?: () => void;
+  onSplit?: (time: number) => void;
   onMoveTrack?: (targetTrackId: string, newStartTime: number) => void;
 }
 
@@ -31,12 +51,20 @@ export function Clip({
   pixelsPerSecond,
   onUpdate,
   onRemove,
+  onSplit,
   onMoveTrack,
 }: ClipProps) {
+  const [selectedClipId, setSelectedClipId] = useAtom(
+    timelineSelectedClipIdAtom,
+  );
+  const currentTime = useAtomValue(timelineCurrentTimeAtom);
+  const isSelected = selectedClipId === clip.id;
+
   const [isDragging, setIsDragging] = useState(false);
   const [dragType, setDragType] = useState<
     "move" | "resize-left" | "resize-right" | null
   >(null);
+  const [isEnvelopeEditing, setIsEnvelopeEditing] = useState(false);
 
   // Local state for smooth drag updates without hitting Jotai continuously
   const [localStartTime, setLocalStartTime] = useState(clip.startTime);
@@ -198,37 +226,113 @@ export function Clip({
   const audioDuration = clip.item.duration || localDuration;
   const wsWidth = audioDuration * pixelsPerSecond;
   const wsTransform = `translateX(-${localStartOffset * pixelsPerSecond}px)`;
+  const isModified =
+    (clip.volume ?? 1.0) !== 1.0 ||
+    (clip.volumeEnvelope && clip.volumeEnvelope.length > 0);
 
   return (
     <ContextMenu>
-      <ContextMenuTrigger>
-        <div
-          id={`clip-${clip.id}`}
-          className={cn(
-            "absolute top-0.5 bottom-0.5 rounded-md overflow-hidden border shadow-sm group",
-            "bg-primary/10 border-primary/40 hover:bg-primary/20 hover:border-primary/60 transition-colors duration-150",
-            isDragging ? "opacity-80 z-20" : "z-10",
-          )}
-          style={{ left: `${left}px`, width: `${width}px` }}
-          title={clip.item.title}
-        >
+      <ContextMenuTrigger
+        id={`clip-${clip.id}`}
+        onContextMenu={(e) => {
+          if (e.ctrlKey) return;
+        }}
+        onPointerDown={() => {
+          setSelectedClipId(clip.id);
+        }}
+        className={cn(
+          "absolute top-0.5 bottom-0.5 rounded-md overflow-hidden border shadow-sm group",
+          isSelected
+            ? "bg-primary/20 border-primary shadow-[0_0_0_1px_hsl(var(--primary))]"
+            : isModified
+              ? "bg-primary/10 border-primary/40"
+              : "bg-primary/10 border-primary/40 hover:bg-primary/20 hover:border-primary/60",
+          "transition-colors duration-150",
+          isDragging ? "opacity-80 z-20" : "z-10",
+        )}
+        style={{ left: `${left}px`, width: `${width}px` }}
+        title={clip.item.title}
+      >
           {/* Drag Handle (Title Bar) */}
           <div
             className={cn(
-              "absolute top-0 inset-x-0 h-5 bg-background/40 hover:bg-background/60 backdrop-blur-sm z-30 flex items-center px-2",
+              "absolute top-0 inset-x-0 h-5 bg-background/40 hover:bg-background/60 backdrop-blur-sm z-30 flex items-center justify-start px-1",
               isDragging ? "cursor-grabbing" : "cursor-grab",
             )}
             onMouseDown={(e) => handleMouseDown(e, "move")}
           >
-            <span className="text-[10px] font-medium text-foreground truncate select-none pointer-events-none">
-              {clip.item.title}
+            {/* Volume Button/Popover */}
+            <Popover>
+              <PopoverTrigger
+                className={cn(
+                  "h-4 w-4 shrink-0 flex items-center justify-center rounded-sm transition-all hover:bg-foreground/10 cursor-default outline-none border-none bg-transparent p-0 m-0",
+                  (clip.volume ?? 1.0) !== 1.0
+                    ? "opacity-100 text-primary"
+                    : "opacity-0 group-hover:opacity-100",
+                )}
+                onPointerDown={(e) => e.stopPropagation()} // Prevent selecting clip or dragging
+                onClick={(e) => e.stopPropagation()} // Prevent selecting clip
+              >
+                {(clip.volume ?? 1.0) === 0 ? (
+                  <VolumeX className="h-[10px] w-[10px]" />
+                ) : (
+                  <Volume2 className="h-[10px] w-[10px]" />
+                )}
+              </PopoverTrigger>
+              <PopoverContent
+                className="w-auto p-3 flex flex-col items-center gap-2 z-[60]"
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => e.stopPropagation()}
+                onWheel={(e) => e.stopPropagation()}
+              >
+                <span className="text-xs font-medium text-foreground">
+                  Clip Volume
+                </span>
+                <Knob
+                  className="nodrag nopan nowheel"
+                  defaultValue={1.0}
+                  max={2}
+                  min={0}
+                  step={0.01}
+                  value={clip.volume ?? 1.0}
+                  size="sm"
+                  onValueChange={(val) => onUpdate?.({ volume: val })}
+                />
+                <span className="text-[10px] font-mono font-semibold tabular-nums text-muted-foreground w-12 text-center">
+                  {Math.round((clip.volume ?? 1.0) * 100)}%
+                </span>
+              </PopoverContent>
+            </Popover>
+
+            {/* Envelope Toggle Button */}
+            <button
+              className={cn(
+                "h-4 w-4 shrink-0 flex items-center justify-center rounded-sm transition-all hover:bg-foreground/10 cursor-default outline-none border-none bg-transparent p-0 m-0",
+                isEnvelopeEditing ||
+                  (clip.volumeEnvelope && clip.volumeEnvelope.length > 0)
+                  ? "opacity-100"
+                  : "opacity-0 group-hover:opacity-100",
+                isEnvelopeEditing ? "text-primary" : "text-muted-foreground",
+              )}
+              onPointerDown={(e) => {
+                e.stopPropagation();
+                setIsEnvelopeEditing(!isEnvelopeEditing);
+              }}
+              onClick={(e) => e.stopPropagation()}
+              title="Toggle Envelope Editing"
+            >
+              <Activity className="h-[10px] w-[10px]" />
+            </button>
+
+            <span className="text-[10px] font-medium text-foreground truncate select-none pointer-events-none ml-1 mr-2">
+              {clip.item.title || clip.item.fileName}
             </span>
           </div>
 
           {/* Waveform Container */}
-          <div className="absolute inset-0 mt-2 overflow-hidden">
+          <div className="absolute inset-0 mt-2 overflow-hidden pointer-events-none">
             <div
-              className="absolute top-0 bottom-0 h-full flex flex-col"
+              className="absolute top-0 bottom-0 h-full flex flex-col pointer-events-none"
               style={{
                 width: `${wsWidth}px`,
                 transform: wsTransform,
@@ -238,11 +342,31 @@ export function Clip({
               <StaticWaveform
                 className="flex-1 opacity-60 pointer-events-none"
                 audioUrl={clip.item.filePath}
-                barColor="oklch(0.70 0.01 286.07)"
+                barColor={
+                  isModified
+                    ? "oklch(var(--primary))"
+                    : "oklch(0.70 0.01 286.07)"
+                }
                 height={70}
                 pixelsPerSecond={pixelsPerSecond}
+                audioDuration={audioDuration}
               />
             </div>
+
+            {(isEnvelopeEditing ||
+              (clip.volumeEnvelope && clip.volumeEnvelope.length > 0)) && (
+              <VolumeEnvelopeOverlay
+                points={clip.volumeEnvelope || []}
+                duration={clip.duration}
+                pixelsPerSecond={pixelsPerSecond}
+                height={70}
+                isInteractive={isEnvelopeEditing}
+                onChange={(points) => {}}
+                onCommit={(points) => {
+                  onUpdate?.({ volumeEnvelope: points });
+                }}
+              />
+            )}
           </div>
 
           {/* Left Resize Handle */}
@@ -256,10 +380,24 @@ export function Clip({
             className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-foreground/20 z-40"
             onMouseDown={(e) => handleMouseDown(e, "resize-right")}
           />
-        </div>
       </ContextMenuTrigger>
       <ContextMenuContent>
-        <ContextMenuItem variant="destructive" onClick={() => onRemove?.()}>
+        <ContextMenuItem
+          onClick={(e) => {
+            e.stopPropagation();
+            onSplit?.(currentTime);
+          }}
+        >
+          <ScissorsIcon className="h-4 w-4 mr-2" />
+          Split at Playhead
+        </ContextMenuItem>
+        <ContextMenuItem
+          variant="destructive"
+          onClick={(e) => {
+            e.stopPropagation();
+            onRemove?.();
+          }}
+        >
           <Trash2Icon className="h-4 w-4 mr-2" />
           Remove Clip
         </ContextMenuItem>

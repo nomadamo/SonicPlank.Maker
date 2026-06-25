@@ -4,31 +4,41 @@ mod compositor;
 mod d2d;
 mod sources;
 mod streaming;
+mod audio;
+mod audio_encoder;
+mod waveform;
 
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc, Mutex,
+    Arc,
 };
 
 use anyhow::{anyhow, Context, Result};
 use sonicplank_ipc::{
     decode_command, encode_event, CaptureSource, Command, ErrorCode, Event, PROTOCOL_VERSION,
 };
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::windows::named_pipe::ServerOptions;
 use tokio::sync::broadcast;
 use tracing::{error, info, warn, trace};
 
-use capture::{RawFrame, SharedOverlay};
+use capture::{RawFrame, SharedShmOverlay, ShmOverlay};
 use streaming::{StreamEvent, StreamOptions, StreamSession};
 
 // ── Startup ───────────────────────────────────────────────────────────────────
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let verbose = std::env::args().any(|a| a == "--verbose");
+    let default_level = if verbose { "info" } else { "warn" };
+
     tracing_subscriber::fmt()
         .with_target(false)
         .with_writer(std::io::stderr)
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(default_level))
+        )
         .init();
 
     info!(
@@ -36,11 +46,9 @@ async fn main() -> Result<()> {
         "SonicPlank Core starting"
     );
 
-    let verbose = std::env::args().any(|a| a == "--verbose");
-
     streaming::start_config_watcher();
 
-    let (token, pipe_name) =
+    let (token, pipe_name, pipe_id) =
         read_auth_from_stdin().await.context("Auth handshake failed")?;
 
     let data_pipe = ServerOptions::new()
@@ -50,12 +58,20 @@ async fn main() -> Result<()> {
 
     info!(pipe = %pipe_name, "Data pipe bound");
 
+    // Create the overlay shared memory section that Electron will write to.
+    const SHM_SIZE: u32 = 1920 * 1080 * 4 + 12;
+    let shm_name = format!("Local\\SonicPlankOverlay-{pipe_id}");
+    let shm_overlay = create_shm_overlay(&shm_name, SHM_SIZE)
+        .context("Failed to create overlay shared memory")?;
+
     println!(
         "{}",
         serde_json::to_string(&Event::Ready {
             version: PROTOCOL_VERSION,
             pid: std::process::id(),
             pipe: pipe_name.clone(),
+            shm_name: shm_name.clone(),
+            shm_size: SHM_SIZE,
         })?
     );
 
@@ -71,25 +87,21 @@ async fn main() -> Result<()> {
     let (stream_evt_tx, stream_evt_rx) =
         tokio::sync::mpsc::unbounded_channel::<StreamEvent>();
 
-    // Shared slot for overlay BGRA frames received from the offscreen BrowserWindow.
-    // `run_data_pipe` writes here; `capture::process_frame` reads and uploads to D2D.
-    let shared_overlay: SharedOverlay = Arc::new(Mutex::new(None));
-
-    let compositor_cfg = Arc::new(Mutex::new(compositor::CompositorConfig { sources: Vec::new() }));
+    let compositor_cfg = Arc::new(std::sync::Mutex::new(compositor::CompositorConfig { sources: Vec::new() }));
     let composited_tx = compositor::start_compositor(
         frame_tx.subscribe(),
-        Arc::clone(&shared_overlay),
+        Arc::clone(&shm_overlay),
         Arc::clone(&compositor_cfg),
     );
 
     tokio::select! {
-        result = run_stdin_commands(frame_tx.clone(), composited_tx.clone(), Arc::clone(&preview_enabled), stream_evt_tx, stream_evt_rx, Arc::clone(&shared_overlay), Arc::clone(&compositor_cfg), verbose) => {
+        result = run_stdin_commands(frame_tx.clone(), composited_tx.clone(), Arc::clone(&preview_enabled), stream_evt_tx, stream_evt_rx, Arc::clone(&compositor_cfg), verbose) => {
             if let Err(e) = result {
                 error!("Control plane error: {e:#}");
                 std::process::exit(1);
             }
         }
-        result = run_data_pipe(data_pipe, token, composited_tx.subscribe(), preview_enabled, shared_overlay) => {
+        result = run_data_pipe(data_pipe, token, composited_tx.subscribe(), preview_enabled) => {
             if let Err(e) = result {
                 error!("Data pipe error: {e:#}");
             }
@@ -105,7 +117,8 @@ async fn main() -> Result<()> {
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
 
-async fn read_auth_from_stdin() -> Result<(String, String)> {
+/// Returns `(token, pipe_name, pipe_id)`.
+async fn read_auth_from_stdin() -> Result<(String, String, String)> {
     let mut stdin = BufReader::new(tokio::io::stdin());
     let mut line = String::new();
 
@@ -128,7 +141,7 @@ async fn read_auth_from_stdin() -> Result<(String, String)> {
             }
             let pipe_name = format!(r"\\.\pipe\sonicplank-{pipe_id}");
             info!(pipe = %pipe_name, "Auth received");
-            Ok((token, pipe_name))
+            Ok((token, pipe_name, pipe_id))
         }
         other => Err(anyhow!(
             "Expected Auth as first stdin message, got: {other:?}"
@@ -144,7 +157,6 @@ async fn run_stdin_commands(
     preview_enabled: Arc<AtomicBool>,
     stream_evt_tx: tokio::sync::mpsc::UnboundedSender<StreamEvent>,
     mut stream_evt_rx: tokio::sync::mpsc::UnboundedReceiver<StreamEvent>,
-    shared_overlay: SharedOverlay,
     compositor_cfg: compositor::SharedCompositorConfig,
     verbose: bool,
 ) -> Result<()> {
@@ -174,6 +186,11 @@ async fn run_stdin_commands(
                     }
                     StreamEvent::Status { frame, fps, bitrate_kbps } => {
                         let ev = encode_event(&Event::StreamStatus { frame, fps, bitrate_kbps, dropped: 0 })?;
+                        stdout.write_all(&ev).await?;
+                        stdout.flush().await?;
+                    }
+                    StreamEvent::AudioLevel { peak_db } => {
+                        let ev = encode_event(&Event::AudioLevel { peak_db })?;
                         stdout.write_all(&ev).await?;
                         stdout.flush().await?;
                     }
@@ -249,6 +266,15 @@ async fn run_stdin_commands(
                         stdout.write_all(&frame).await?;
                         stdout.flush().await?;
                     }
+                    Ok(Command::GetAudioDevices) => {
+                        let items = audio::get_audio_devices().unwrap_or_else(|e| {
+                            error!("Failed to enumerate audio devices: {e}");
+                            Vec::new()
+                        });
+                        let frame = encode_event(&Event::AudioDevices { items })?;
+                        stdout.write_all(&frame).await?;
+                        stdout.flush().await?;
+                    }
                     Ok(Command::StartCapture { source_id, overlay_hwnd }) => {
                         let session_result: Result<Box<dyn CaptureSessionTrait>> = if source_id.starts_with("webcam:") {
                             let sym_link = source_id.trim_start_matches("webcam:");
@@ -316,6 +342,7 @@ async fn run_stdin_commands(
                         fit_mode,
                         encoder,
                         sources,
+                        audio_device_ids,
                     }) => {
                         if active_sessions.is_empty() {
                             let frame = encode_event(&Event::Error {
@@ -338,12 +365,12 @@ async fn run_stdin_commands(
                                 fit_mode,
                                 encoder,
                                 sources,
+                                audio_device_ids,
                             };
                             active_stream = Some(StreamSession::start(
                                 opts,
                                 composited_tx.subscribe(),
                                 stream_evt_tx.clone(),
-                                Arc::clone(&shared_overlay),
                             ));
                             info!("Stream encoder started");
                         }
@@ -353,6 +380,27 @@ async fn run_stdin_commands(
                             s.stop();
                             // StreamStopped event is emitted by the encoder thread.
                         }
+                    }
+                    Ok(Command::GetWaveformPeaks { path, pixels_per_second }) => {
+                        info!("Computing waveform peaks for {} at {} pps", path, pixels_per_second);
+                        tokio::task::spawn_blocking(move || {
+                            let peaks = match crate::waveform::compute_peaks(&path, pixels_per_second) {
+                                Ok(p) => p,
+                                Err(e) => {
+                                    tracing::error!("Failed to compute waveform: {}", e);
+                                    Vec::new()
+                                }
+                            };
+                            let frame = encode_event(&Event::WaveformPeaks {
+                                path,
+                                peaks,
+                            }).unwrap();
+                            tokio::spawn(async move {
+                                let mut out = tokio::io::stdout();
+                                let _ = out.write_all(&frame).await;
+                                let _ = out.flush().await;
+                            });
+                        });
                     }
                     Ok(other) => {
                         warn!("Unexpected command on control plane: {other:?}");
@@ -387,16 +435,14 @@ async fn run_stdin_commands(
 
 // ── Data pipe (preview-only frame transport) ──────────────────────────────────
 
-/// Accept one connection, verify Hello, then:
-/// - Spawn a reader task that pulls type-2 overlay frames from JS and stores them
-///   in `shared_overlay` for `process_frame` to pick up.
-/// - Forward serialized preview frames (type 1) to Electron while `preview_enabled` is set.
+/// Accept one connection, verify Hello, then forward type-1 preview frames
+/// to Electron while `preview_enabled` is set.
+/// Overlay pixels now arrive via shared memory (no type-2 frames on the pipe).
 async fn run_data_pipe(
     server: tokio::net::windows::named_pipe::NamedPipeServer,
     expected_token: String,
     mut frame_rx: broadcast::Receiver<Arc<RawFrame>>,
     preview_enabled: Arc<AtomicBool>,
-    shared_overlay: SharedOverlay,
 ) -> Result<()> {
     server.connect().await.context("Data pipe accept failed")?;
     info!("Data pipe client connected");
@@ -435,36 +481,8 @@ async fn run_data_pipe(
         }
     }
 
-    // Spawn a task that reads incoming overlay frames from Electron.
-    // Format: [u8 type=2][u32 width LE][u32 height LE][BGRA pixels]
-    tokio::spawn(async move {
-        loop {
-            let mut type_byte = [0u8; 1];
-            if buf_reader.read_exact(&mut type_byte).await.is_err() {
-                break;
-            }
-            if type_byte[0] != 2 {
-                tracing::warn!("Unexpected byte on data pipe from Electron: {}", type_byte[0]);
-                break;
-            }
-            let mut dims = [0u8; 8];
-            if buf_reader.read_exact(&mut dims).await.is_err() {
-                break;
-            }
-            let width  = u32::from_le_bytes([dims[0], dims[1], dims[2], dims[3]]);
-            let height = u32::from_le_bytes([dims[4], dims[5], dims[6], dims[7]]);
-            let pixel_count = (width as usize).saturating_mul(height as usize).saturating_mul(4);
-            if pixel_count == 0 || pixel_count > 64 * 1024 * 1024 {
-                tracing::warn!("Overlay frame size out of range: {width}×{height}");
-                break;
-            }
-            let mut pixels = vec![0u8; pixel_count];
-            if buf_reader.read_exact(&mut pixels).await.is_err() {
-                break;
-            }
-            *shared_overlay.lock().unwrap() = Some((pixels, width, height));
-        }
-    });
+    // Drain any data Electron sends (shouldn't be any now that overlay uses SHM).
+    drop(buf_reader);
 
     info!("Data pipe ready -> waiting for preview to be enabled");
 
@@ -539,6 +557,47 @@ async fn run_data_pipe(
     Ok(())
 }
 
+/// Create a named page-file-backed shared memory section for the overlay.
+/// Electron will open it by name and write BGRA frames via a seqlock.
+/// Rust maps a read-only view so the compositor can read without kernel I/O.
+#[allow(unsafe_code)]
+fn create_shm_overlay(name: &str, size: u32) -> Result<SharedShmOverlay> {
+    use windows::Win32::Foundation::INVALID_HANDLE_VALUE;
+    use windows::Win32::System::Memory::{
+        CreateFileMappingW, MapViewOfFile, FILE_MAP_READ, PAGE_READWRITE,
+    };
+    use windows::core::PCWSTR;
+
+    let name_wide: Vec<u16> = name.encode_utf16().chain(std::iter::once(0u16)).collect();
+
+    let mapping = unsafe {
+        CreateFileMappingW(
+            INVALID_HANDLE_VALUE,
+            None,
+            PAGE_READWRITE,
+            0,
+            size,
+            PCWSTR(name_wide.as_ptr()),
+        )
+        .context("CreateFileMappingW failed for overlay SHM")?
+    };
+
+    let view = unsafe { MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, 0) };
+    if view.Value.is_null() {
+        return Err(anyhow!("MapViewOfFile failed for overlay SHM"));
+    }
+
+    // The section handle is intentionally leaked here: the view holds an implicit
+    // reference so the named section remains accessible to Electron via
+    // OpenFileMappingW for the entire process lifetime.
+    std::mem::forget(mapping);
+
+    Ok(Arc::new(ShmOverlay {
+        view: view.Value as *const u8,
+        size: size as usize,
+    }))
+}
+
 /// Constant-time byte slice equality — prevents timing-based token oracle.
 fn tokens_equal(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
@@ -561,6 +620,8 @@ mod tests {
             version: PROTOCOL_VERSION,
             pid: std::process::id(),
             pipe: r"\\.\pipe\sonicplank-test".into(),
+            shm_name: r"Local\SonicPlankOverlay-test".into(),
+            shm_size: 8_294_412,
         };
         match event {
             Event::Ready { version, .. } => assert_eq!(version, PROTOCOL_VERSION),
