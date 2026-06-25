@@ -16,6 +16,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AudioNode } from "@/components/audio-node";
 import { MasterOutputNode } from "@/components/master-output-node";
 import { CaptureSourceNode } from "@/components/capture-source-node";
+import { AudioSourceNode } from "@/components/audio-source-node";
 import { TextOverlayNode } from "@/components/text-overlay-node";
 import { ColorOverlayNode } from "@/components/color-overlay-node";
 import { ImageOverlayNode } from "@/components/image-overlay-node";
@@ -53,6 +54,7 @@ import {
   Activity as ActivityIcon,
   Layers as LayersIcon,
   MessageSquare as MessageSquareIcon,
+  Radio as RadioIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
@@ -109,6 +111,7 @@ const nodeTypes = {
   globalAudioNode: GlobalAudioNode,
   masterOutputNode: MasterOutputNode,
   captureSourceNode: CaptureSourceNode,
+  audioSourceNode: AudioSourceNode,
   textOverlayNode: TextOverlayNode,
   colorOverlayNode: ColorOverlayNode,
   imageOverlayNode: ImageOverlayNode,
@@ -132,6 +135,7 @@ interface AddNodesMenuProps {
   hasOutputNode: boolean;
   onAddOutputNode: () => void;
   onAddSourceNode: () => void;
+  onAddAudioSourceNode: () => void;
   onAddTargetOutputNode: () => void;
   onAddTextOverlayNode: () => void;
   onAddColorOverlayNode: () => void;
@@ -148,6 +152,7 @@ function AddNodesMenu({
   hasOutputNode,
   onAddOutputNode,
   onAddSourceNode,
+  onAddAudioSourceNode,
   onAddTargetOutputNode,
   onAddTextOverlayNode,
   onAddColorOverlayNode,
@@ -191,6 +196,10 @@ function AddNodesMenu({
           <DropdownMenuItem onClick={onAddSourceNode}>
             <MonitorIcon className="text-indigo-400" />
             Capture Source
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={onAddAudioSourceNode}>
+            <RadioIcon className="text-purple-400" />
+            Audio Source
           </DropdownMenuItem>
           <DropdownMenuItem onClick={onAddTargetOutputNode} disabled={hasOutputNode}>
             <MonitorIcon className="text-red-400" />
@@ -901,6 +910,26 @@ function FlowEditor() {
     setHasUnsavedChanges,
   ]);
 
+  const onAddAudioSourceNode = useCallback(() => {
+    const newNode: FlowNodeType = {
+      id: crypto.randomUUID(),
+      type: "audioSourceNode",
+      position: getCenterProjectPosition(),
+      data: {
+        audioDeviceId: "",
+        audioDeviceName: "",
+      },
+    };
+    setCurrentNodes((nodes) => [...nodes, newNode]);
+    setPersistRequested(true);
+    setHasUnsavedChanges(true);
+  }, [
+    getCenterProjectPosition,
+    setCurrentNodes,
+    setPersistRequested,
+    setHasUnsavedChanges,
+  ]);
+
   const onAddTextOverlayNode = useCallback(() => {
     const newNode: FlowNodeType = {
       id: crypto.randomUUID(),
@@ -1189,6 +1218,7 @@ function FlowEditor() {
                               hasOutputNode={hasOutputNode}
                               onAddOutputNode={onAddOutputNode}
                               onAddSourceNode={onAddSourceNode}
+                              onAddAudioSourceNode={onAddAudioSourceNode}
                               onAddTargetOutputNode={onAddTargetOutputNode}
                               onAddTextOverlayNode={onAddTextOverlayNode}
                               onAddColorOverlayNode={onAddColorOverlayNode}
@@ -1338,6 +1368,7 @@ function FlowEditor() {
                           onAddNowPlayingNode={onAddNowPlayingNode}
                           onAddGlobalAudioNode={onAddGlobalAudioNode}
                           onAddTwitchChatNode={onAddTwitchChatNode}
+                          onAddAudioSourceNode={onAddAudioSourceNode}
                         />
                       </DropdownMenuContent>
                     </DropdownMenu>

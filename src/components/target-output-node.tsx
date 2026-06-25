@@ -298,6 +298,13 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
     [nodes],
   );
 
+  const isValidAudioConnection = useCallback(
+    (connection: any) => {
+      return isValidConnection(connection, nodes);
+    },
+    [nodes],
+  );
+
   // Find incoming nodes connected to this Target Node
   const connectedNodes = useMemo(() => {
     const incomingEdges = edges.filter((e) => e.target === node.id);
@@ -455,25 +462,33 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
   // Extract source parameters
   const captureSourceId = sourceNode?.data.captureSourceId;
 
-  // Search entire upstream graph for an audio capture intent
-  const getUpstreamNodes = useCallback(
-    (targetId: string, visited = new Set<string>()): Node[] => {
-      if (visited.has(targetId)) return [];
-      visited.add(targetId);
-      const directSources = edges
-        .filter((e) => e.target === targetId)
-        .map((e) => nodes.find((n) => n.id === e.source))
-        .filter(Boolean) as Node[];
-      return [
-        ...directSources,
-        ...directSources.flatMap((n) => getUpstreamNodes(n.id, visited)),
-      ];
-    },
-    [edges, nodes]
-  );
-  
-  const allUpstreamNodes = useMemo(() => getUpstreamNodes(node.id), [getUpstreamNodes, node.id]);
-  const captureAudio = useMemo(() => allUpstreamNodes.some(n => !!n.data?.captureAudio), [allUpstreamNodes]);
+  // Collect device IDs from ALL Audio Source nodes connected to this output's audio_target handle.
+  const connectedAudioDeviceIds = useMemo(() => {
+    return edges
+      .filter(
+        (e) =>
+          e.target === node.id &&
+          e.targetHandle === `handle_${node.id}_audio_target`,
+      )
+      .map((e) =>
+        nodes.find((n) => n.id === e.source && n.type === "audioSourceNode") as FlowNodeType | undefined,
+      )
+      .filter((n): n is FlowNodeType => !!n)
+      .map((n) => n.data.audioDeviceId as string | undefined)
+      .filter((id): id is string => !!id);
+  }, [edges, nodes, node.id]);
+
+  // Audio device priority: connected Audio Source nodes > settings audioStreamSourceId > settings audioOutputDeviceId.
+  const resolvedAudioDeviceIds: string[] =
+    connectedAudioDeviceIds.length > 0
+      ? connectedAudioDeviceIds
+      : settings.audioStreamSourceId
+        ? [settings.audioStreamSourceId]
+        : settings.audioOutputDeviceId
+          ? [settings.audioOutputDeviceId]
+          : [];
+
+  const captureAudio = resolvedAudioDeviceIds.length > 0;
 
   const captureResolution = sourceNode?.data.captureResolution || "original";
   const captureFrameRate = Number(sourceNode?.data.maxCaptureFrameRate) || 60;
@@ -1118,7 +1133,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
             outputHeight: presetH,
             fitMode: fitMode,
             encoder: (settings.streamEncoder as string) || "libx264",
-            audioDeviceId: captureAudio ? (settings.audioOutputDeviceId ?? "") : undefined,
+            audioDeviceIds: captureAudio ? resolvedAudioDeviceIds : undefined,
             sources: streamSources,
           });
         } catch (err: any) {
@@ -1938,7 +1953,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
         )}
       </BaseNodeCard>
 
-      {/* Target input handle */}
+      {/* Overlay compositor input handle */}
       <Handle
         id={`handle_${node.id}_overlay_target`}
         type="target"
@@ -1947,6 +1962,17 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
         isValidConnection={isValidOverlayConnection}
         style={{ top: "34px" }}
         className="hover:!border-red-400 hover:!shadow-[0_0_10px_rgba(248,113,113,0.5)] hover:!scale-125"
+      />
+
+      {/* Audio Source input handle */}
+      <Handle
+        id={`handle_${node.id}_audio_target`}
+        type="target"
+        position={Position.Left}
+        isConnectable={node.isConnectable}
+        isValidConnection={isValidAudioConnection}
+        style={{ top: "58px" }}
+        className="hover:!border-purple-400 hover:!shadow-[0_0_10px_rgba(168,85,247,0.5)] hover:!scale-125"
       />
 
       <StatusDialog

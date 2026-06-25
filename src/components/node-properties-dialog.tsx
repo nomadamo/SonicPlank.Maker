@@ -64,7 +64,6 @@ export function NodePropertiesDialog({
   const [fontStyle, setFontStyle] = useState("normal");
   const [imagePath, setImagePath] = useState("");
   const [visualizerType, setVisualizerType] = useState("bars");
-  const [captureAudio, setCaptureAudio] = useState(false);
   const [triggers, setTriggers] = useState<NodeTrigger[]>([]);
   const [recordingTriggerId, setRecordingTriggerId] = useState<string | null>(null);
 
@@ -84,7 +83,6 @@ export function NodePropertiesDialog({
     setFontStyle(data.fontStyle ?? "normal");
     setImagePath(data.imagePath ?? "");
     setVisualizerType(data.visualizerType ?? "bars");
-    setCaptureAudio(!!data.captureAudio);
     setTriggers(data.triggers ?? []);
     setRecordingTriggerId(null);
   }, [node]);
@@ -157,8 +155,6 @@ export function NodePropertiesDialog({
       patch.imagePath = imagePath;
     } else if (node.type === "visualizerOverlayNode") {
       patch.visualizerType = visualizerType;
-    } else if (node.type === "captureSourceNode") {
-      patch.captureAudio = captureAudio;
     }
 
     updateNodeData({ id: node.id, patch });
@@ -177,7 +173,6 @@ export function NodePropertiesDialog({
     backgroundColor,
     imagePath,
     visualizerType,
-    captureAudio,
     triggers,
     updateNodeData,
     onOpenChange,
@@ -432,22 +427,6 @@ export function NodePropertiesDialog({
                 <option value="blocks">LED Segments / Blocks</option>
                 <option value="dots">Bouncing Dots</option>
               </select>
-            </div>
-          )}
-
-          {/* Capture Source Specific Fields */}
-          {nodeType === "captureSourceNode" && (
-            <div className="flex items-center gap-2.5 py-1">
-              <input
-                id="prop-cap-audio"
-                type="checkbox"
-                checked={captureAudio}
-                onChange={(e) => setCaptureAudio(e.target.checked)}
-                className="rounded bg-muted border-border accent-indigo-500 cursor-pointer h-4 w-4"
-              />
-              <Label htmlFor="prop-cap-audio" className="text-foreground/80 cursor-pointer">
-                Capture Source Audio Output
-              </Label>
             </div>
           )}
 

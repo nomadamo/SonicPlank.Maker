@@ -271,6 +271,12 @@ contextBridge.exposeInMainWorld("electron", {
   removeOnStreamStatus: () => {
     ipcRenderer.removeAllListeners("onStreamStatus");
   },
+  onAudioLevel: (callback: (peakDb: number) => void) => {
+    ipcRenderer.on("onAudioLevel", (_event, peakDb) => callback(peakDb));
+  },
+  removeOnAudioLevel: () => {
+    ipcRenderer.removeAllListeners("onAudioLevel");
+  },
   initiateSpotifyAuth: async (): Promise<{
     accessToken: string;
     refreshToken: string;
@@ -322,7 +328,7 @@ contextBridge.exposeInMainWorld("electron", {
       outputHeight?: number;
       fitMode?: string;
       encoder?: string;
-      audioDeviceId?: string;
+      audioDeviceIds?: string[];
       sources: {
         source_id: string;
         is_primary: boolean;

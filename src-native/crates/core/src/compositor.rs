@@ -1,8 +1,10 @@
+#![allow(unsafe_code)]
+
 use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
 
 use sonicplank_ipc::StreamSourceDef;
-use crate::capture::{RawFrame, SharedOverlay};
+use crate::capture::{RawFrame, ShmOverlay, SharedShmOverlay};
 use ffmpeg_sys_next::*;
 
 pub struct CompositeFrame {
@@ -34,7 +36,7 @@ fn bgra_blend(
 
             let sa = src[src_idx + 3] as u32;
             if sa == 0 { continue; }
-            
+
             if sa == 255 {
                 dst[dst_idx] = src[src_idx];
                 dst[dst_idx + 1] = src[src_idx + 1];
@@ -69,10 +71,62 @@ fn bgra_blend(
     }
 }
 
+/// Try to copy a consistent overlay frame from the SHM region via seqlock.
+/// Returns `Some((width, height))` if a valid frame was copied into `buf`.
+/// `buf` is pre-allocated and reused across frames to avoid per-frame allocation.
+unsafe fn read_shm_overlay(shm: &ShmOverlay, buf: &mut Vec<u8>) -> Option<(u32, u32)> {
+    use std::sync::atomic::{AtomicU32, Ordering, fence};
+
+    let base = shm.view;
+    if base.is_null() || shm.size < 12 {
+        return None;
+    }
+
+    let gen_ptr = base as *const AtomicU32;
+
+    // Retry up to 3 times if a write races with our copy.
+    for _ in 0..3 {
+        let gen1 = (*gen_ptr).load(Ordering::Acquire);
+        if gen1 == 0 || gen1 & 1 == 1 {
+            // No data yet, or write in progress.
+            return None;
+        }
+
+        let ov_w = std::ptr::read_volatile(base.add(4) as *const u32);
+        let ov_h = std::ptr::read_volatile(base.add(8) as *const u32);
+
+        if ov_w == 0 || ov_h == 0 {
+            return None;
+        }
+
+        let px_len = (ov_w as usize).saturating_mul(ov_h as usize).saturating_mul(4);
+        if 12 + px_len > shm.size {
+            return None;
+        }
+
+        // Copy pixels into the reusable buffer.
+        buf.resize(px_len, 0);
+        std::ptr::copy_nonoverlapping(base.add(12), buf.as_mut_ptr(), px_len);
+
+        // Acquire fence ensures the copy is complete before we re-read gen.
+        fence(Ordering::Acquire);
+        let gen2 = (*gen_ptr).load(Ordering::Acquire);
+
+        if gen2 == gen1 {
+            // Copy was consistent.
+            return Some((ov_w, ov_h));
+        }
+        // A write raced; retry.
+    }
+
+    None
+}
+
 pub fn composite_frame(
     raw: &CompositeFrame,
-    shared_overlay: &SharedOverlay,
+    shm_overlay: &ShmOverlay,
     pip_scalers: &mut HashMap<String, (*mut SwsContext, i32, i32, i32, i32)>,
+    overlay_buf: &mut Vec<u8>,
 ) -> Arc<RawFrame> {
     let out_w = raw.primary.width as i32;
     let out_h = raw.primary.height as i32;
@@ -133,10 +187,11 @@ pub fn composite_frame(
         bgra_blend(&scaled_pip, pw, ph, &mut out_pixels, out_w, out_h, px, py);
     }
 
-    if let Some((ov_pixels, ov_w, ov_h)) = shared_overlay.lock().unwrap().as_ref() {
-        if *ov_w > 0 && *ov_h > 0 {
-            bgra_blend(ov_pixels, *ov_w as i32, *ov_h as i32, &mut out_pixels, out_w, out_h, 0, 0);
-        }
+    // Read the overlay from shared memory via seqlock.
+    let overlay_dims = unsafe { read_shm_overlay(shm_overlay, overlay_buf) };
+    if let Some((ov_w, ov_h)) = overlay_dims {
+        let px_len = ov_w as usize * ov_h as usize * 4;
+        bgra_blend(&overlay_buf[..px_len], ov_w as i32, ov_h as i32, &mut out_pixels, out_w, out_h, 0, 0);
     }
 
     Arc::new(RawFrame {
@@ -152,17 +207,18 @@ pub fn composite_frame(
 
 pub fn start_compositor(
     mut frame_rx: tokio::sync::broadcast::Receiver<Arc<RawFrame>>,
-    shared_overlay: SharedOverlay,
+    shm_overlay: SharedShmOverlay,
     config: SharedCompositorConfig,
 ) -> tokio::sync::broadcast::Sender<Arc<RawFrame>> {
     let (tx, _rx) = tokio::sync::broadcast::channel(8);
     let out_tx = tx.clone();
-    
+
     std::thread::spawn(move || {
         let mut latest_pips: HashMap<String, Arc<RawFrame>> = HashMap::new();
         let mut pip_scalers: HashMap<String, (*mut SwsContext, i32, i32, i32, i32)> = HashMap::new();
+        // Reusable buffer for seqlock overlay copies — allocated once, avoids per-frame 8 MB allocs.
+        let mut overlay_buf: Vec<u8> = Vec::with_capacity(1920 * 1080 * 4);
 
-        // Use blocking recv in the thread
         let mut rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async move {
             loop {
@@ -171,7 +227,7 @@ pub fn start_compositor(
                         let cfg = config.lock().unwrap();
                         let primary_source_id = cfg.sources.iter().find(|s| s.is_primary).map(|s| s.source_id.clone());
                         let pip_defs: Vec<StreamSourceDef> = cfg.sources.iter().filter(|s| !s.is_primary).cloned().collect();
-                        
+
                         let sid = &frame.source_id;
                         if Some(sid.clone()) == primary_source_id {
                             let mut current_pips = Vec::new();
@@ -184,8 +240,8 @@ pub fn start_compositor(
                                 primary: frame,
                                 pips: current_pips,
                             };
-                            
-                            let out_frame = composite_frame(&composite, &shared_overlay, &mut pip_scalers);
+
+                            let out_frame = composite_frame(&composite, &shm_overlay, &mut pip_scalers, &mut overlay_buf);
                             let _ = tx.send(out_frame);
                         } else {
                             latest_pips.insert(sid.clone(), frame);

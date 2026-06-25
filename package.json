@@ -7,10 +7,10 @@
   "main": ".vite/build/main.js",
   "private": true,
   "scripts": {
-    "prestart": "cd src-native && cargo build",
+    "prestart": "cd src-native && set RUSTFLAGS=-Awarnings && cargo build",
     "start": "electron-forge start",
     "package": "electron-forge package",
-    "premake": "cd src-native && cargo build --release && cd .. && node extract-licenses.js",
+    "premake": "cd src-native && set RUSTFLAGS=-Awarnings && cargo build --release && cd .. && node extract-licenses.js",
     "make": "electron-forge make",
     "publish": "electron-forge publish",
     "lint": "eslint --ext .ts,.tsx .",
@@ -18,8 +18,8 @@
     "fmt:core": "cd src-native && cargo fmt",
     "test:core": "cd src-native && cargo test",
     "test:core:ci": "cd src-native && cargo test -- --test-threads=1",
-    "build:core": "cd src-native && cargo build",
-    "build:core:release": "cd src-native && cargo build --release",
+    "build:core": "cd src-native && set RUSTFLAGS=-Awarnings && cargo build",
+    "build:core:release": "cd src-native && set RUSTFLAGS=-Awarnings && cargo build --release",
     "prebuild": "node extract-licenses.js"
   },
   "keywords": [],
@@ -106,6 +106,7 @@
     "wavesurfer-multitrack": "^0.4.12",
     "wavesurfer.js": "^7.12.7",
     "waviz": "^1.0.0",
-    "zustand": "^5.0.14"
+    "zustand": "^5.0.14",
+    "koffi": "^2.9.0"
   }
 }

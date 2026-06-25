@@ -92,6 +92,8 @@ declare global {
       removeOnAudioTimeUpdated: () => void;
       onStreamStatus: (callback: (stats: StreamStats) => void) => void;
       removeOnStreamStatus: () => void;
+      onAudioLevel: (callback: (peakDb: number) => void) => void;
+      removeOnAudioLevel: () => void;
       initiateSpotifyAuth: () => Promise<{
         accessToken: string;
         refreshToken: string;
@@ -106,7 +108,7 @@ declare global {
         callback: (sourceId: string, width: number, height: number, data: Uint8Array) => void,
       ) => void;
       removeOnNativePreviewFrame: () => void;
-      getAudioDevices: () => Promise<{ id: string; name: string; is_input: boolean; is_default: boolean }[]>;
+      getAudioDevices: () => Promise<{ id: string; name: string; kind: "output" | "microphone" | "capture"; is_default: boolean }[]>;
       getWaveformPeaks: (path: string, pixelsPerSecond: number) => Promise<number[]>;
       startNativeStream: (
         options: {
@@ -117,7 +119,7 @@ declare global {
           outputHeight?: number;
           fitMode?: string;
           encoder?: string;
-          audioDeviceId?: string;
+          audioDeviceIds?: string[];
           sources: {
             source_id: string;
             is_primary: boolean;

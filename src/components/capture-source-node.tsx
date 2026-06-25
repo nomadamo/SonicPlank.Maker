@@ -17,7 +17,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
 import { useNativePreview } from "@/hooks/useNativePreview";
 import type { NativeCaptureSource } from "@/global";
 
@@ -179,12 +178,6 @@ export function CaptureSourceNode(NodeRef: NodeProps<FlowNodeType>) {
     [node.id, updateNodeData],
   );
 
-  const handleAudioToggle = useCallback(
-    (checked: boolean) => {
-      updateNodeData({ id: node.id, patch: { captureAudio: checked } });
-    },
-    [node.id, updateNodeData],
-  );
 
   const selectedSource = sources.find(
     (s: NativeCaptureSource) => s.id === node.data.captureSourceId,
@@ -313,22 +306,6 @@ export function CaptureSourceNode(NodeRef: NodeProps<FlowNodeType>) {
               ))}
             </SelectContent>
           </Select>
-        </div>
-
-        {/* Audio Toggle */}
-        <div className="flex items-center justify-between border-t border-border/80 pt-3 mt-1 nodrag nopan nowheel">
-          <div className="flex flex-col">
-            <span className="text-xs font-medium text-foreground">
-              Capture System Audio
-            </span>
-            <span className="text-[10px] text-muted-foreground">
-              Capture window or desktop audio stream
-            </span>
-          </div>
-          <Switch
-            checked={!!node.data.captureAudio}
-            onCheckedChange={handleAudioToggle}
-          />
         </div>
 
         {/* Frame rate */}

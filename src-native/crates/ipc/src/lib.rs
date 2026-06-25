@@ -16,7 +16,7 @@
 //!
 //! ```json
 //! {"type":"auth","token":"<base64url>","pipe_id":"<hex>"}
-//! {"type":"ready","version":1,"pid":1234,"pipe":"\\.\pipe\sonicplank-<hex>"}
+//! {"type":"ready","version":1,"pid":1234,"pipe":"\\.\pipe\sonicplank-<hex>","shm_name":"Local\\SonicPlankOverlay-<hex>","shm_size":8294412}
 //! {"type":"ping"}
 //! {"type":"pong","version":1}
 //! {"type":"get_sources"}
@@ -106,7 +106,7 @@ pub enum Command {
         encoder: String,
         sources: Vec<StreamSourceDef>,
         #[serde(default)]
-        audio_device_id: Option<String>,
+        audio_device_ids: Vec<String>,
     },
     /// Stop the active stream. Core responds with [`Event::StreamStopped`].
     StopStream,
@@ -125,12 +125,18 @@ pub enum Command {
 pub enum Event {
     /// Emitted once on stdout after the data pipe is bound and ready.
     /// Electron reads this line from the child process stdout, then
-    /// connects to the pipe name provided in the `pipe` field.
+    /// connects to the pipe name provided in the `pipe` field and maps
+    /// the overlay shared memory section at `shm_name`.
     Ready {
         version: u32,
         pid: u32,
         /// Fully-qualified pipe name, e.g. `\\.\pipe\sonicplank-<hex>`.
         pipe: String,
+        /// Name of the page-file-backed shared memory section for overlay pixels.
+        /// Electron opens this with FILE_MAP_WRITE; Rust reads via seqlock.
+        shm_name: String,
+        /// Size of the shared memory section in bytes.
+        shm_size: u32,
     },
     /// Response to [`Command::Ping`].
     Pong {
@@ -171,6 +177,12 @@ pub enum Event {
     WaveformPeaks {
         path: String,
         peaks: Vec<f32>,
+    },
+    /// Emitted at ~100ms intervals while audio capture is active during streaming.
+    /// `peak_db` is the maximum sample amplitude in the last interval, in dBFS.
+    /// `f32::NEG_INFINITY` means the capture is running but produced silence.
+    AudioLevel {
+        peak_db: f32,
     },
 }
 
@@ -214,12 +226,25 @@ pub enum CaptureSourceKind {
     Webcam,
 }
 
+/// Describes what kind of audio endpoint a device is.
+///
+/// - `Output`     — render endpoint (speakers/headphones); captured via WASAPI loopback.
+/// - `Microphone` — physical capture endpoint (mic, headset mic).
+/// - `Capture`    — software/virtual capture endpoint (VoiceMeeter Output, VB-CABLE Out, Stereo Mix).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AudioDeviceKind {
+    Output,
+    Microphone,
+    Capture,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct AudioDeviceDef {
     pub id: String,
     pub name: String,
-    pub is_input: bool,
+    pub kind: AudioDeviceKind,
     pub is_default: bool,
 }
 
@@ -423,6 +448,8 @@ mod tests {
             version: PROTOCOL_VERSION,
             pid: 1234,
             pipe: r"\\.\pipe\sonicplank-deadbeef".into(),
+            shm_name: r"Local\SonicPlankOverlay-deadbeef".into(),
+            shm_size: 8_294_412,
         };
         let encoded = encode_event(&event).unwrap();
         let line = std::str::from_utf8(&encoded[..encoded.len() - 1]).unwrap();
@@ -478,12 +505,14 @@ mod tests {
             version: 1,
             pid: 0,
             pipe: r"\\.\pipe\sonicplank-test".into(),
+            shm_name: r"Local\SonicPlankOverlay-test".into(),
+            shm_size: 8_294_412,
         })
         .unwrap();
         assert_eq!(
             String::from_utf8(bytes).unwrap(),
             "{\"type\":\"ready\",\"version\":1,\"pid\":0,\"pipe\":\"\\\\\\\\.\\\\\
-pipe\\\\sonicplank-test\"}\n"
+pipe\\\\sonicplank-test\",\"shm_name\":\"Local\\\\SonicPlankOverlay-test\",\"shm_size\":8294412}\n"
         );
     }
 
@@ -546,6 +575,8 @@ pipe\\\\sonicplank-test\"}\n"
                 version: PROTOCOL_VERSION,
                 pid,
                 pipe: r"\\.\pipe\sonicplank-test".into(),
+                shm_name: r"Local\SonicPlankOverlay-test".into(),
+                shm_size: 8_294_412,
             };
             let encoded = encode_event(&event).unwrap();
             let line = std::str::from_utf8(&encoded[..encoded.len() - 1]).unwrap();

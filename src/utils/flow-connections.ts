@@ -16,6 +16,10 @@ export const CONNECTION_RULES: Record<string, Record<string, HandleConnectionRul
       allowedSourceTypes: ["overlayGroupNode"],
       allowedSourceHandleSuffix: "source",
     },
+    audio_target: {
+      allowedSourceTypes: ["audioSourceNode"],
+      allowedSourceHandleSuffix: "source",
+    },
   },
   overlayGroupNode: {
     target: {

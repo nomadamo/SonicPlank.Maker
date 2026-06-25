@@ -230,13 +230,14 @@ pub struct StreamOptions {
     /// "libx264" | "h264_nvenc" | "h264_amf" | "h264_qsv"
     pub encoder: String,
     pub sources: Vec<StreamSourceDef>,
-    pub audio_device_id: Option<String>,
+    pub audio_device_ids: Vec<String>,
 }
 
 #[derive(Debug)]
 pub enum StreamEvent {
     Started { width: u32, height: u32 },
     Status { frame: u64, fps: f32, bitrate_kbps: u32 },
+    AudioLevel { peak_db: f32 },
     Error(String),
     Stopped,
 }
@@ -244,7 +245,8 @@ pub enum StreamEvent {
 pub struct StreamSession {
     stop_tx: std::sync::mpsc::SyncSender<()>,
     thread: Option<std::thread::JoinHandle<()>>,
-    _audio_stream: Option<crate::audio::ActiveStream>,
+    _audio_streams: Vec<crate::audio::ActiveStream>,
+    _mixer_stop_tx: Option<std::sync::mpsc::SyncSender<()>>,
 }
 
 impl StreamSession {
@@ -252,28 +254,127 @@ impl StreamSession {
         opts: StreamOptions,
         frame_rx: broadcast::Receiver<Arc<RawFrame>>,
         event_tx: mpsc::UnboundedSender<StreamEvent>,
-        shared_overlay: crate::capture::SharedOverlay,
     ) -> Self {
         let (stop_tx, stop_rx) = std::sync::mpsc::sync_channel::<()>(1);
 
-        // Try to start audio capture.
-        let mut audio_capture = None;
-        if let Some(ref dev_id) = opts.audio_device_id {
-            match crate::audio::start_audio_capture(dev_id) {
-                Ok((stream, cons, config)) => {
-                    tracing::info!("Started audio capture on device '{}', config: {:?}", dev_id, config);
-                    audio_capture = Some((stream, cons, config));
+        // ── Audio capture (one per audio_device_ids entry) ────────────────────────
+        let (peak_tx, peak_rx) = std::sync::mpsc::sync_channel::<f32>(4 * opts.audio_device_ids.len().max(1));
+        let mut raw_captures: Vec<(crate::audio::ActiveStream, ringbuf::HeapCons<f32>, cpal::StreamConfig)> = Vec::new();
+
+        for dev_id in &opts.audio_device_ids {
+            match crate::audio::start_audio_capture(dev_id, Some(peak_tx.clone())) {
+                Ok(cap) => {
+                    tracing::info!("audio capture started: device='{}'", dev_id);
+                    raw_captures.push(cap);
                 }
-                Err(e) => {
-                    tracing::error!("Failed to start audio capture on device '{}': {e}", dev_id);
-                }
+                Err(e) => tracing::error!("audio capture failed: device='{}' error={e}", dev_id),
             }
         }
 
-        let (audio_stream, audio_cons, audio_config) = if let Some((stream, cons, config)) = audio_capture {
-            (Some(stream), Some(cons), Some(config))
+        // Bridge: peak values from any capture thread → StreamEvent::AudioLevel.
+        if !raw_captures.is_empty() {
+            let audio_level_evt_tx = event_tx.clone();
+            std::thread::Builder::new()
+                .name("audio-peak-bridge".into())
+                .spawn(move || {
+                    while let Ok(peak) = peak_rx.recv() {
+                        let db = if peak > 0.0 { 20.0 * peak.log10() } else { f32::NEG_INFINITY };
+                        let _ = audio_level_evt_tx.send(StreamEvent::AudioLevel { peak_db: db });
+                    }
+                })
+                .ok();
+        }
+        drop(peak_tx); // each WASAPI/CPAL thread holds a clone; release ours
+
+        // Resolve (audio_cons, audio_config, audio_streams), mixing N sources when needed.
+        let mut mixer_stop: Option<std::sync::mpsc::SyncSender<()>> = None;
+        let (audio_cons, audio_config, audio_streams) = if raw_captures.is_empty() {
+            (None, None, Vec::new())
+        } else if raw_captures.len() == 1 {
+            let (stream, cons, config) = raw_captures.remove(0);
+            (Some(cons), Some(config), vec![stream])
         } else {
-            (None, None, None)
+            let primary_channels = raw_captures[0].2.channels;
+            let primary_rate     = raw_captures[0].2.sample_rate;
+
+            let mut streams: Vec<crate::audio::ActiveStream> = Vec::new();
+            let mut consumers: Vec<ringbuf::HeapCons<f32>> = Vec::new();
+            for (stream, cons, config) in raw_captures {
+                if config.channels == primary_channels && config.sample_rate == primary_rate {
+                    streams.push(stream);
+                    consumers.push(cons);
+                } else {
+                    tracing::warn!(
+                        "audio mixer: skipping device with mismatched format \
+                         ({} ch @ {}Hz vs primary {} ch @ {}Hz)",
+                        config.channels, config.sample_rate.0,
+                        primary_channels, primary_rate.0,
+                    );
+                    // stream drops here → that capture thread stops
+                }
+            }
+
+            let n_ch = primary_channels as usize;
+            let mix_buf_samples = primary_rate.0 as usize * n_ch * 4; // 4-second ring
+            let mix_rb = ringbuf::HeapRb::<f32>::new(mix_buf_samples);
+            let (mut mix_prod, mix_cons) = {
+                use ringbuf::traits::Split;
+                mix_rb.split()
+            };
+
+            let (mixer_stop_tx, mixer_stop_rx) = std::sync::mpsc::sync_channel::<()>(1);
+
+            std::thread::Builder::new()
+                .name("audio-mixer".into())
+                .spawn(move || {
+                    use ringbuf::traits::{Consumer as _, Observer as _, Producer as _};
+                    use std::sync::mpsc::TryRecvError;
+                    const CHUNK: usize = 512;
+                    let mut sources = consumers;
+                    let mut bufs: Vec<Vec<f32>> = (0..sources.len())
+                        .map(|_| vec![0.0f32; CHUNK])
+                        .collect();
+
+                    loop {
+                        match mixer_stop_rx.try_recv() {
+                            Ok(()) | Err(TryRecvError::Disconnected) => break,
+                            Err(TryRecvError::Empty) => {}
+                        }
+
+                        let available = sources.iter()
+                            .map(|c| c.occupied_len())
+                            .min()
+                            .unwrap_or(0);
+
+                        if available == 0 {
+                            std::thread::sleep(std::time::Duration::from_millis(5));
+                            continue;
+                        }
+
+                        let to_mix = available.min(CHUNK);
+                        let mut mixed = vec![0.0f32; to_mix];
+
+                        for (i, src) in sources.iter_mut().enumerate() {
+                            let buf = &mut bufs[i];
+                            buf.resize(to_mix, 0.0);
+                            src.pop_slice(&mut buf[..to_mix]);
+                            for (m, s) in mixed.iter_mut().zip(buf[..to_mix].iter()) {
+                                *m = (*m + s).clamp(-1.0, 1.0);
+                            }
+                        }
+
+                        mix_prod.push_slice(&mixed);
+                    }
+                })
+                .ok();
+
+            let primary_config = cpal::StreamConfig {
+                channels: primary_channels,
+                sample_rate: primary_rate,
+                buffer_size: cpal::BufferSize::Default,
+            };
+            mixer_stop = Some(mixer_stop_tx);
+            (Some(mix_cons), Some(primary_config), streams)
         };
 
         // Bridge: async broadcast receiver -> bounded sync channel for the encoder thread.
@@ -301,14 +402,14 @@ impl StreamSession {
         });
 
         let thread = std::thread::spawn(move || {
-            if let Err(e) = run_encoder(opts, bridge_rx, audio_cons, audio_config, stop_rx, &event_tx, shared_overlay) {
+            if let Err(e) = run_encoder(opts, bridge_rx, audio_cons, audio_config, stop_rx, &event_tx) {
                 tracing::error!("stream encoder error: {e:#}");
                 let _ = event_tx.send(StreamEvent::Error(format!("{e:#}")));
             }
             let _ = event_tx.send(StreamEvent::Stopped);
         });
 
-        Self { stop_tx, thread: Some(thread), _audio_stream: audio_stream }
+        Self { stop_tx, thread: Some(thread), _audio_streams: audio_streams, _mixer_stop_tx: mixer_stop }
     }
 
     pub fn stop(&mut self) {
@@ -316,6 +417,8 @@ impl StreamSession {
         if let Some(t) = self.thread.take() {
             let _ = t.join();
         }
+        // Signal mixer thread to exit (drops the sender, disconnecting the channel).
+        let _ = self._mixer_stop_tx.take();
     }
 }
 
@@ -334,14 +437,13 @@ fn run_encoder(
     audio_config: Option<cpal::StreamConfig>,
     stop_rx: std::sync::mpsc::Receiver<()>,
     event_tx: &mpsc::UnboundedSender<StreamEvent>,
-    shared_overlay: crate::capture::SharedOverlay,
 ) -> Result<()> {
     // Clone config while the lock is briefly held - avoids holding RwLock across unsafe FFI.
     let enc_cfg = config_cache()
         .read()
         .map_err(|_| anyhow!("encoder config lock poisoned"))?
         .clone();
-    unsafe { run_encoder_unsafe(opts, enc_cfg, frame_rx, audio_cons, audio_config, stop_rx, event_tx, shared_overlay) }
+    unsafe { run_encoder_unsafe(opts, enc_cfg, frame_rx, audio_cons, audio_config, stop_rx, event_tx) }
 }
 
 unsafe fn run_encoder_unsafe(
@@ -352,7 +454,6 @@ unsafe fn run_encoder_unsafe(
     audio_config: Option<cpal::StreamConfig>,
     stop_rx: std::sync::mpsc::Receiver<()>,
     event_tx: &mpsc::UnboundedSender<StreamEvent>,
-    shared_overlay: crate::capture::SharedOverlay,
 ) -> Result<()> {
     // Elevate thread priority to prevent Windows Game Mode from starving the 
     // background encode thread while the user plays the game.
@@ -648,7 +749,6 @@ unsafe fn run_encoder_unsafe(
     std::ptr::write_bytes((*yuv_frame).data[2], 128, ((*yuv_frame).linesize[2] * out_h / 2) as usize);
 
     let pkt = av_packet_alloc();
-    let shared_overlay_enc = Arc::clone(&shared_overlay);
 
     // ── Encode loop ───────────────────────────────────────────────────────────
     let stream_start = Instant::now();
@@ -783,7 +883,7 @@ unsafe fn run_encoder_unsafe(
             let fps = frames_this_interval as f32 / elapsed.as_secs_f32();
             let n = calls_this_interval.max(1) as f64;
             let qd = queue_depth.load(Ordering::Relaxed);
-            tracing::info!(
+            tracing::debug!(
                 "Stream status: {fps:.1}fps {bitrate_kbps}kbps | \
                  sws={:.1}ms send={:.1}ms recv={:.1}ms | \
                  queue={}/{QUEUE_CAP} skipped={frames_skipped} dropped={pkts_dropped}",

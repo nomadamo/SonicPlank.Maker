@@ -71,6 +71,81 @@ let overlayWindow: BrowserWindow | null = null;
 let overlayConfigWidth = 1920;
 let overlayConfigHeight = 1080;
 
+// ── Overlay shared memory (SHM) ──────────────────────────────────────────────
+// Electron writes BGRA overlay pixels directly into a page-file-backed section
+// created by the Rust core. The compositor reads them via a seqlock, eliminating
+// kernel pipe transitions and the per-frame mutex lock on the Rust side.
+//
+// Layout: [u32 gen][u32 width][u32 height][BGRA pixels...]
+//   gen == 0   → no frame yet
+//   gen is odd → write in progress, Rust skips
+//   gen is even → frame is consistent, Rust reads
+
+let _shmViewPtr: any = null;   // void* from MapViewOfFile (koffi opaque pointer)
+let _shmWriteBuf: Buffer | null = null;  // preallocated staging buffer (reused every frame)
+let _shmMemcpy: any = null;    // koffi memcpy binding
+let _shmGenCounter = 1;        // seqlock generation: odd=writing, even=done
+
+const _FILE_MAP_WRITE = 0x0002;
+
+function connectShmOverlay(shmName: string, shmSize: number): void {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const koffi = require("koffi") as any;
+    const kernel32 = koffi.load("kernel32.dll");
+    const OpenFileMappingW = kernel32.func(
+      "void * __stdcall OpenFileMappingW(uint32, bool, str16)",
+    );
+    const MapViewOfFile = kernel32.func(
+      "void * __stdcall MapViewOfFile(void *, uint32, uint32, uint32, size_t)",
+    );
+    const msvcrt = koffi.load("msvcrt.dll");
+    _shmMemcpy = msvcrt.func("void * __cdecl memcpy(void *, void *, size_t)");
+
+    const handle = OpenFileMappingW(_FILE_MAP_WRITE, false, shmName);
+    if (!handle) {
+      console.error("[SHM] OpenFileMappingW failed for:", shmName);
+      return;
+    }
+
+    _shmViewPtr = MapViewOfFile(handle, _FILE_MAP_WRITE, 0, 0, 0);
+    if (!_shmViewPtr) {
+      console.error("[SHM] MapViewOfFile failed");
+      return;
+    }
+
+    _shmWriteBuf = Buffer.allocUnsafe(shmSize);
+    console.log(`[SHM] overlay mapped: ${shmName} (${shmSize} bytes)`);
+  } catch (err) {
+    console.error("[SHM] Failed to connect overlay shm:", err);
+  }
+}
+
+function writeOverlayToShm(bgra: Buffer, width: number, height: number): void {
+  if (!_shmViewPtr || !_shmWriteBuf || !_shmMemcpy) return;
+  const pixelLen = width * height * 4;
+  if (12 + pixelLen > _shmWriteBuf.length) return;
+
+  const oddGen = _shmGenCounter;
+  const evenGen = _shmGenCounter + 1;
+
+  // Build staging buffer: [gen_odd(4)][width(4)][height(4)][BGRA pixels]
+  _shmWriteBuf.writeUInt32LE(oddGen, 0);
+  _shmWriteBuf.writeUInt32LE(width, 4);
+  _shmWriteBuf.writeUInt32LE(height, 8);
+  bgra.copy(_shmWriteBuf, 12, 0, pixelLen);
+
+  // Write header + pixels to shm (gen_odd at offset 0 written first)
+  _shmMemcpy(_shmViewPtr, _shmWriteBuf, 12 + pixelLen);
+
+  // Seal: write even gen to offset 0 — Rust seqlock sees consistent data
+  _shmWriteBuf.writeUInt32LE(evenGen, 0);
+  _shmMemcpy(_shmViewPtr, _shmWriteBuf, 4);
+
+  _shmGenCounter += 2;
+  if (_shmGenCounter > 0x7fff_fffe) _shmGenCounter = 1; // prevent overflow
+}
+
 async function ensureOverlayWindow(): Promise<void> {
   if (!overlayWindow || overlayWindow.isDestroyed()) {
     overlayWindow = new BrowserWindow({
@@ -92,12 +167,11 @@ async function ensureOverlayWindow(): Promise<void> {
     // Limit repaint rate --- 1080p BGRA is ~8 MB/frame; 10fps keeps pipe pressure manageable.
     overlayWindow.webContents.setFrameRate(10);
 
-    // Forward each paint as a type-2 overlay frame to the Rust core.
-    // Format: [u8=2][u32 w LE][u32 h LE][BGRA premultiplied pixels]
+    // Forward each paint as an overlay frame written directly into shared memory.
     // Belt-and-suspenders JS throttle in case Chromium fires events faster than setFrameRate.
     let lastOverlaySendMs = 0;
     overlayWindow.webContents.on("paint", (_event, _dirty, image) => {
-      if (!coreDataSocket) return;
+      if (!_shmViewPtr) return;
       const now = Date.now();
       if (now - lastOverlaySendMs < 100) return; // max 10 fps; bail before toBitmap()
       lastOverlaySendMs = now;
@@ -108,18 +182,7 @@ async function ensureOverlayWindow(): Promise<void> {
       const h = size.height;
       if (bgra.length !== w * h * 4) return;
 
-      const header = Buffer.alloc(9);
-      header.writeUInt8(2, 0);
-      header.writeUInt32LE(w, 1);
-      header.writeUInt32LE(h, 5);
-
-      try {
-        // Two writes avoids a concat allocation equal to the full frame size.
-        coreDataSocket.write(header);
-        coreDataSocket.write(bgra);
-      } catch {
-        // pipe closed; ignore
-      }
+      writeOverlayToShm(bgra, w, h);
     });
 
     if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
@@ -232,7 +295,14 @@ function startCoreEventLoop(): void {
       if (!type) return;
       if (type === "acknowledge") {
         coreLastAckMs = Date.now();
-        console.log(`[Core] ACK: ${JSON.stringify(ev.message ?? ev)}`);
+        return;
+      }
+      // audio_level fires at ~100ms intervals during streaming — broadcast to all windows.
+      if (type === "audio_level") {
+        const peakDb = (ev.peak_db as number) ?? -Infinity;
+        BrowserWindow.getAllWindows().forEach((win) => {
+          if (!win.isDestroyed()) win.webContents.send("onAudioLevel", peakDb);
+        });
         return;
       }
       // stream_status fires repeatedly --- broadcast directly rather than consuming a one-shot listener.
@@ -401,8 +471,14 @@ async function waitForCoreReady(): Promise<string> {
     throw new Error("Core process has no stdout");
   }
   startCoreEventLoop();
-  
-  const ev = await waitForCoreEvent<{ pipe?: string, version?: string, pid?: number }>("ready", 10_000);
+
+  const ev = await waitForCoreEvent<{
+    pipe?: string;
+    version?: string;
+    pid?: number;
+    shm_name?: string;
+    shm_size?: number;
+  }>("ready", 10_000);
   const pipe = ev.pipe;
   if (!pipe) {
     throw new Error("Ready event missing pipe field");
@@ -410,6 +486,12 @@ async function waitForCoreReady(): Promise<string> {
   console.log(
     `[Core] ready - version=${ev.version ?? "?"} pid=${ev.pid ?? "?"} pipe=${pipe}`,
   );
+
+  // Map the overlay shared memory section that the Rust core just created.
+  if (ev.shm_name && ev.shm_size) {
+    connectShmOverlay(ev.shm_name, ev.shm_size);
+  }
+
   return pipe;
 }
 
@@ -1414,7 +1496,7 @@ const registerIpcHandlers = () => {
         outputHeight?: number;
         fitMode?: string;
         encoder?: string;
-        audioDeviceId?: string;
+        audioDeviceIds?: string[];
         sources: {
           source_id: string;
           is_primary: boolean;
@@ -1460,7 +1542,7 @@ const registerIpcHandlers = () => {
         output_height: options.outputHeight ?? null,
         fit_mode: options.fitMode ?? null,
         encoder: options.encoder ?? "libx264",
-        audio_device_id: options.audioDeviceId ?? null,
+        audio_device_ids: options.audioDeviceIds ?? [],
         sources: options.sources,
       });
 

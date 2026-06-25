@@ -13,8 +13,9 @@ export type RtmpTarget = {
 export type AppSettings = {
   autoSave: boolean;
   autoSaveIntervalMs: number; // milliseconds; e.g. 30000 = 30s
-  audioOutputDeviceId?: string; // empty means default
-  audioInputDeviceId?: string; // empty means default
+  audioOutputDeviceId?: string; // app audio playback device; empty means default
+  audioInputDeviceId?: string; // microphone for recording; empty means default
+  audioStreamSourceId?: string; // audio capture source for streaming (output/microphone/capture device)
   theme: "light" | "dark" | "system";
   timelineSidebarWidth?: number;
   timelineSidebarOpen?: boolean;
