@@ -108,6 +108,36 @@ export const StateMachineProvider: React.FC<React.PropsWithChildren> = (
               return node;
             });
           }
+          // ── Migrate standalone overlayThemeNodes into their connected targetOutputNode ──
+          if (Array.isArray(newFlowData.nodes) && Array.isArray(newFlowData.edges)) {
+            const themeNodes = newFlowData.nodes.filter((n: any) => n.type === "overlayThemeNode");
+            if (themeNodes.length > 0) {
+              const nodeMap = new Map(newFlowData.nodes.map((n: any) => [n.id, n]));
+              for (const tn of themeNodes) {
+                // Find the edge connecting this theme node to a targetOutputNode
+                const edge = newFlowData.edges.find(
+                  (e: any) => e.source === tn.id && nodeMap.get(e.target)?.type === "targetOutputNode"
+                );
+                if (edge) {
+                  const outputNode = nodeMap.get(edge.target) as any;
+                  if (outputNode && !outputNode.data?.selectedThemeId) {
+                    outputNode.data = {
+                      ...outputNode.data,
+                      selectedThemeId:       tn.data?.selectedThemeId ?? null,
+                      themeLayout:           tn.data?.themeLayout ?? null,
+                      themeVariables:        tn.data?.variables ?? {},
+                      themeResolvedElements: tn.data?.resolvedElements ?? [],
+                    };
+                  }
+                  // Remove the theme node and its edge
+                  newFlowData.edges = newFlowData.edges.filter((e: any) => e.id !== edge.id);
+                }
+              }
+              newFlowData.nodes = newFlowData.nodes.filter((n: any) => n.type !== "overlayThemeNode");
+              console.log(`[Migration] Merged ${themeNodes.length} overlayThemeNode(s) into targetOutputNode`);
+            }
+          }
+
           setFlowData(newFlowData);
           console.log("New data set in FlowData");
         } else {

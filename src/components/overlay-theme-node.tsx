@@ -1,99 +1,11 @@
 import { BaseNodeCard } from "./base-node";
 import { Handle, NodeProps, Position } from "@xyflow/react";
-import { Palette as PaletteIcon, Upload as UploadIcon } from "lucide-react";
+import { Palette as PaletteIcon } from "lucide-react";
 import { FlowNodeType, OverlayThemeMeta, OverlayThemeLayout, OverlayElement } from "@/types/flow-node";
 import { useSetAtom } from "jotai";
 import { updateNodeDataAtom } from "@/store/flowStore";
 import { useCallback, useEffect, useRef, useState } from "react";
-
-function substituteVars(text: string, vars: Record<string, string>): string {
-  return text.replace(/\{\{(\w+)\}\}/g, (_, key) => vars[key] ?? `{{${key}}}`);
-}
-
-function resolveThemeElement(
-  el: OverlayThemeLayout["elements"][number],
-  idPrefix: string,
-  layout: OverlayThemeLayout,
-  vars: Record<string, string>,
-  overrides?: Partial<OverlayElement>,
-): OverlayElement {
-  const resolved: OverlayElement = {
-    id: `${idPrefix}::${el.id}`,
-    type: el.type as OverlayElement["type"],
-    x: el.x, y: el.y,
-    width: el.width, height: el.height,
-    opacity: el.opacity,
-    ...overrides,
-  };
-  if (el.type === "image" && el.asset) {
-    const assetPath = layout.themeDir.replace(/\\/g, "/") + "/" + el.asset.replace(/\\/g, "/");
-    resolved.imagePath = `file:///${assetPath}`;
-  }
-  if (el.type === "text") {
-    resolved.textContent = el.textContent ? substituteVars(el.textContent, vars) : "";
-    resolved.fontSize    = el.fontSize;
-    resolved.textColor   = el.textColor;
-    resolved.fontFamily  = el.fontFamily;
-    resolved.fontWeight  = el.fontWeight;
-    resolved.fontStyle   = el.fontStyle;
-  }
-  if (el.type === "color") {
-    resolved.backgroundColor = el.backgroundColor;
-  }
-  return resolved;
-}
-
-function resolveElements(layout: OverlayThemeLayout, vars: Record<string, string>): OverlayElement[] {
-  const idPfx = `theme::${layout.id}`;
-
-  // Flat decoration elements (image / text / color)
-  const resolved: OverlayElement[] = layout.elements.map((el) =>
-    resolveThemeElement(el, idPfx, layout, vars),
-  );
-
-  // Component slots → placeholder OverlayElements + their decorations
-  for (const comp of layout.components ?? []) {
-    const sp = comp.styleProps;
-    resolved.push({
-      id:              `${idPfx}::comp::${comp.id}`,
-      type:            comp.componentType,
-      x: comp.x, y: comp.y,
-      width: comp.width, height: comp.height,
-      opacity:         comp.opacity,
-      _isComponentBase: true,
-      backgroundColor: sp.backgroundColor,
-      textColor:       sp.textColor,
-      textContent:     sp.textContent ?? "Text Overlay",
-      fontSize:        sp.fontSize ?? 5,
-      fontFamily:      sp.fontFamily ?? "sans-serif",
-      fontWeight:      sp.fontWeight ?? "normal",
-      fontStyle:       sp.fontStyle ?? "normal",
-      visualizerType:  sp.visualizerType ?? "bars",
-      barColor:        sp.barColor,
-      progressColor:   sp.progressColor,
-      maxMessages:     sp.maxMessages ?? 10,
-      title:           "Now Playing",
-      artist:          "Artist",
-      duration:        0,
-    });
-
-    // Decorations: component-relative (0-100% of comp bounds) → canvas-relative
-    for (const dec of comp.decorations ?? []) {
-      const decCanvasX = comp.x + (dec.x  / 100) * comp.width;
-      const decCanvasY = comp.y + (dec.y  / 100) * comp.height;
-      const decCanvasW =          (dec.width  / 100) * comp.width;
-      const decCanvasH =          (dec.height / 100) * comp.height;
-      resolved.push(
-        resolveThemeElement(dec, `${idPfx}::comp::${comp.id}::dec`, layout, vars, {
-          x: decCanvasX, y: decCanvasY,
-          width: decCanvasW, height: decCanvasH,
-        }),
-      );
-    }
-  }
-
-  return resolved;
-}
+import { resolveThemeElements } from "@/utils/resolve-theme";
 
 export function OverlayThemeNode(NodeRef: NodeProps<FlowNodeType>) {
   const node = NodeRef;
@@ -101,8 +13,6 @@ export function OverlayThemeNode(NodeRef: NodeProps<FlowNodeType>) {
 
   const [themes, setThemes] = useState<OverlayThemeMeta[]>([]);
   const [loading, setLoading] = useState(false);
-  const [installing, setInstalling] = useState(false);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const selectedThemeId = (node.data.selectedThemeId as string | null) ?? null;
   const variables = (node.data.variables as Record<string, string>) ?? {};
@@ -127,7 +37,7 @@ export function OverlayThemeNode(NodeRef: NodeProps<FlowNodeType>) {
       for (const v of layout.variables) {
         initialVars[v.key] = variables[v.key] ?? v.default ?? "";
       }
-      const resolved = resolveElements(layout, initialVars);
+      const resolved = resolveThemeElements(layout, initialVars);
       setDraftVars(initialVars);
       updateNodeData({
         id: node.id,
@@ -149,37 +59,13 @@ export function OverlayThemeNode(NodeRef: NodeProps<FlowNodeType>) {
     updateNodeData({ id: node.id, patch: { selectedThemeId: themeId, themeLayout: null, resolvedElements: [] } });
   }, [node.id, updateNodeData]);
 
-  const handleInstall = useCallback(async () => {
-    try {
-      const paths = await window.electron.openFileDialog({
-        properties: ["openFile"],
-        filters: [{ name: "SonicPlank Theme", extensions: ["sptheme"] }],
-      });
-      if (!paths?.length) return;
-      setInstalling(true);
-      setErrorMsg(null);
-      const result = await window.electron.installOverlayTheme(paths[0]);
-      if ("error" in result) {
-        setErrorMsg(result.error as string);
-      } else {
-        const refreshed = await window.electron.getInstalledOverlayThemes();
-        setThemes(refreshed);
-        handleThemeSelect(result.id as string);
-      }
-    } catch (err: any) {
-      setErrorMsg(String(err?.message ?? err));
-    } finally {
-      setInstalling(false);
-    }
-  }, [handleThemeSelect]);
-
   const handleVarChange = useCallback((key: string, value: string) => {
     setDraftVars((prev) => ({ ...prev, [key]: value }));
   }, []);
 
   const handleApply = useCallback(() => {
     if (!themeLayout) return;
-    const resolved = resolveElements(themeLayout, draftVars);
+    const resolved = resolveThemeElements(themeLayout, draftVars);
     updateNodeData({ id: node.id, patch: { variables: draftVars, resolvedElements: resolved } });
   }, [themeLayout, draftVars, node.id, updateNodeData]);
 
@@ -204,26 +90,14 @@ export function OverlayThemeNode(NodeRef: NodeProps<FlowNodeType>) {
       >
         <div className="flex flex-col gap-3 nodrag nopan nowheel">
 
-          {/* Theme selector + install */}
+          {/* Theme selector */}
           <div className="flex flex-col gap-1.5">
-            <div className="flex items-center justify-between">
-              <label className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">
-                Installed Theme
-              </label>
-              <button
-                onClick={handleInstall}
-                disabled={installing}
-                title="Install .sptheme archive"
-                className="flex items-center gap-1 px-2 py-0.5 text-[9px] font-semibold bg-violet-600/20 hover:bg-violet-600/40 border border-violet-500/30 text-violet-300 rounded cursor-pointer transition-colors disabled:opacity-50"
-              >
-                <UploadIcon className="w-2.5 h-2.5" />
-                {installing ? "Installing…" : "Install"}
-              </button>
-            </div>
-
+            <label className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">
+              Theme
+            </label>
             {themes.length === 0 ? (
               <div className="text-[10px] text-muted-foreground italic py-1">
-                No themes installed. Click Install to add a .sptheme file.
+                No themes installed. Add one in Settings → Themes.
               </div>
             ) : (
               <select
@@ -236,10 +110,6 @@ export function OverlayThemeNode(NodeRef: NodeProps<FlowNodeType>) {
                   <option key={t.id} value={t.id}>{t.name}</option>
                 ))}
               </select>
-            )}
-
-            {errorMsg && (
-              <div className="text-[10px] text-red-400 mt-0.5">{errorMsg}</div>
             )}
           </div>
 

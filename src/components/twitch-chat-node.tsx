@@ -3,7 +3,7 @@ import { Handle, NodeProps, Position } from "@xyflow/react";
 import { MessageSquare } from "lucide-react";
 import { FlowNodeType } from "@/types/flow-node";
 import { useAtomValue, useSetAtom } from "jotai";
-import { updateNodeDataAtom } from "@/store/flowStore";
+import { updateNodeDataAtom, isStreamingAtom } from "@/store/flowStore";
 import { settingsAtom } from "@/store/settingsStore";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { chatMessagesStore } from "@/store/chatMessagesStore";
@@ -20,6 +20,7 @@ const DEFAULTS = {
   fontStyle: "normal",
   maxMessages: 10,
   channel: "",
+  autoConnect: false,
 };
 
 function fromNodeData(data: FlowNodeType["data"]) {
@@ -35,6 +36,7 @@ function fromNodeData(data: FlowNodeType["data"]) {
     fontStyle: (data.fontStyle as string) ?? DEFAULTS.fontStyle,
     maxMessages: data.maxMessages !== undefined ? Number(data.maxMessages) : DEFAULTS.maxMessages,
     channel: (data.channel as string) ?? DEFAULTS.channel,
+    autoConnect: (data.autoConnect as boolean) ?? DEFAULTS.autoConnect,
   };
 }
 
@@ -44,6 +46,7 @@ export function TwitchChatNode(NodeRef: NodeProps<FlowNodeType>) {
   const node = NodeRef;
   const updateNodeData = useSetAtom(updateNodeDataAtom);
   const settings = useAtomValue(settingsAtom);
+  const isStreaming = useAtomValue(isStreamingAtom);
   const [status, setStatus] = useState<ConnectionStatus>("idle");
   const [messageCount, setMessageCount] = useState(0);
   const [errorText, setErrorText] = useState<string | null>(null);
@@ -137,6 +140,13 @@ export function TwitchChatNode(NodeRef: NodeProps<FlowNodeType>) {
     setErrorText(null);
   }, [node.id]);
 
+  // Auto-connect when stream starts if the option is enabled
+  useEffect(() => {
+    if (isStreaming && committed.autoConnect && status === "idle" && committed.channel.trim()) {
+      connect(committed.channel);
+    }
+  }, [isStreaming, committed.autoConnect, committed.channel, status, connect]);
+
   // Disconnect on unmount
   useEffect(() => {
     return () => {
@@ -221,6 +231,18 @@ export function TwitchChatNode(NodeRef: NodeProps<FlowNodeType>) {
                 Add a Twitch OAuth token in Settings → General.
               </span>
             )}
+            <label className="flex items-center gap-2 mt-1 cursor-pointer select-none w-fit">
+              <input
+                type="checkbox"
+                checked={draft.autoConnect}
+                onChange={(e) => {
+                  set("autoConnect", e.target.checked);
+                  handleUpdate({ autoConnect: e.target.checked });
+                }}
+                className="w-3 h-3 accent-indigo-500 cursor-pointer"
+              />
+              <span className="text-[9px] text-muted-foreground">Auto-connect when stream starts</span>
+            </label>
           </div>
 
           {/* Position & size */}

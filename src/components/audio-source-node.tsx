@@ -227,7 +227,7 @@ export function AudioSourceNode(NodeRef: NodeProps<FlowNodeType>) {
                   </SelectLabel>
                   {captureDevices.map((d) => (
                     <SelectItem
-                      key={d.id}
+                      key={`capture-${d.id}`}
                       value={d.id}
                       className="text-sm text-foreground/80"
                     >
@@ -243,7 +243,7 @@ export function AudioSourceNode(NodeRef: NodeProps<FlowNodeType>) {
                   </SelectLabel>
                   {micDevices.map((d) => (
                     <SelectItem
-                      key={d.id}
+                      key={`mic-${d.id}`}
                       value={d.id}
                       className="text-sm text-foreground/80"
                     >
@@ -259,7 +259,7 @@ export function AudioSourceNode(NodeRef: NodeProps<FlowNodeType>) {
                   </SelectLabel>
                   {outputDevices.map((d) => (
                     <SelectItem
-                      key={d.id}
+                      key={`output-${d.id}`}
                       value={d.id}
                       className="text-sm text-foreground/80"
                     >

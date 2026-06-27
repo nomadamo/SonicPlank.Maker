@@ -82,12 +82,16 @@ export const currentPlaybackAtom = atom<CurrentPlayback | null>(null);
 
 export const spotifyNeedsReauthAtom = atom(false);
 
+// Controls whether the full Spotify player bar is visible. Starts false so
+// the bar doesn't auto-appear on launch. Set true only when the user
+// explicitly opens it via the mini-bar, or a new track starts while the app
+// is already running with a known previous track.
+export const spotifyPlayerVisibleAtom = atom(false);
+
 export const isGlobalPlayerActiveAtom = atom((get) => {
   const localId = get(globalPlayingItemIdAtom);
   if (localId) return true;
-  const spotify = get(currentPlaybackAtom);
-  if (spotify && spotify.isPlaying) return true;
-  return false;
+  return get(spotifyPlayerVisibleAtom);
 });
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -269,6 +273,11 @@ export const pollSpotifyPlaybackAtom = atom(null, async (get, set) => {
           current.isPlaying !== state.is_playing ||
           current.title !== state.item.name
         ) {
+          // If a different track just started while we already had playback
+          // state, pop the player bar back open (user started something new).
+          if (current && current.uri !== uri) {
+            set(spotifyPlayerVisibleAtom, true);
+          }
           set(currentPlaybackAtom, {
             title: state.item.name,
             artist: state.item.artists.map((a) => a.name).join(", "),

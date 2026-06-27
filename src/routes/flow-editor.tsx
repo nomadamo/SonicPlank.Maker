@@ -219,11 +219,6 @@ function AddNodesMenu({
           Visual Overlays
         </DropdownMenuSubTrigger>
         <DropdownMenuSubContent>
-          <DropdownMenuItem onClick={onAddOverlayGroupNode}>
-            <LayersIcon className="text-indigo-400" />
-            Overlay Compositor
-          </DropdownMenuItem>
-          <DropdownMenuSeparator />
           <DropdownMenuItem onClick={onAddTextOverlayNode}>
             <TypeIcon className="text-indigo-400" />
             Text Watermark
@@ -295,6 +290,9 @@ function FlowEditor() {
   currentNodesRef.current = currentNodes;
   const [currentEdges, setCurrentEdges, onEdgesChange] =
     useEdgesState(flowEdgesData);
+  // Stable ref for reading currentEdges inside callbacks without adding it to deps
+  const currentEdgesRef = useRef(currentEdges);
+  currentEdgesRef.current = currentEdges;
   const [currentViewport, setCurrentViewport] = useState(flowViewportData);
   // Always-current ref so the debounced sync can include the latest viewport
   // even when viewport-only changes don't re-run the effect.
@@ -675,10 +673,22 @@ function FlowEditor() {
   // ─── Delete nodes ───────────────────────────────────────────────────────────
   const handleDelete = useCallback(
     (ids: string[]) => {
-      setCurrentNodes((nodes) => nodes.filter((n) => !ids.includes(n.id)));
-      setCurrentEdges((edges) =>
-        edges.filter((e) => !ids.includes(e.source) && !ids.includes(e.target)),
+      const idSet = new Set(ids);
+      const filteredNodes = currentNodesRef.current.filter((n) => !idSet.has(n.id));
+      const filteredEdges = currentEdgesRef.current.filter(
+        (e) => !idSet.has(e.source) && !idSet.has(e.target),
       );
+      setCurrentNodes(filteredNodes);
+      setCurrentEdges(filteredEdges);
+      // Immediately push to the Jotai store so updateNodeDataAtom calls
+      // that arrive within the 200ms debounce window don't see the deleted
+      // node and accidentally restore it via the Store→ReactFlow sync.
+      latestFlowDataRef.current = {
+        nodes: filteredNodes,
+        edges: filteredEdges,
+        viewport: currentViewportRef.current,
+      };
+      setFlowData({ nodes: filteredNodes, edges: filteredEdges, viewport: currentViewportRef.current });
       setSelectedNodes([]);
       setPersistRequested(true);
       setHasUnsavedChanges(true);
@@ -686,6 +696,7 @@ function FlowEditor() {
     [
       setCurrentNodes,
       setCurrentEdges,
+      setFlowData,
       setPersistRequested,
       setHasUnsavedChanges,
     ],

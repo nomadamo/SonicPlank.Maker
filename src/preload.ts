@@ -257,6 +257,9 @@ contextBridge.exposeInMainWorld("electron", {
   installOverlayTheme: async (filePath: string): Promise<any> => {
     return await ipcRenderer.invoke("installOverlayTheme", filePath);
   },
+  uninstallOverlayTheme: async (themeId: string): Promise<{ success: boolean; error?: string }> => {
+    return await ipcRenderer.invoke("uninstallOverlayTheme", themeId);
+  },
   getInstalledOverlayThemes: async (): Promise<any[]> => {
     return await ipcRenderer.invoke("getInstalledOverlayThemes");
   },

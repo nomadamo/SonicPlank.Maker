@@ -13,7 +13,16 @@ export const CONNECTION_RULES: Record<string, Record<string, HandleConnectionRul
       allowedSourceHandleSuffix: "source",
     },
     overlay_target: {
-      allowedSourceTypes: ["overlayGroupNode"],
+      allowedSourceTypes: [
+        "textOverlayNode",
+        "colorOverlayNode",
+        "imageOverlayNode",
+        "visualizerOverlayNode",
+        "nowPlayingNode",
+        "twitchChatNode",
+        "overlayThemeNode",
+        "overlayGroupNode", // kept for backward compat with saved flows
+      ],
       allowedSourceHandleSuffix: "source",
     },
     audio_target: {

@@ -107,6 +107,9 @@ pub enum Command {
         sources: Vec<StreamSourceDef>,
         #[serde(default)]
         audio_device_ids: Vec<String>,
+        /// If set, record the stream to this file path via stream copy (MP4).
+        #[serde(default)]
+        record_path: Option<String>,
     },
     /// Stop the active stream. Core responds with [`Event::StreamStopped`].
     StopStream,

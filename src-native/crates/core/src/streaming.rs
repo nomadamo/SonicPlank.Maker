@@ -231,6 +231,8 @@ pub struct StreamOptions {
     pub encoder: String,
     pub sources: Vec<StreamSourceDef>,
     pub audio_device_ids: Vec<String>,
+    /// If set, record the stream to this file path via stream copy (MP4).
+    pub record_path: Option<String>,
 }
 
 #[derive(Debug)]
@@ -651,9 +653,52 @@ unsafe fn run_encoder_unsafe(
         unsafe { enc.update_stream_timebase(ofmt_ctx); }
     }
 
+    // ── Optional MP4 recording context (stream copy) ──────────────────────────
+    // Build a second output context mirroring the RTMP context's streams.
+    // Packets written to RTMP will also be cloned and written here.
+    let rec_fmt_send: Option<FormatCtxSend> = if let Some(ref rec_path) = opts.record_path {
+        let result: Option<FormatCtxSend> = (|| unsafe {
+            let path_c = CString::new(rec_path.as_str()).ok()?;
+            let mp4_c = CString::new("mp4").ok()?;
+            let mut rec_ctx: *mut AVFormatContext = ptr::null_mut();
+            if avformat_alloc_output_context2(&mut rec_ctx, ptr::null(), mp4_c.as_ptr(), path_c.as_ptr()) < 0
+                || rec_ctx.is_null()
+            {
+                tracing::error!("[Recording] Failed to allocate MP4 output context");
+                return None;
+            }
+            // Mirror all streams from the RTMP context so stream indices match.
+            let num_streams = (*ofmt_ctx).nb_streams as usize;
+            for i in 0..num_streams {
+                let src = *(*ofmt_ctx).streams.add(i);
+                let dst = avformat_new_stream(rec_ctx, ptr::null());
+                if dst.is_null() { continue; }
+                avcodec_parameters_copy((*dst).codecpar, (*src).codecpar);
+                (*dst).time_base = (*src).time_base;
+            }
+            if avio_open(&mut (*rec_ctx).pb, path_c.as_ptr(), AVIO_FLAG_WRITE as i32) < 0 {
+                tracing::error!("[Recording] Failed to open file: {}", rec_path);
+                avformat_free_context(rec_ctx);
+                return None;
+            }
+            if avformat_write_header(rec_ctx, ptr::null_mut()) < 0 {
+                tracing::error!("[Recording] Failed to write MP4 header");
+                avio_closep(&mut (*rec_ctx).pb);
+                avformat_free_context(rec_ctx);
+                return None;
+            }
+            tracing::info!("[Recording] Recording to: {}", rec_path);
+            Some(FormatCtxSend(rec_ctx))
+        })();
+        result
+    } else {
+        None
+    };
+
     tracing::info!(
-        "Stream started: {}x{} (mode: {})  {}x{} @{}fps via {} at {}kbps",
-        src_w, src_h, fit_mode, out_w, out_h, target_fps, opts.encoder, opts.bitrate_kbps
+        "Stream started: {}x{} (mode: {})  {}x{} @{}fps via {} at {}kbps{}",
+        src_w, src_h, fit_mode, out_w, out_h, target_fps, opts.encoder, opts.bitrate_kbps,
+        if opts.record_path.is_some() { " [recording]" } else { "" }
     );
     event_tx.send(StreamEvent::Started { width: out_w as u32, height: out_h as u32 }).ok();
 
@@ -692,6 +737,7 @@ unsafe fn run_encoder_unsafe(
             // into_raw() is a method call, so Rust captures FormatCtxSend (Send)
             // rather than the inner field *mut AVFormatContext (not Send).
             let ofmt_ctx = fmt_send.into_raw();
+            let rec_ctx  = rec_fmt_send.map(|f| f.into_raw());
             let mut total_pkts: u64 = 0;
             let mut slow_writes: u64 = 0;
 
@@ -702,6 +748,21 @@ unsafe fn run_encoder_unsafe(
                     break;
                 }
                 queue_depth_rtmp.fetch_sub(1, Ordering::Relaxed);
+
+                // Clone the packet for recording before the RTMP write (which may
+                // modify the packet's metadata in place).
+                if let Some(rctx) = rec_ctx {
+                    unsafe {
+                        let rec_pkt = av_packet_clone(owned.0);
+                        if !rec_pkt.is_null() {
+                            if av_write_frame(rctx, rec_pkt) < 0 {
+                                tracing::warn!("[Recording] av_write_frame failed");
+                            }
+                            av_packet_free(&mut (rec_pkt as *mut _));
+                        }
+                    }
+                }
+
                 let t = Instant::now();
                 unsafe {
                     if av_write_frame(ofmt_ctx, owned.0) < 0 {
@@ -717,6 +778,12 @@ unsafe fn run_encoder_unsafe(
 
             tracing::info!("RTMP writer done: {total_pkts} pkts written, {slow_writes} slow (>50ms)");
             unsafe {
+                if let Some(rctx) = rec_ctx {
+                    av_write_trailer(rctx);
+                    avio_closep(&mut (*rctx).pb);
+                    avformat_free_context(rctx);
+                    tracing::info!("[Recording] File closed");
+                }
                 av_write_trailer(ofmt_ctx);
                 avio_closep(&mut (*ofmt_ctx).pb);
                 avformat_free_context(ofmt_ctx);

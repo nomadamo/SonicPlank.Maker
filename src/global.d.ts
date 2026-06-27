@@ -92,6 +92,7 @@ declare global {
       getAvailableThemes: () => Promise<any[]>;
       loadThemeStyles: (themeName: string) => Promise<string>;
       installOverlayTheme: (filePath: string) => Promise<OverlayThemeMeta | { error: string }>;
+      uninstallOverlayTheme: (themeId: string) => Promise<{ success: boolean; error?: string }>;
       getInstalledOverlayThemes: () => Promise<OverlayThemeMeta[]>;
       loadOverlayTheme: (themeId: string) => Promise<OverlayThemeLayout | null>;
       saveOverlayTheme: (args: { themeJson: string; assets: { localPath: string; archiveName: string }[]; savePath: string }) => Promise<{ success: boolean; error?: string }>;
@@ -129,6 +130,7 @@ declare global {
           fitMode?: string;
           encoder?: string;
           audioDeviceIds?: string[];
+          recordPath?: string;
           sources: {
             source_id: string;
             is_primary: boolean;

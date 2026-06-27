@@ -13,6 +13,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "@/components/ui/accordion";
 
 const RTMP_PRESETS = [
@@ -252,6 +253,30 @@ export function OutputSettingsTab() {
             className="text-xs font-mono w-40"
           />
         </div>
+
+        <div className="flex items-center justify-between gap-3 pt-1">
+          <div className="flex flex-col gap-0.5">
+            <Label className="text-xs font-medium">Record stream (stream copy)</Label>
+            <span className="text-xs text-muted-foreground">Save a local MP4 of the stream alongside RTMP output</span>
+          </div>
+          <Switch
+            checked={!!settings.recordStreamEnabled}
+            onCheckedChange={(v) => updateSettings({ recordStreamEnabled: v })}
+          />
+        </div>
+
+        {settings.recordStreamEnabled && (
+          <div className="flex items-center justify-between gap-3 pl-3 border-l-2 border-border/50">
+            <div className="flex flex-col gap-0.5">
+              <Label className="text-xs font-medium">Auto-upload VOD after stream ends</Label>
+              <span className="text-xs text-muted-foreground">Automatically upload the recorded file when the stream stops</span>
+            </div>
+            <Switch
+              checked={!!settings.recordStreamAutoUpload}
+              onCheckedChange={(v) => updateSettings({ recordStreamAutoUpload: v })}
+            />
+          </div>
+        )}
         </AccordionContent>
       </AccordionItem>
 

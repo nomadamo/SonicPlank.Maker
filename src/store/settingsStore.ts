@@ -1,6 +1,9 @@
 import { atomWithStorage } from "jotai/utils";
-import { useAtom } from "jotai";
+import { atom, useAtom } from "jotai";
 import { useCallback } from "react";
+import type { OverlayThemeMeta } from "@/types/flow-node";
+
+export const installedThemesAtom = atom<OverlayThemeMeta[]>([]);
 
 export type RtmpTarget = {
   id: string;
@@ -23,6 +26,8 @@ export type AppSettings = {
   audioStreamIcon?: string;
   audioStreamColor?: string;
   recordingPath?: string;
+  recordStreamEnabled?: boolean;
+  recordStreamAutoUpload?: boolean;
   
   // FFmpeg Output Global Settings
   streamEncoder?: "copy" | "libx264" | "h264_nvenc" | "h264_amf" | "h264_qsv";

@@ -124,6 +124,10 @@ export const canRedoFlowAtom = atom((get) => get(flowHistoryAtom).future.length 
 export const flowCurrentPathAtom = atom<string | null>(null);
 export const flowHasUnsavedChangesAtom = atom<boolean>(false);
 
+// Global streaming state — set by target-output-node when stream starts/stops.
+// Other nodes (e.g. TwitchChatNode) can watch this to auto-connect.
+export const isStreamingAtom = atom<boolean>(false);
+
 export const flowNodeAtomFamily = atomFamily((id) =>
   atom(
     (get) => {

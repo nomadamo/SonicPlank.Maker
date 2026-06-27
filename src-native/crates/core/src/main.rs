@@ -343,6 +343,7 @@ async fn run_stdin_commands(
                         encoder,
                         sources,
                         audio_device_ids,
+                        record_path,
                     }) => {
                         if active_sessions.is_empty() {
                             let frame = encode_event(&Event::Error {
@@ -366,6 +367,7 @@ async fn run_stdin_commands(
                                 encoder,
                                 sources,
                                 audio_device_ids,
+                                record_path,
                             };
                             active_stream = Some(StreamSession::start(
                                 opts,

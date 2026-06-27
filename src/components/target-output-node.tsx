@@ -12,15 +12,20 @@ import {
   SquareDashedMousePointer,
   ScanEyeIcon,
   ChevronDown as ChevronDownIcon,
+  Palette as PaletteIcon,
+  ChevronRight as ChevronRightIcon,
+  ArrowLeftRight as SwapIcon,
 } from "lucide-react";
-import { FlowNodeType, OverlayElement } from "@/types/flow-node";
+import { FlowNodeType, OverlayElement, OverlayThemeMeta, OverlayThemeLayout } from "@/types/flow-node";
+import { resolveThemeElements } from "@/utils/resolve-theme";
 import { chatMessagesStore, type ChatMessage } from "@/store/chatMessagesStore";
 import { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { useNativePreview } from "@/hooks/useNativePreview";
 import { isValidConnection } from "@/utils/flow-connections";
 import { nodeTypeToOverlayType } from "@/utils/overlay-type-map";
-import { useSetAtom } from "jotai";
-import { updateNodeDataAtom } from "@/store/flowStore";
+import { useAtom, useSetAtom } from "jotai";
+import { updateNodeDataAtom, isStreamingAtom } from "@/store/flowStore";
+import { installedThemesAtom } from "@/store/settingsStore";
 import { useTransientNodeState } from "@/store/transientNodeStore";
 import { useSettings } from "@/store/settingsStore";
 import { getFlowAudioAnalyser } from "@/utils/flowAudioRegistry";
@@ -88,11 +93,20 @@ function cleanStreamUrl(url: string): string {
   return trimmed;
 }
 
+interface SourceRole {
+  role: "primary" | "pip";
+  pipX: number;
+  pipY: number;
+  pipW: number;
+  pipH: number;
+}
+
 export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
   const node = NodeRef;
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const updateNodeData = useSetAtom(updateNodeDataAtom);
+  const setGlobalIsStreaming = useSetAtom(isStreamingAtom);
   const { settings, updateSettings } = useSettings();
   const { getVal, setVal } = useTransientNodeState(node.id, "targetOutputNode");
 
@@ -117,11 +131,69 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
   const setIsStreaming = useCallback(
     (val: boolean) => {
       setVal("isStreaming", val);
+      setGlobalIsStreaming(val);
     },
     [setVal],
   );
 
   const [dynamicAspectRatio, setDynamicAspectRatio] = useState<string>("16/9");
+
+  // ── Theme state ───────────────────────────────────────────────────────────────
+  const selectedThemeId = (node.data.selectedThemeId as string | null) ?? null;
+  const themeLayout     = (node.data.themeLayout as OverlayThemeLayout | null) ?? null;
+  const themeVariables  = (node.data.themeVariables as Record<string, string>) ?? {};
+  const [installedThemes, setInstalledThemes] = useAtom(installedThemesAtom);
+  const [themeLoading, setThemeLoading] = useState(false);
+  const [draftThemeVars, setDraftThemeVars] = useState<Record<string, string>>(themeVariables);
+  const [themeExpanded, setThemeExpanded] = useState(false);
+  const prevThemeId = useRef<string | null>(null);
+
+  // Populate atom on mount if not already loaded
+  useEffect(() => {
+    if (installedThemes.length === 0) {
+      window.electron.getInstalledOverlayThemes().then(setInstalledThemes).catch(console.error);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Reset selected theme if it was uninstalled
+  useEffect(() => {
+    if (selectedThemeId && installedThemes.length > 0 && !installedThemes.find((t) => t.id === selectedThemeId)) {
+      updateNodeData({ id: node.id, patch: { selectedThemeId: null, themeLayout: null, themeResolvedElements: [] } });
+    }
+  }, [installedThemes, selectedThemeId, node.id, updateNodeData]);
+
+  useEffect(() => {
+    if (!selectedThemeId || selectedThemeId === prevThemeId.current) return;
+    prevThemeId.current = selectedThemeId;
+    setThemeLoading(true);
+    window.electron.loadOverlayTheme(selectedThemeId).then((layout) => {
+      if (!layout) { setThemeLoading(false); return; }
+      const initialVars: Record<string, string> = {};
+      for (const v of layout.variables) {
+        initialVars[v.key] = themeVariables[v.key] ?? v.default ?? "";
+      }
+      const resolved = resolveThemeElements(layout, initialVars);
+      setDraftThemeVars(initialVars);
+      updateNodeData({ id: node.id, patch: { themeLayout: layout, themeVariables: initialVars, themeResolvedElements: resolved } });
+      setThemeLoading(false);
+    }).catch(console.error);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedThemeId]);
+
+  const handleThemeSelect = useCallback((themeId: string) => {
+    updateNodeData({ id: node.id, patch: { selectedThemeId: themeId, themeLayout: null, themeResolvedElements: [] } });
+  }, [node.id, updateNodeData]);
+
+  const handleThemeVarApply = useCallback(() => {
+    if (!themeLayout) return;
+    const resolved = resolveThemeElements(themeLayout, draftThemeVars);
+    updateNodeData({ id: node.id, patch: { themeVariables: draftThemeVars, themeResolvedElements: resolved } });
+  }, [themeLayout, draftThemeVars, node.id, updateNodeData]);
+
+  const themeVarsDirty = themeLayout
+    ? themeLayout.variables.some((v) => draftThemeVars[v.key] !== (themeVariables[v.key] ?? v.default ?? ""))
+    : false;
 
   // Recording states
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -344,6 +416,69 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
     );
   }, [edges, nodes, node.id]);
 
+  // Capture sources directly wired to this node's source_target handle (multi-source direct path)
+  const connectedCaptureSources = useMemo(() => {
+    return edges
+      .filter(
+        (e) =>
+          e.target === node.id &&
+          e.targetHandle === `handle_${node.id}_source_target`,
+      )
+      .map((e) => nodes.find((n) => n.id === e.source && n.type === "captureSourceNode"))
+      .filter(Boolean) as FlowNodeType[];
+  }, [edges, nodes, node.id]);
+
+  const storedSourceRoles = useMemo(
+    () => ((node.data.sourceRoles as Record<string, SourceRole>) || {}),
+    [node.data.sourceRoles],
+  );
+
+  // Merge stored roles with defaults — first source without a stored role becomes primary
+  const effectiveRoles = useMemo<Record<string, SourceRole>>(() => {
+    if (connectedOverlayGroupNode) return {};
+    const result: Record<string, SourceRole> = {};
+    let hasPrimary = connectedCaptureSources.some(
+      (s) => storedSourceRoles[s.id]?.role === "primary",
+    );
+    for (const source of connectedCaptureSources) {
+      const stored = storedSourceRoles[source.id];
+      if (stored) {
+        result[source.id] = stored;
+      } else if (!hasPrimary) {
+        result[source.id] = { role: "primary", pipX: 0, pipY: 0, pipW: 100, pipH: 100 };
+        hasPrimary = true;
+      } else {
+        result[source.id] = { role: "pip", pipX: 70, pipY: 70, pipW: 25, pipH: 14 };
+      }
+    }
+    return result;
+  }, [connectedCaptureSources, storedSourceRoles, connectedOverlayGroupNode]);
+
+  const setSourceRole = useCallback(
+    (sourceNodeId: string, role: "primary" | "pip") => {
+      const next = { ...storedSourceRoles };
+      if (role === "primary") {
+        for (const src of connectedCaptureSources) {
+          if (src.id !== sourceNodeId && effectiveRoles[src.id]?.role === "primary") {
+            next[src.id] = { ...effectiveRoles[src.id], role: "pip" };
+          }
+        }
+      }
+      next[sourceNodeId] = { ...effectiveRoles[sourceNodeId], role };
+      updateNodeData({ id: node.id, patch: { sourceRoles: next } });
+    },
+    [storedSourceRoles, effectiveRoles, connectedCaptureSources, node.id, updateNodeData],
+  );
+
+  const updatePipPosition = useCallback(
+    (sourceNodeId: string, patch: Partial<Pick<SourceRole, "pipX" | "pipY" | "pipW" | "pipH">>) => {
+      const next = { ...storedSourceRoles };
+      next[sourceNodeId] = { ...effectiveRoles[sourceNodeId], ...patch };
+      updateNodeData({ id: node.id, patch: { sourceRoles: next } });
+    },
+    [storedSourceRoles, effectiveRoles, node.id, updateNodeData],
+  );
+
   // Resolve the primary capture source: prefer the source marked "primary" in the
   // Overlay Compositor's sourceRoles config; fall back to the direct connection.
   const sourceNode = useMemo(() => {
@@ -366,8 +501,12 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
         );
       }
     }
-    return directSourceNode;
-  }, [edges, nodes, connectedOverlayGroupNode, directSourceNode]);
+    // Direct multi-source path: primary is the source with "primary" role
+    const primary = connectedCaptureSources.find(
+      (s) => effectiveRoles[s.id]?.role === "primary",
+    );
+    return primary ?? connectedCaptureSources[0] ?? null;
+  }, [edges, nodes, connectedOverlayGroupNode, connectedCaptureSources, effectiveRoles]);
 
   const activeStreamSources = useMemo(() => {
     const streamSources: {
@@ -380,22 +519,8 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
       h_percent: number;
     }[] = [];
 
-    // The primary source is always the direct capture source if there is one
-    const primarySourceId = directSourceNode?.data.captureSourceId as string | undefined;
-
-    if (primarySourceId) {
-      streamSources.push({
-        node_id: directSourceNode!.id,
-        source_id: primarySourceId,
-        is_primary: true,
-        x_percent: 0,
-        y_percent: 0,
-        w_percent: 100,
-        h_percent: 100,
-      });
-    }
-
     if (connectedOverlayGroupNode) {
+      // Legacy path: sources come from the overlayGroupNode
       const storedRoles =
         (connectedOverlayGroupNode.data.sourceRoles as Record<
           string,
@@ -408,17 +533,10 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
         )
         .filter(Boolean) as FlowNodeType[];
 
-      let hasPrimary = !!primarySourceId;
-
+      let hasPrimary = false;
       for (const s of groupSources) {
         const sid = s.data.captureSourceId as string;
         if (!sid) continue;
-
-        // If this source is already added as the primary, skip adding it again as a PiP
-        if (sid === primarySourceId) {
-          continue;
-        }
-        
         const r = storedRoles[s.id];
         if (r) {
           const isPrimary = !hasPrimary && r.role === "primary";
@@ -445,10 +563,27 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
           hasPrimary = true;
         }
       }
+    } else {
+      // Direct path: sources connect straight to source_target handle
+      for (const s of connectedCaptureSources) {
+        const sid = s.data.captureSourceId as string;
+        if (!sid) continue;
+        const r = effectiveRoles[s.id];
+        const isPrimary = r?.role === "primary";
+        streamSources.push({
+          node_id: s.id,
+          source_id: sid,
+          is_primary: isPrimary,
+          x_percent: r?.pipX ?? 0,
+          y_percent: r?.pipY ?? 0,
+          w_percent: r?.pipW ?? 100,
+          h_percent: r?.pipH ?? 100,
+        });
+      }
     }
 
     return streamSources;
-  }, [edges, nodes, connectedOverlayGroupNode, directSourceNode]);
+  }, [edges, nodes, connectedOverlayGroupNode, connectedCaptureSources, effectiveRoles]);
 
   // Keep the Rust core's compositor config in sync with the current UI layout
   const prevCoreConfigRef = useRef("");
@@ -628,34 +763,48 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
     }
   }, [nativeCaptureDims.width, nativeCaptureDims.height]);
 
-  // Extract and compile all overlay configurations connected to the Overlay Compositor node
+  const OVERLAY_NODE_TYPES = [
+    "textOverlayNode",
+    "colorOverlayNode",
+    "imageOverlayNode",
+    "visualizerOverlayNode",
+    "nowPlayingNode",
+    "twitchChatNode",
+    "overlayThemeNode",
+  ] as const;
+
+  // Extract and compile all overlay configurations — supports both the legacy
+  // overlayGroupNode path and direct connections to the overlay_target handle.
   const overlays = useMemo(() => {
-    if (!connectedOverlayGroupNode) return [];
+    let overlayNodes: FlowNodeType[];
 
-    // Find all edges pointing to the connected overlayGroupNode
-    const incomingEdgesToGroup = edges.filter(
-      (e) => e.target === connectedOverlayGroupNode.id,
-    );
-
-    // Find the corresponding overlay nodes
-    const overlayNodes = incomingEdgesToGroup
-      .map((e) => nodes.find((n) => n.id === e.source))
-      .filter(
-        (n): n is FlowNodeType =>
-          !!(
-            n &&
-            [
-              "textOverlayNode",
-              "colorOverlayNode",
-              "imageOverlayNode",
-              "visualizerOverlayNode",
-              "nowPlayingNode",
-              "twitchChatNode",
-              "overlayThemeNode",
-            ].includes(n.type || "")
-          ),
-      )
-      .sort((a, b) => a.position.y - b.position.y);
+    if (connectedOverlayGroupNode) {
+      // Legacy path: read from nodes connected to the overlayGroupNode
+      const incomingEdgesToGroup = edges.filter(
+        (e) => e.target === connectedOverlayGroupNode.id,
+      );
+      overlayNodes = incomingEdgesToGroup
+        .map((e) => nodes.find((n) => n.id === e.source))
+        .filter(
+          (n): n is FlowNodeType =>
+            !!(n && (OVERLAY_NODE_TYPES as readonly string[]).includes(n.type || "")),
+        )
+        .sort((a, b) => a.position.y - b.position.y);
+    } else {
+      // Direct path: overlay nodes connected straight to the overlay_target handle
+      overlayNodes = edges
+        .filter(
+          (e) =>
+            e.target === node.id &&
+            e.targetHandle === `handle_${node.id}_overlay_target`,
+        )
+        .map((e) => nodes.find((n) => n.id === e.source))
+        .filter(
+          (n): n is FlowNodeType =>
+            !!(n && (OVERLAY_NODE_TYPES as readonly string[]).includes(n.type || "")),
+        )
+        .sort((a, b) => a.position.y - b.position.y);
+    }
 
     // Types provided by real (non-theme) overlay nodes — used to suppress theme placeholders
     const realOverlayTypes = new Set<string>(
@@ -665,14 +814,22 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
     );
 
     const list: OverlayElement[] = [];
+
+    // Inject theme elements from this node's own theme data first (lowest z-order)
+    const themeResolved = (node.data.themeResolvedElements as OverlayElement[] | undefined) ?? [];
+    for (const el of themeResolved) {
+      if (el._isComponentBase && realOverlayTypes.has(el.type)) continue;
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { _isComponentBase: _dropped, ...clean } = el;
+      list.push(clean as OverlayElement);
+    }
+
     overlayNodes.forEach((n) => {
-      // overlayThemeNode expands to multiple pre-resolved elements
+      // Legacy: overlayThemeNode still handled so old flows keep working until migrated
       if (n.type === "overlayThemeNode") {
         const resolved = (n.data.resolvedElements as OverlayElement[] | undefined) ?? [];
         for (const el of resolved) {
-          // Suppress component placeholder when a real node of the same type is connected
           if (el._isComponentBase && realOverlayTypes.has(el.type)) continue;
-          // Strip internal marker before sending to renderer
           // eslint-disable-next-line @typescript-eslint/no-unused-vars
           const { _isComponentBase: _dropped, ...clean } = el;
           list.push(clean as OverlayElement);
@@ -719,67 +876,73 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
         }
       }
 
+      // Option 1: if a theme is active, find a matching component slot and use its
+      // position/size/styleProps instead of the node's own values.
+      const themeComp = themeLayout?.components?.find((c) => c.componentType === type);
+      const sp = themeComp?.styleProps;
+
       list.push({
         id: n.id,
         type,
-        x: data.x !== undefined ? Number(data.x) : 10,
-        y: data.y !== undefined ? Number(data.y) : 10,
-        width: data.width !== undefined ? Number(data.width) : 30,
-        height: data.height !== undefined ? Number(data.height) : 20,
-        opacity: data.opacity !== undefined ? Number(data.opacity) : 1,
-        textContent: data.textContent as string,
-        fontSize: data.fontSize !== undefined ? Number(data.fontSize) : 5,
-        textColor: data.textColor as string,
-        backgroundColor: data.backgroundColor as string,
-        imagePath: data.imagePath as string,
-        visualizerType: data.visualizerType as string,
-        fontFamily: data.fontFamily as string,
-        fontWeight: data.fontWeight as string,
-        fontStyle: data.fontStyle as string,
+        x:       themeComp ? themeComp.x       : (data.x !== undefined ? Number(data.x) : 10),
+        y:       themeComp ? themeComp.y       : (data.y !== undefined ? Number(data.y) : 10),
+        width:   themeComp ? themeComp.width   : (data.width !== undefined ? Number(data.width) : 30),
+        height:  themeComp ? themeComp.height  : (data.height !== undefined ? Number(data.height) : 20),
+        opacity: themeComp ? themeComp.opacity : (data.opacity !== undefined ? Number(data.opacity) : 1),
+        textContent:     sp?.textContent     ?? (data.textContent as string),
+        fontSize:        sp?.fontSize        ?? (data.fontSize !== undefined ? Number(data.fontSize) : 5),
+        textColor:       sp?.textColor       ?? (data.textColor as string),
+        backgroundColor: sp?.backgroundColor ?? (data.backgroundColor as string),
+        imagePath:       data.imagePath as string,
+        visualizerType:  sp?.visualizerType  ?? (data.visualizerType as string),
+        fontFamily:      sp?.fontFamily      ?? (data.fontFamily as string),
+        fontWeight:      sp?.fontWeight      ?? (data.fontWeight as string),
+        fontStyle:       sp?.fontStyle       ?? (data.fontStyle as string),
+        barColor:        sp?.barColor        ?? (data.barColor as string),
+        progressColor:   sp?.progressColor   ?? (data.progressColor as string),
         albumArt,
         title,
         artist,
         audioNodeId,
         duration,
-        maxMessages:
-          data.maxMessages !== undefined ? Number(data.maxMessages) : 10,
+        maxMessages: sp?.maxMessages ?? (data.maxMessages !== undefined ? Number(data.maxMessages) : 10),
       });
     });
 
-    // Inject PiP pseudo-overlays for the overlay editor
-    if (connectedOverlayGroupNode) {
-      activeStreamSources.forEach((src) => {
-        if (!src.is_primary) {
-          list.push({
-            id: `pip::${connectedOverlayGroupNode.id}::${src.node_id}`,
-            type: "pip" as any,
-            x: src.x_percent,
-            y: src.y_percent,
-            width: src.w_percent,
-            height: src.h_percent,
-            opacity: 1,
-            textContent: "",
-            fontSize: 0,
-            textColor: "",
-            backgroundColor: "",
-            imagePath: "",
-            visualizerType: "",
-            fontFamily: "",
-            fontWeight: "",
-            fontStyle: "",
-            albumArt: "",
-            title: "",
-            artist: "",
-            audioNodeId: "",
-            duration: 0,
-            maxMessages: 0,
-          });
-        }
-      });
-    }
+    // Inject PiP pseudo-overlays for the overlay editor so PiP sources are
+    // draggable alongside real overlays in preview.tsx.
+    activeStreamSources.forEach((src) => {
+      if (!src.is_primary) {
+        const groupId = connectedOverlayGroupNode ? connectedOverlayGroupNode.id : node.id;
+        list.push({
+          id: `pip::${groupId}::${src.node_id}`,
+          type: "pip" as any,
+          x: src.x_percent,
+          y: src.y_percent,
+          width: src.w_percent,
+          height: src.h_percent,
+          opacity: 1,
+          textContent: "",
+          fontSize: 0,
+          textColor: "",
+          backgroundColor: "",
+          imagePath: "",
+          visualizerType: "",
+          fontFamily: "",
+          fontWeight: "",
+          fontStyle: "",
+          albumArt: "",
+          title: "",
+          artist: "",
+          audioNodeId: "",
+          duration: 0,
+          maxMessages: 0,
+        });
+      }
+    });
 
     return list;
-  }, [edges, nodes, connectedOverlayGroupNode, activeStreamSources]);
+  }, [edges, nodes, node.id, connectedOverlayGroupNode, activeStreamSources]);
 
   // Refs so the compositor rAF loop always reads the latest overlays/edges without
   // being a dep of renderCardCompositor. Without this, any node update anywhere in
@@ -812,6 +975,52 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
       }
     }
   }, [overlays]);
+
+  // Write pip drag positions from the overlay editor back to sourceRoles so they persist.
+  // When the preview editor saves overlay positions (on lock), the main process broadcasts
+  // onOverlaysUpdated. We parse any pip:: entries and patch sourceRoles accordingly.
+  // Refs keep the callback stable so the listener isn't torn down on every drag event.
+  const effectiveRolesRef = useRef(effectiveRoles);
+  effectiveRolesRef.current = effectiveRoles;
+  const storedSourceRolesRef = useRef(storedSourceRoles);
+  storedSourceRolesRef.current = storedSourceRoles;
+  const nodeIdRef = useRef(node.id);
+  nodeIdRef.current = node.id;
+  useEffect(() => {
+    window.electron.onOverlaysUpdated((updated) => {
+      if (!updated) return;
+      const pipEntries = updated.filter((o: any) => typeof o.id === "string" && o.id.startsWith("pip::"));
+      if (pipEntries.length === 0) return;
+      const effective = effectiveRolesRef.current;
+      const next: Record<string, SourceRole> = { ...storedSourceRolesRef.current };
+      let changed = false;
+      for (const pip of pipEntries) {
+        // id: pip::<groupOrOutputNodeId>::<sourceNodeId>
+        const parts = (pip.id as string).split("::");
+        if (parts.length < 3) continue;
+        const sourceNodeId = parts.slice(2).join("::");
+        const existing = effective[sourceNodeId];
+        if (!existing) continue;
+        if (
+          existing.pipX !== pip.x ||
+          existing.pipY !== pip.y ||
+          existing.pipW !== pip.width ||
+          existing.pipH !== pip.height
+        ) {
+          next[sourceNodeId] = { ...existing, pipX: pip.x, pipY: pip.y, pipW: pip.width, pipH: pip.height };
+          changed = true;
+        }
+      }
+      if (changed) {
+        updateNodeData({ id: nodeIdRef.current, patch: { sourceRoles: next } });
+      }
+    });
+    return () => {
+      window.electron.removeOnOverlaysUpdated(() => {});
+    };
+  // Stable listener — values accessed through refs; deps only include updateNodeData (stable atom setter).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [updateNodeData]);
 
   // Watch for preview state and parameter changes to manage screen capture stream declaratively
   const lastCaptureParamsRef = useRef<{
@@ -1157,6 +1366,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
             fitMode: fitMode,
             encoder: (settings.streamEncoder as string) || "libx264",
             audioDeviceIds: captureAudio ? resolvedAudioDeviceIds : undefined,
+            recordPath: settings.recordStreamEnabled && settings.recordingPath ? settings.recordingPath : undefined,
             sources: streamSources,
           });
         } catch (err: any) {
@@ -1558,6 +1768,92 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
                   </button>
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* Multi-source PiP controls — only shown when ≥2 sources connected directly */}
+          {!connectedOverlayGroupNode && connectedCaptureSources.length > 1 && (
+            <div className="flex flex-col gap-1.5 p-3 rounded-lg bg-muted/50 border border-border/40 nodrag nopan nowheel">
+              <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-0.5 select-none">
+                Capture Sources
+              </span>
+              {connectedCaptureSources.map((source) => {
+                const role = effectiveRoles[source.id];
+                const isPip = role?.role === "pip";
+                const sourceName =
+                  (source.data.captureSourceName as string) ||
+                  (source.data.captureSourceId as string) ||
+                  "Unknown Source";
+                return (
+                  <div
+                    key={source.id}
+                    className="flex flex-col gap-1 border-b border-border/40 last:border-0 pb-2 last:pb-0"
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[11px] text-foreground/80 truncate flex-1 min-w-0">
+                        {sourceName}
+                      </span>
+                      <div className="flex items-center gap-0.5 rounded-md bg-muted border border-border p-0.5 shrink-0">
+                        {(["primary", "pip"] as const).map((r) => (
+                          <button
+                            key={r}
+                            onClick={() => setSourceRole(source.id, r)}
+                            className={cn(
+                              "px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider transition-colors cursor-pointer",
+                              role?.role === r
+                                ? "bg-indigo-500/20 text-indigo-300"
+                                : "text-muted-foreground hover:text-foreground/80",
+                            )}
+                          >
+                            {r === "primary" ? "Main" : "PiP"}
+                          </button>
+                        ))}
+                      </div>
+                      <button
+                        title="Make this the primary source"
+                        onClick={() => setSourceRole(source.id, "primary")}
+                        className="p-0.5 rounded text-muted-foreground hover:text-indigo-300 transition-colors cursor-pointer"
+                      >
+                        <SwapIcon className="w-3 h-3" />
+                      </button>
+                    </div>
+                    {isPip && (
+                      <div className="grid grid-cols-4 gap-1 mt-0.5 pl-0.5">
+                        {(
+                          [
+                            ["X", "pipX"],
+                            ["Y", "pipY"],
+                            ["W", "pipW"],
+                            ["H", "pipH"],
+                          ] as const
+                        ).map(([label, key]) => (
+                          <div key={key} className="flex flex-col gap-0.5">
+                            <span className="text-[8px] text-zinc-600 uppercase tracking-wider">
+                              {label}
+                            </span>
+                            <div className="flex items-center gap-0.5">
+                              <input
+                                type="number"
+                                min={0}
+                                max={100}
+                                step={1}
+                                value={role?.[key] ?? 0}
+                                onChange={(e) =>
+                                  updatePipPosition(source.id, {
+                                    [key]: Number(e.target.value),
+                                  })
+                                }
+                                className="w-full text-[10px] bg-background border border-border/80 rounded px-1 py-0.5 text-foreground nodrag nopan nowheel"
+                              />
+                              <span className="text-[8px] text-zinc-600">%</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
 
@@ -1974,9 +2270,82 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
             )}
           </div>
         )}
+        {/* ── Theme Panel ─────────────────────────────────────────────────── */}
+        <div className="border-t border-border/40 mt-1 pt-2 nodrag nopan nowheel">
+          <button
+            onClick={() => setThemeExpanded((v) => !v)}
+            className="flex items-center gap-1.5 w-full text-[9px] font-semibold text-muted-foreground uppercase tracking-wider hover:text-foreground transition-colors cursor-pointer"
+          >
+            <PaletteIcon className="w-3 h-3" />
+            Theme
+            <ChevronRightIcon className={cn("w-3 h-3 ml-auto transition-transform", themeExpanded && "rotate-90")} />
+          </button>
+
+          {themeExpanded && (
+            <div className="flex flex-col gap-2 mt-2">
+              {installedThemes.length === 0 ? (
+                <span className="text-[10px] text-muted-foreground italic">
+                  No themes installed. Add one in Settings → Themes.
+                </span>
+              ) : (
+                <select
+                  value={selectedThemeId ?? ""}
+                  onChange={(e) => e.target.value ? handleThemeSelect(e.target.value) : updateNodeData({ id: node.id, patch: { selectedThemeId: null, themeLayout: null, themeResolvedElements: [] } })}
+                  className="w-full bg-muted border border-border rounded px-2 py-1.5 text-xs text-foreground focus:border-violet-500 focus:outline-none"
+                >
+                  <option value="">— No theme —</option>
+                  {installedThemes.map((t) => (
+                    <option key={t.id} value={t.id}>{t.name}</option>
+                  ))}
+                </select>
+              )}
+
+              {themeLoading && (
+                <span className="text-[10px] text-violet-400 animate-pulse">Loading…</span>
+              )}
+
+              {themeLayout && themeLayout.variables.length > 0 && (
+                <div className="flex flex-col gap-1.5 border-t border-border/30 pt-1.5">
+                  {themeLayout.variables.map((v) => (
+                    <div key={v.key} className="flex flex-col gap-0.5">
+                      <label className="text-[9px] text-muted-foreground">{v.label}</label>
+                      <input
+                        type="text"
+                        value={draftThemeVars[v.key] ?? ""}
+                        placeholder={v.default}
+                        onChange={(e) => setDraftThemeVars((prev) => ({ ...prev, [v.key]: e.target.value }))}
+                        className="w-full bg-muted border border-border rounded px-2 py-1 text-xs text-foreground focus:border-violet-500 focus:outline-none"
+                      />
+                    </div>
+                  ))}
+                  {themeVarsDirty && (
+                    <button
+                      onClick={handleThemeVarApply}
+                      className="w-full py-1 bg-violet-600 hover:bg-violet-500 text-white text-xs font-semibold rounded cursor-pointer transition-colors"
+                    >
+                      Apply
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
       </BaseNodeCard>
 
-      {/* Overlay compositor input handle */}
+      {/* Capture Source input handle */}
+      <Handle
+        id={`handle_${node.id}_source_target`}
+        type="target"
+        position={Position.Left}
+        isConnectable={node.isConnectable}
+        isValidConnection={isValidSourceConnection}
+        style={{ top: "10px" }}
+        className="hover:!border-indigo-400 hover:!shadow-[0_0_10px_rgba(99,102,241,0.5)] hover:!scale-125"
+      />
+
+      {/* Overlay input handle */}
       <Handle
         id={`handle_${node.id}_overlay_target`}
         type="target"

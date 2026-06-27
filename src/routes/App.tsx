@@ -27,6 +27,7 @@ import {
   SettingsIcon,
   ListMusicIcon,
   LayoutTemplate as LayoutTemplateIcon,
+  ChevronUp as ChevronUpIcon,
 } from "lucide-react";
 import {
   ChromeCloseIcon,
@@ -56,6 +57,7 @@ import {
   pollSpotifyPlaybackAtom,
   spotifyNeedsReauthAtom,
   authenticateSpotify,
+  spotifyPlayerVisibleAtom,
 } from "@/store/libraryStore";
 import { toast } from "sonner";
 import {
@@ -164,6 +166,7 @@ export default function App() {
 
   const [playingItemId, setPlayingItemId] = useAtom(globalPlayingItemIdAtom);
   const [currentPlayback, setCurrentPlayback] = useAtom(currentPlaybackAtom);
+  const [spotifyPlayerVisible, setSpotifyPlayerVisible] = useAtom(spotifyPlayerVisibleAtom);
   const { items: libraryItems } = useLibraryStore();
   const [showVisualizer, setShowVisualizer] = useState(false);
   const pollPlayback = useSetAtom(pollSpotifyPlaybackAtom);
@@ -579,14 +582,27 @@ export default function App() {
         <Outlet />
       </RouteAnimationContainer>
 
+      {/* Mini Spotify indicator — shown when there's ambient playback but player is dismissed */}
+      {currentPlayback && !spotifyPlayerVisible && !playingItemId && (
+        <button
+          onClick={() => setSpotifyPlayerVisible(true)}
+          className="fixed bottom-0 left-0 right-0 z-50 flex items-center gap-2 px-4 h-8 bg-card/90 backdrop-blur-sm border-t border-border/60 text-xs text-muted-foreground hover:text-foreground hover:bg-card transition-colors cursor-pointer"
+          style={{ pointerEvents: "auto" }}
+        >
+          <ChevronUpIcon className="h-3 w-3 shrink-0" />
+          <span className="truncate font-medium">{currentPlayback.title}</span>
+          <span className="truncate text-muted-foreground/70">— {currentPlayback.artist}</span>
+        </button>
+      )}
+
       {/* Global Player Container */}
       <motion.div
         initial={false}
-        animate={{ y: playingItemId || currentPlayback ? 0 : "100%" }}
+        animate={{ y: playingItemId || spotifyPlayerVisible ? 0 : "100%" }}
         transition={{ type: "spring", bounce: 0, duration: 0.4 }}
         className="fixed bottom-0 left-0 right-0 z-50 p-0 border-t shadow-2xl rounded-t-xl bg-card max-h-[80vh] flex flex-col overflow-hidden"
         style={{
-          pointerEvents: playingItemId || currentPlayback ? "auto" : "none",
+          pointerEvents: playingItemId || spotifyPlayerVisible ? "auto" : "none",
         }}
       >
         <VisualizerBackdrop visible={!!playingItemId && showVisualizer} />
@@ -614,7 +630,7 @@ export default function App() {
                 />
               );
             }
-            if (currentPlayback) {
+            if (currentPlayback && spotifyPlayerVisible) {
               return (
                 <SpotifyLibraryPlayer
                   key="__current_playback__"
@@ -630,7 +646,7 @@ export default function App() {
                     isSpotifyPlaylist: currentPlayback.isPlaylist || undefined,
                   }}
                   autoPlay={false}
-                  onStop={() => setCurrentPlayback(null)}
+                  onStop={() => setSpotifyPlayerVisible(false)}
                 />
               );
             }

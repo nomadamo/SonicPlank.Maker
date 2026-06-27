@@ -1447,6 +1447,19 @@ const registerIpcHandlers = () => {
     }
   });
 
+  ipcMain.handle("uninstallOverlayTheme", async (_event, themeId: string) => {
+    ensureOverlayThemesDir();
+    const cleanId = path.basename(String(themeId));
+    const dir = path.join(overlayThemesDir, cleanId);
+    if (!fs.existsSync(dir)) return { success: false, error: "Theme not found" };
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: String(err?.message ?? err) };
+    }
+  });
+
   ipcMain.handle("loadOverlayTheme", async (_event, themeId: string) => {
     ensureOverlayThemesDir();
     const cleanId = path.basename(String(themeId));
@@ -1732,6 +1745,7 @@ const registerIpcHandlers = () => {
         fitMode?: string;
         encoder?: string;
         audioDeviceIds?: string[];
+        recordPath?: string;
         sources: {
           source_id: string;
           is_primary: boolean;
@@ -1767,6 +1781,13 @@ const registerIpcHandlers = () => {
         /* use default */
       }
 
+      // Build a timestamped recording path if the caller requested recording.
+      let recordFilePath: string | null = null;
+      if (options.recordPath) {
+        const ts = new Date().toISOString().replace(/[:.]/g, "-").replace("T", "_").slice(0, 19);
+        recordFilePath = path.join(options.recordPath, `recording_${ts}.mp4`);
+      }
+
       // Delegate encoding and RTMP delivery entirely to the Rust core.
       sendCoreCommand({
         type: "start_stream",
@@ -1779,6 +1800,7 @@ const registerIpcHandlers = () => {
         encoder: options.encoder ?? "libx264",
         audio_device_ids: options.audioDeviceIds ?? [],
         sources: options.sources,
+        record_path: recordFilePath ?? undefined,
       });
 
       const ev = await waitForCoreEvent<{

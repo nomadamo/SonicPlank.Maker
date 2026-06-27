@@ -8,9 +8,10 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
-import { useSettings } from "@/store/settingsStore";
+import { useSettings, installedThemesAtom } from "@/store/settingsStore";
+import { useAtom } from "jotai";
 import { Button } from "@/components/ui/button";
-import { Moon, Sun, Monitor } from "lucide-react";
+import { Moon, Sun, Monitor, Upload as UploadIcon, Trash2 } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/motion/tabs";
 import {
   Select,
@@ -20,6 +21,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import type { EncoderConfig } from "@/global";
+import type { OverlayThemeMeta } from "@/types/flow-node";
 import {
   NVENC_OPTS, X264_OPTS, AMF_OPTS, QSV_OPTS,
   ENCODER_LABELS, makeDefaultEncoderConfig, type EncoderKey,
@@ -238,6 +240,123 @@ function CoreTab() {
   );
 }
 
+function ThemesTab() {
+  const [themes, setThemes] = useAtom(installedThemesAtom);
+  const [installing, setInstalling] = React.useState(false);
+  const [uninstallingId, setUninstallingId] = React.useState<string | null>(null);
+  const [errorMsg, setErrorMsg] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    window.electron.getInstalledOverlayThemes().then(setThemes).catch(console.error);
+  }, [setThemes]);
+
+  const handleInstall = async () => {
+    try {
+      const paths = await window.electron.openFileDialog({
+        properties: ["openFile"],
+        filters: [{ name: "SonicPlank Theme", extensions: ["sptheme"] }],
+      });
+      if (!paths?.length) return;
+      setInstalling(true);
+      setErrorMsg(null);
+      const result = await window.electron.installOverlayTheme(paths[0]);
+      if ("error" in result) {
+        setErrorMsg(result.error as string);
+      } else {
+        setThemes(await window.electron.getInstalledOverlayThemes());
+      }
+    } catch (err: any) {
+      setErrorMsg(String(err?.message ?? err));
+    } finally {
+      setInstalling(false);
+    }
+  };
+
+  const handleUninstall = async (themeId: string) => {
+    setUninstallingId(themeId);
+    setErrorMsg(null);
+    try {
+      const result = await window.electron.uninstallOverlayTheme(themeId);
+      if (result.success) {
+        setThemes((prev) => prev.filter((t) => t.id !== themeId));
+      } else {
+        setErrorMsg(result.error ?? "Uninstall failed");
+      }
+    } catch (err: any) {
+      setErrorMsg(String(err?.message ?? err));
+    } finally {
+      setUninstallingId(null);
+    }
+  };
+
+  return (
+    <TabsContent value="themes" className="flex flex-col gap-4 min-h-[360px]">
+      <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-0.5">
+          <label className="text-sm font-medium">Installed Themes</label>
+          <span className="text-xs text-muted-foreground">
+            .sptheme files are built in the Marquee editor.
+          </span>
+        </div>
+        <button
+          onClick={handleInstall}
+          disabled={installing}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-violet-600/20 hover:bg-violet-600/40 border border-violet-500/30 text-violet-300 rounded cursor-pointer transition-colors disabled:opacity-50"
+        >
+          <UploadIcon className="w-3 h-3" />
+          {installing ? "Installing…" : "Install .sptheme"}
+        </button>
+      </div>
+
+      {errorMsg && (
+        <div className="text-xs text-red-400">{errorMsg}</div>
+      )}
+
+      {themes.length === 0 ? (
+        <div className="flex-1 flex items-center justify-center text-xs text-muted-foreground italic">
+          No themes installed.
+        </div>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {themes.map((t) => (
+            <div
+              key={t.id}
+              className="flex gap-3 items-start p-3 rounded-lg border border-border/50 bg-muted/30"
+            >
+              {t.previewImagePath && (
+                <img
+                  src={`file:///${t.previewImagePath.replace(/\\/g, "/")}`}
+                  alt=""
+                  className="w-20 h-12 object-cover rounded shrink-0 border border-border/40"
+                />
+              )}
+              <div className="flex-1 min-w-0 flex flex-col gap-0.5">
+                <span className="text-sm font-medium truncate">{t.name}</span>
+                {t.author && (
+                  <span className="text-xs text-muted-foreground">by {t.author}</span>
+                )}
+                {t.description && (
+                  <span className="text-xs text-muted-foreground leading-relaxed line-clamp-2">
+                    {t.description}
+                  </span>
+                )}
+              </div>
+              <button
+                onClick={() => handleUninstall(t.id)}
+                disabled={uninstallingId === t.id}
+                title="Uninstall theme"
+                className="shrink-0 p-1.5 text-muted-foreground hover:text-red-400 hover:bg-red-400/10 rounded transition-colors disabled:opacity-40 cursor-pointer"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </TabsContent>
+  );
+}
+
 const INTERVAL_OPTIONS: { label: string; value: number }[] = [
   { label: "15s", value: 15_000 },
   { label: "30s", value: 30_000 },
@@ -316,10 +435,11 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
         <Separator />
 
         <Tabs defaultValue="general" variant="segment" className="w-full">
-          <TabsList className="w-full grid grid-cols-4 mb-4">
+          <TabsList className="w-full grid grid-cols-5 mb-4">
             <TabsTrigger value="general" className="w-full">General</TabsTrigger>
             <TabsTrigger value="audio" className="w-full">Audio</TabsTrigger>
             <TabsTrigger value="output" className="w-full">Output</TabsTrigger>
+            <TabsTrigger value="themes" className="w-full">Themes</TabsTrigger>
             <TabsTrigger value="core" className="w-full">Core</TabsTrigger>
           </TabsList>
 
@@ -686,6 +806,9 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
               />
             </div>
           </TabsContent>
+
+          {/* Themes Tab */}
+          <ThemesTab />
 
           {/* Core Tab */}
           <CoreTab />
