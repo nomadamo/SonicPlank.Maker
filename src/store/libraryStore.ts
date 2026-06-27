@@ -80,6 +80,8 @@ export const lastDeviceIdAtom = atomWithStorage<string | null>(
 
 export const currentPlaybackAtom = atom<CurrentPlayback | null>(null);
 
+export const spotifyNeedsReauthAtom = atom(false);
+
 export const isGlobalPlayerActiveAtom = atom((get) => {
   const localId = get(globalPlayingItemIdAtom);
   if (localId) return true;
@@ -211,20 +213,54 @@ export const initSpotifyFromStorage = atom(null, async (get, set) => {
 // ── Auth ──────────────────────────────────────────────────────────────────────
 
 export const pollSpotifyPlaybackAtom = atom(null, async (get, set) => {
-  const token = get(spotifyTokenAtom);
-  if (!token) return;
+  let creds = get(spotifyCredentialsAtom);
+  if (!creds) return;
+
+  // Proactively refresh if within 60 seconds of expiry
+  const expiresAt = creds.obtainedAt + creds.expiresIn * 1000;
+  if (Date.now() >= expiresAt - 60_000) {
+    try {
+      const refreshed = await refreshCredentials(creds.refreshToken);
+      set(spotifyCredentialsAtom, refreshed);
+      set(spotifyAtom, buildSdk(refreshed));
+      set(spotifyTokenAtom, refreshed.accessToken);
+      creds = refreshed;
+    } catch {
+      set(spotifyCredentialsAtom, null);
+      set(spotifyAtom, null);
+      set(spotifyTokenAtom, null);
+      set(spotifyNeedsReauthAtom, true);
+      return;
+    }
+  }
 
   try {
     const playerRes = await fetch("https://api.spotify.com/v1/me/player", {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: { Authorization: `Bearer ${creds.accessToken}` },
     });
+
+    if (playerRes.status === 401) {
+      // Token rejected; attempt one more refresh before giving up
+      try {
+        const refreshed = await refreshCredentials(creds.refreshToken);
+        set(spotifyCredentialsAtom, refreshed);
+        set(spotifyAtom, buildSdk(refreshed));
+        set(spotifyTokenAtom, refreshed.accessToken);
+      } catch {
+        set(spotifyCredentialsAtom, null);
+        set(spotifyAtom, null);
+        set(spotifyTokenAtom, null);
+        set(spotifyNeedsReauthAtom, true);
+      }
+      return;
+    }
 
     if (playerRes.status === 200) {
       const state = await playerRes.json() as StartupPlayerState;
       if (state.item) {
         const context = state.context ?? null;
         const uri = context ? context.uri : state.item.uri;
-        
+
         // Only update if it actually changed to avoid re-renders
         const current = get(currentPlaybackAtom);
         if (
@@ -243,13 +279,13 @@ export const pollSpotifyPlaybackAtom = atom(null, async (get, set) => {
             duration: state.item.duration_ms / 1000,
           });
         }
-        
+
         if (state.device?.id) {
           set(lastDeviceIdAtom, state.device.id);
         }
       }
     }
-  } catch (err) {
+  } catch {
     // Ignore fetch errors during polling
   }
 });
@@ -265,6 +301,7 @@ export const authenticateSpotify = atom(null, async (_get, set) => {
   set(spotifyCredentialsAtom, creds);
   set(spotifyAtom, buildSdk(creds));
   set(spotifyTokenAtom, tokens.accessToken);
+  set(spotifyNeedsReauthAtom, false);
 });
 
 // ── Hook ──────────────────────────────────────────────────────────────────────

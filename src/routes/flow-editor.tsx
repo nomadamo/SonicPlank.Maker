@@ -26,6 +26,7 @@ import { OverlayGroupNode } from "@/components/overlay-group-node";
 import { NowPlayingNode } from "@/components/now-playing-node";
 import { GlobalAudioNode } from "@/components/global-audio-node";
 import { TwitchChatNode } from "@/components/twitch-chat-node";
+import { OverlayThemeNode } from "@/components/overlay-theme-node";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { AnimatedRoute } from "@/components/animated-route";
 import { LoadingAnimation } from "@/components/animations/loading-animation";
@@ -38,6 +39,7 @@ import { FlowNodeType } from "@/types/flow-node";
 import "@xyflow/react/dist/style.css";
 import { SonicBackground } from "@/components/sonicbackground";
 import { isValidConnection } from "@/utils/flow-connections";
+import { getThemeDefaultForType } from "@/utils/theme-defaults";
 import {
   DownloadIcon,
   LibraryIcon,
@@ -120,6 +122,7 @@ const nodeTypes = {
   overlayGroupNode: OverlayGroupNode,
   nowPlayingNode: NowPlayingNode,
   twitchChatNode: TwitchChatNode,
+  overlayThemeNode: OverlayThemeNode,
 };
 
 const edgeTypes: EdgeTypes = {
@@ -145,6 +148,7 @@ interface AddNodesMenuProps {
   onAddNowPlayingNode: () => void;
   onAddGlobalAudioNode: () => void;
   onAddTwitchChatNode: () => void;
+  onAddOverlayThemeNode: () => void;
 }
 
 function AddNodesMenu({
@@ -162,6 +166,7 @@ function AddNodesMenu({
   onAddNowPlayingNode,
   onAddGlobalAudioNode,
   onAddTwitchChatNode,
+  onAddOverlayThemeNode,
 }: AddNodesMenuProps) {
   return (
     <>
@@ -235,6 +240,11 @@ function AddNodesMenu({
             <ActivityIcon className="text-cyan-400" />
             Visualizer
           </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={onAddOverlayThemeNode}>
+            <PaletteIcon className="text-violet-400" />
+            Overlay Theme
+          </DropdownMenuItem>
         </DropdownMenuSubContent>
       </DropdownMenuSub>
 
@@ -280,9 +290,16 @@ function FlowEditor() {
   const [selectedNodes, setSelectedNodes] = useState([] as FlowNodeType[]);
   const [currentNodes, setCurrentNodes, onNodesChange] =
     useNodesState(flowNodesData);
+  // Stable ref for reading currentNodes inside callbacks without adding it to deps
+  const currentNodesRef = useRef(currentNodes);
+  currentNodesRef.current = currentNodes;
   const [currentEdges, setCurrentEdges, onEdgesChange] =
     useEdgesState(flowEdgesData);
   const [currentViewport, setCurrentViewport] = useState(flowViewportData);
+  // Always-current ref so the debounced sync can include the latest viewport
+  // even when viewport-only changes don't re-run the effect.
+  const currentViewportRef = useRef(currentViewport);
+  currentViewportRef.current = currentViewport;
 
   const updateNodeData = useSetAtom(updateNodeDataAtom);
   const isGlobalPlayerActive = useAtomValue(isGlobalPlayerActiveAtom);
@@ -519,23 +536,23 @@ function FlowEditor() {
     const timer = setTimeout(() => {
       const hasPendingChanges =
         latestFlowDataRef.current.nodes !== currentNodes ||
-        latestFlowDataRef.current.edges !== currentEdges ||
-        latestFlowDataRef.current.viewport !== currentViewport;
+        latestFlowDataRef.current.edges !== currentEdges;
+      // Always sync viewport into the ref so pan/zoom alone doesn't retrigger.
+      latestFlowDataRef.current = {
+        nodes: currentNodes,
+        edges: currentEdges,
+        viewport: currentViewportRef.current,
+      };
       if (hasPendingChanges) {
         setFlowData({
           nodes: currentNodes,
           edges: currentEdges,
-          viewport: currentViewport,
+          viewport: currentViewportRef.current,
         });
-        latestFlowDataRef.current = {
-          nodes: currentNodes,
-          edges: currentEdges,
-          viewport: currentViewport,
-        };
       }
     }, 200);
     return () => clearTimeout(timer);
-  }, [currentNodes, currentEdges, currentViewport, setFlowData]);
+  }, [currentNodes, currentEdges, setFlowData]);
 
   // ─── Snapshot after Store → ReactFlow sync ─────────────────────────────────
   useEffect(() => {
@@ -931,15 +948,16 @@ function FlowEditor() {
   ]);
 
   const onAddTextOverlayNode = useCallback(() => {
+    const td = getThemeDefaultForType("text", currentNodesRef.current);
     const newNode: FlowNodeType = {
       id: crypto.randomUUID(),
       type: "textOverlayNode",
       position: getCenterProjectPosition(),
       data: {
-        x: 10,
-        y: 10,
-        width: 40,
-        height: 10,
+        x: td?.x ?? 10,
+        y: td?.y ?? 10,
+        width: td?.width ?? 40,
+        height: td?.height ?? 10,
         opacity: 1,
         textContent: "Watermark Text",
         fontSize: 5,
@@ -957,15 +975,16 @@ function FlowEditor() {
   ]);
 
   const onAddColorOverlayNode = useCallback(() => {
+    const td = getThemeDefaultForType("color", currentNodesRef.current);
     const newNode: FlowNodeType = {
       id: crypto.randomUUID(),
       type: "colorOverlayNode",
       position: getCenterProjectPosition(),
       data: {
-        x: 10,
-        y: 10,
-        width: 30,
-        height: 20,
+        x: td?.x ?? 10,
+        y: td?.y ?? 10,
+        width: td?.width ?? 30,
+        height: td?.height ?? 20,
         opacity: 1,
         backgroundColor: "#4f46e5",
       },
@@ -981,15 +1000,16 @@ function FlowEditor() {
   ]);
 
   const onAddImageOverlayNode = useCallback(() => {
+    const td = getThemeDefaultForType("image", currentNodesRef.current);
     const newNode: FlowNodeType = {
       id: crypto.randomUUID(),
       type: "imageOverlayNode",
       position: getCenterProjectPosition(),
       data: {
-        x: 10,
-        y: 10,
-        width: 30,
-        height: 20,
+        x: td?.x ?? 10,
+        y: td?.y ?? 10,
+        width: td?.width ?? 30,
+        height: td?.height ?? 20,
         opacity: 1,
         imagePath: "",
       },
@@ -1005,15 +1025,16 @@ function FlowEditor() {
   ]);
 
   const onAddVisualizerOverlayNode = useCallback(() => {
+    const td = getThemeDefaultForType("visualizer", currentNodesRef.current);
     const newNode: FlowNodeType = {
       id: crypto.randomUUID(),
       type: "visualizerOverlayNode",
       position: getCenterProjectPosition(),
       data: {
-        x: 10,
-        y: 70,
-        width: 80,
-        height: 20,
+        x: td?.x ?? 10,
+        y: td?.y ?? 70,
+        width: td?.width ?? 80,
+        height: td?.height ?? 20,
         opacity: 1,
         backgroundColor: "rgba(0, 0, 0, 0.3)",
       },
@@ -1048,15 +1069,16 @@ function FlowEditor() {
   ]);
 
   const onAddNowPlayingNode = useCallback(() => {
+    const td = getThemeDefaultForType("nowPlaying", currentNodesRef.current);
     const newNode: FlowNodeType = {
       id: crypto.randomUUID(),
       type: "nowPlayingNode",
       position: getCenterProjectPosition(),
       data: {
-        x: 10,
-        y: 10,
-        width: 35,
-        height: 12,
+        x: td?.x ?? 10,
+        y: td?.y ?? 10,
+        width: td?.width ?? 35,
+        height: td?.height ?? 12,
         opacity: 1,
       },
     };
@@ -1071,16 +1093,39 @@ function FlowEditor() {
   ]);
 
   const onAddTwitchChatNode = useCallback(() => {
+    const td = getThemeDefaultForType("twitchChat", currentNodesRef.current);
     const newNode: FlowNodeType = {
       id: crypto.randomUUID(),
       type: "twitchChatNode",
       position: getCenterProjectPosition(),
       data: {
-        x: 2,
-        y: 50,
-        width: 28,
-        height: 38,
+        x: td?.x ?? 2,
+        y: td?.y ?? 50,
+        width: td?.width ?? 28,
+        height: td?.height ?? 38,
         opacity: 0.9,
+      },
+    };
+    setCurrentNodes((nodes) => [...nodes, newNode]);
+    setPersistRequested(true);
+    setHasUnsavedChanges(true);
+  }, [
+    getCenterProjectPosition,
+    setCurrentNodes,
+    setPersistRequested,
+    setHasUnsavedChanges,
+  ]);
+
+  const onAddOverlayThemeNode = useCallback(() => {
+    const newNode: FlowNodeType = {
+      id: crypto.randomUUID(),
+      type: "overlayThemeNode",
+      position: getCenterProjectPosition(),
+      data: {
+        selectedThemeId: null,
+        variables: {},
+        themeLayout: null,
+        resolvedElements: [],
       },
     };
     setCurrentNodes((nodes) => [...nodes, newNode]);
@@ -1230,6 +1275,7 @@ function FlowEditor() {
                               onAddNowPlayingNode={onAddNowPlayingNode}
                               onAddGlobalAudioNode={onAddGlobalAudioNode}
                               onAddTwitchChatNode={onAddTwitchChatNode}
+                              onAddOverlayThemeNode={onAddOverlayThemeNode}
                             />
                           </DropdownMenuContent>
                         </DropdownMenu>
@@ -1369,6 +1415,7 @@ function FlowEditor() {
                           onAddGlobalAudioNode={onAddGlobalAudioNode}
                           onAddTwitchChatNode={onAddTwitchChatNode}
                           onAddAudioSourceNode={onAddAudioSourceNode}
+                          onAddOverlayThemeNode={onAddOverlayThemeNode}
                         />
                       </DropdownMenuContent>
                     </DropdownMenu>

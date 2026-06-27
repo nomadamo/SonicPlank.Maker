@@ -67,6 +67,8 @@ function OverlayWindowComponent() {
 
   const lastAudioBroadcastRef = useRef<number>(0);
   const requestRef = useRef<number | null>(null);
+  // Gate: don't paint blank frames while the initial getOverlays() IPC is in flight.
+  const overlaysReadyRef = useRef(false);
 
   // Offscreen rendering needs explicit transparent background — Chromium won't
   // clear to transparent on its own without these styles.
@@ -78,17 +80,30 @@ function OverlayWindowComponent() {
   // Sync state via IPC
   useEffect(() => {
     window.electron.getOverlays()
-      .then((initial) => { if (initial) overlaysRef.current = initial; })
+      .then((initial) => {
+        if (initial) overlaysRef.current = initial;
+        overlaysReadyRef.current = true;
+      })
+      .catch(() => { overlaysReadyRef.current = true; });
+
+    // Populate chat store with any messages received before this window loaded
+    window.electron.getChatMessages()
+      .then((msgs) => {
+        for (const [nodeId, messages] of Object.entries(msgs)) {
+          chatMessagesStore.set(nodeId, messages);
+        }
+      })
       .catch(() => {});
-      
+
     window.electron.onOverlaysUpdated((updated) => {
       overlaysRef.current = updated ?? [];
+      overlaysReadyRef.current = true;
     });
-    
+
     window.electron.onAudioDataUpdated((id, data) => {
       audioDataMapRef.current[id] = data;
     });
-    
+
     window.electron.onAudioTimeUpdated((nodeId, currentTime) => {
       const overlay = overlaysRef.current.find((o) => o.audioNodeId === nodeId && o.type === "nowPlaying");
       const duration = overlay?.duration !== undefined ? Number(overlay.duration) : 0;
@@ -99,7 +114,21 @@ function OverlayWindowComponent() {
       chatMessagesStore.set(nodeId, messages);
     });
 
+    // Periodic resync: pull cached messages from main every 2s so chat
+    // appears even if the push event was missed (e.g. arrived before mount).
+    const chatSyncInterval = setInterval(() => {
+      if (!overlaysRef.current.some((o) => o.type === "twitchChat")) return;
+      window.electron.getChatMessages()
+        .then((msgs) => {
+          for (const [nodeId, messages] of Object.entries(msgs)) {
+            chatMessagesStore.set(nodeId, messages);
+          }
+        })
+        .catch(() => {});
+    }, 2000);
+
     return () => {
+      clearInterval(chatSyncInterval);
       window.electron.removeOnOverlaysUpdated(() => {});
       window.electron.removeOnAudioDataUpdated();
       window.electron.removeOnAudioTimeUpdated();
@@ -120,12 +149,16 @@ function OverlayWindowComponent() {
     
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-    
+
+    // Hold the previous frame if overlays haven't loaded yet or are transiently
+    // empty — prevents the 10fps SHM paint from capturing a blank canvas.
+    if (!overlaysReadyRef.current || overlaysRef.current.length === 0) return;
+
     // Clear canvas - transparent background!
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    
+
     const now = performance.now();
-    
+
     // 2. Draw overlays sequentially
     overlaysRef.current.forEach((overlay) => {
       ctx.save();
@@ -345,10 +378,11 @@ function OverlayWindowComponent() {
         const totalDur = tracking ? tracking.duration : 0;
         const pct = totalDur > 0 ? curTime / totalDur : 0;
 
-        const W = Math.round(wVal);
-        const H = Math.round(hVal);
+        const W = Math.max(1, Math.round(wVal));
+        const H = Math.max(1, Math.round(hVal));
         // Timer updates at 1-second resolution; progress bar at 1% resolution.
-        const contentKey = `${W}|${H}|${overlay.title ?? ""}|${overlay.artist ?? ""}|${overlay.albumArt ?? ""}|${Math.floor(curTime)}|${Math.floor(pct * 100)}`;
+        // Style props included so cache invalidates when theme colors change.
+        const contentKey = `${W}|${H}|${overlay.title ?? ""}|${overlay.artist ?? ""}|${overlay.albumArt ?? ""}|${Math.floor(curTime)}|${Math.floor(pct * 100)}|${overlay.backgroundColor ?? ""}|${overlay.textColor ?? ""}|${overlay.progressColor ?? ""}|${overlay.fontFamily ?? ""}`;
 
         let npCache = nowPlayingCacheRef.current.get(overlay.id);
         const needsNewCanvas =
@@ -374,7 +408,7 @@ function OverlayWindowComponent() {
 
             // Card background
             drawRoundedRect(oc, 0, 0, W, H, H * 0.15);
-            oc.fillStyle = "rgba(12, 12, 12, 0.85)";
+            oc.fillStyle = overlay.backgroundColor || "rgba(12,12,12,0.85)";
             oc.fill();
             oc.strokeStyle = "rgba(255, 255, 255, 0.08)";
             oc.lineWidth = 1;
@@ -417,10 +451,11 @@ function OverlayWindowComponent() {
 
             // Title
             const maxTextWidth = W - (pad * 3 + artSize) - pad;
-            oc.fillStyle = "#ffffff";
+            const cardFont = overlay.fontFamily || "Inter, sans-serif";
+            oc.fillStyle = overlay.textColor || "#ffffff";
             oc.textAlign = "left";
             oc.textBaseline = "top";
-            oc.font = `bold ${artSize * 0.22}px Inter, sans-serif`;
+            oc.font = `bold ${artSize * 0.22}px ${cardFont}`;
             let displayTitle = overlay.title || "No Track Connected";
             if (oc.measureText(displayTitle).width > maxTextWidth) {
               while (
@@ -435,7 +470,7 @@ function OverlayWindowComponent() {
 
             // Artist
             oc.fillStyle = "#a1a1aa";
-            oc.font = `500 ${artSize * 0.16}px Inter, sans-serif`;
+            oc.font = `500 ${artSize * 0.16}px ${cardFont}`;
             let displayArtist = overlay.artist || "Connect Audio Source";
             if (oc.measureText(displayArtist).width > maxTextWidth) {
               while (
@@ -460,7 +495,7 @@ function OverlayWindowComponent() {
             drawRoundedRect(oc, textX, progressY, barW, H * 0.04, H * 0.02);
             oc.fill();
             if (pct > 0) {
-              oc.fillStyle = "#6366f1";
+              oc.fillStyle = overlay.progressColor || "#6366f1";
               oc.beginPath();
               drawRoundedRect(
                 oc,
@@ -507,21 +542,22 @@ function OverlayWindowComponent() {
         const padY = Math.round(sizePx * 0.5);
 
         // Semi-transparent background
-        ctx.fillStyle = "rgba(0,0,0,0.55)";
+        ctx.fillStyle = overlay.backgroundColor || "rgba(0,0,0,0.55)";
         ctx.beginPath();
         const r = Math.min(8, wVal * 0.02, hVal * 0.02);
         ctx.roundRect(xVal, yVal, wVal, hVal, r);
         ctx.fill();
 
-        if (messages.length > 0) {
+        const maxLines = Math.floor((hVal - padY * 2) / lineH);
+        const contentW = wVal - padX * 2;
+
+        if (messages.length > 0 && maxLines > 0 && contentW > 0) {
           ctx.save();
           ctx.beginPath();
-          ctx.rect(xVal + padX, yVal + padY, wVal - padX * 2, hVal - padY * 2);
+          ctx.rect(xVal + padX, yVal + padY, contentW, hVal - padY * 2);
           ctx.clip();
 
           ctx.textBaseline = "top";
-          const maxLines = Math.floor((hVal - padY * 2) / lineH);
-          const contentW = wVal - padX * 2;
 
           // Pre-compute wrapped lines newest-first until we fill the box
           type RenderedMsg = {
@@ -547,6 +583,7 @@ function OverlayWindowComponent() {
           }
 
           // Draw bottom-up
+          const chatTextColor = overlay.textColor || "#ffffff";
           let ty = yVal + hVal - padY - lineH;
           for (let i = rendered.length - 1; i >= 0; i--) {
             const { msg, prefix, prefixW, lines } = rendered[i];
@@ -554,10 +591,10 @@ function OverlayWindowComponent() {
               if (li === 0) {
                 ctx.fillStyle = msg.color || "#9147ff";
                 ctx.fillText(prefix, xVal + padX, ty);
-                ctx.fillStyle = "#ffffff";
+                ctx.fillStyle = chatTextColor;
                 ctx.fillText(lines[li], xVal + padX + prefixW, ty);
               } else {
-                ctx.fillStyle = "#ffffff";
+                ctx.fillStyle = chatTextColor;
                 ctx.fillText(lines[li], xVal + padX + prefixW, ty);
               }
               ty -= lineH;

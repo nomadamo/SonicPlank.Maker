@@ -184,6 +184,20 @@ contextBridge.exposeInMainWorld("electron", {
   sendChatMessages: (nodeId: string, messages: any[]) => {
     ipcRenderer.send("sendChatMessages", nodeId, messages);
   },
+  getChatMessages: async (): Promise<Record<string, any[]>> => {
+    return await ipcRenderer.invoke("getChatMessages");
+  },
+  connectTwitchChat: async (
+    nodeId: string,
+    channel: string,
+    token: string,
+    maxMessages: number,
+  ): Promise<{ success: boolean; error?: string }> => {
+    return await ipcRenderer.invoke("connectTwitchChat", nodeId, channel, token, maxMessages);
+  },
+  disconnectTwitchChat: async (nodeId: string): Promise<void> => {
+    await ipcRenderer.invoke("disconnectTwitchChat", nodeId);
+  },
   onChatMessagesUpdated: (
     callback: (nodeId: string, messages: any[]) => void,
   ) => {
@@ -239,6 +253,21 @@ contextBridge.exposeInMainWorld("electron", {
   },
   loadThemeStyles: async (themeName: string): Promise<string> => {
     return await ipcRenderer.invoke("loadThemeStyles", themeName);
+  },
+  installOverlayTheme: async (filePath: string): Promise<any> => {
+    return await ipcRenderer.invoke("installOverlayTheme", filePath);
+  },
+  getInstalledOverlayThemes: async (): Promise<any[]> => {
+    return await ipcRenderer.invoke("getInstalledOverlayThemes");
+  },
+  loadOverlayTheme: async (themeId: string): Promise<any> => {
+    return await ipcRenderer.invoke("loadOverlayTheme", themeId);
+  },
+  saveOverlayTheme: async (args: { themeJson: string; assets: { localPath: string; archiveName: string }[]; savePath: string }): Promise<any> => {
+    return await ipcRenderer.invoke("saveOverlayTheme", args);
+  },
+  openThemeForEditing: async (filePath: string): Promise<any> => {
+    return await ipcRenderer.invoke("openThemeForEditing", filePath);
   },
   sendAudioTime: (nodeId: string, currentTime: number, paused: boolean) => {
     ipcRenderer.send("sendAudioTime", nodeId, currentTime, paused);

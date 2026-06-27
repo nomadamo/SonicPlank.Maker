@@ -84,12 +84,20 @@ unsafe fn read_shm_overlay(shm: &ShmOverlay, buf: &mut Vec<u8>) -> Option<(u32, 
 
     let gen_ptr = base as *const AtomicU32;
 
-    // Retry up to 3 times if a write races with our copy.
-    for _ in 0..3 {
+    // Up to 16 attempts: spin through both "write in progress" (odd gen) and
+    // torn-copy races (gen changed between read and re-check).
+    for _ in 0..16 {
         let gen1 = (*gen_ptr).load(Ordering::Acquire);
-        if gen1 == 0 || gen1 & 1 == 1 {
-            // No data yet, or write in progress.
+        if gen1 == 0 {
+            // No frame written yet.
             return None;
+        }
+        if gen1 & 1 == 1 {
+            // Electron write in progress — spin and retry rather than bail.
+            // The write window is ~10–50 µs (two koffi memcpy calls); a few
+            // spin iterations are enough to outlast it on any modern CPU.
+            std::hint::spin_loop();
+            continue;
         }
 
         let ov_w = std::ptr::read_volatile(base.add(4) as *const u32);
@@ -116,7 +124,7 @@ unsafe fn read_shm_overlay(shm: &ShmOverlay, buf: &mut Vec<u8>) -> Option<(u32, 
             // Copy was consistent.
             return Some((ov_w, ov_h));
         }
-        // A write raced; retry.
+        // gen changed mid-copy (torn read) — retry.
     }
 
     None
@@ -127,6 +135,8 @@ pub fn composite_frame(
     shm_overlay: &ShmOverlay,
     pip_scalers: &mut HashMap<String, (*mut SwsContext, i32, i32, i32, i32)>,
     overlay_buf: &mut Vec<u8>,
+    good_overlay_buf: &mut Vec<u8>,
+    last_overlay_dims: &mut Option<(u32, u32)>,
 ) -> Arc<RawFrame> {
     let out_w = raw.primary.width as i32;
     let out_h = raw.primary.height as i32;
@@ -189,9 +199,21 @@ pub fn composite_frame(
 
     // Read the overlay from shared memory via seqlock.
     let overlay_dims = unsafe { read_shm_overlay(shm_overlay, overlay_buf) };
-    if let Some((ov_w, ov_h)) = overlay_dims {
+    if let Some(dims) = overlay_dims {
+        // Consistent read — promote to last-known-good by swapping buffers (O(1), no copy).
+        // After swap: good_overlay_buf has fresh pixels; overlay_buf holds stale data
+        // that will be overwritten on the next frame's seqlock read.
+        std::mem::swap(overlay_buf, good_overlay_buf);
+        *last_overlay_dims = Some(dims);
+    }
+
+    // Always composite from the last-known-good buffer.
+    // On any seqlock-race frame the previous overlay is reused instead of disappearing.
+    if let Some((ov_w, ov_h)) = *last_overlay_dims {
         let px_len = ov_w as usize * ov_h as usize * 4;
-        bgra_blend(&overlay_buf[..px_len], ov_w as i32, ov_h as i32, &mut out_pixels, out_w, out_h, 0, 0);
+        if good_overlay_buf.len() >= px_len {
+            bgra_blend(&good_overlay_buf[..px_len], ov_w as i32, ov_h as i32, &mut out_pixels, out_w, out_h, 0, 0);
+        }
     }
 
     Arc::new(RawFrame {
@@ -216,8 +238,12 @@ pub fn start_compositor(
     std::thread::spawn(move || {
         let mut latest_pips: HashMap<String, Arc<RawFrame>> = HashMap::new();
         let mut pip_scalers: HashMap<String, (*mut SwsContext, i32, i32, i32, i32)> = HashMap::new();
-        // Reusable buffer for seqlock overlay copies — allocated once, avoids per-frame 8 MB allocs.
+        // Reusable buffers for seqlock overlay copies — allocated once, avoids per-frame 8 MB allocs.
+        // overlay_buf: staging target for each seqlock read attempt.
+        // good_overlay_buf: last confirmed-consistent frame; used as fallback on race failures.
         let mut overlay_buf: Vec<u8> = Vec::with_capacity(1920 * 1080 * 4);
+        let mut good_overlay_buf: Vec<u8> = Vec::with_capacity(1920 * 1080 * 4);
+        let mut last_overlay_dims: Option<(u32, u32)> = None;
 
         let mut rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async move {
@@ -241,7 +267,7 @@ pub fn start_compositor(
                                 pips: current_pips,
                             };
 
-                            let out_frame = composite_frame(&composite, &shm_overlay, &mut pip_scalers, &mut overlay_buf);
+                            let out_frame = composite_frame(&composite, &shm_overlay, &mut pip_scalers, &mut overlay_buf, &mut good_overlay_buf, &mut last_overlay_dims);
                             let _ = tx.send(out_frame);
                         } else {
                             latest_pips.insert(sid.clone(), frame);

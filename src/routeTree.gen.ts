@@ -10,9 +10,9 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as SonicsRouteImport } from './routes/sonics'
-import { Route as ScenesRouteImport } from './routes/scenes'
 import { Route as PreviewRouteImport } from './routes/preview'
 import { Route as OverlayRouteImport } from './routes/overlay'
+import { Route as MarqueeRouteImport } from './routes/marquee'
 import { Route as FlowEditorRouteImport } from './routes/flow-editor'
 import { Route as AppRouteImport } from './routes/App'
 import { Route as IndexRouteImport } from './routes/index'
@@ -20,11 +20,6 @@ import { Route as IndexRouteImport } from './routes/index'
 const SonicsRoute = SonicsRouteImport.update({
   id: '/sonics',
   path: '/sonics',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ScenesRoute = ScenesRouteImport.update({
-  id: '/scenes',
-  path: '/scenes',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PreviewRoute = PreviewRouteImport.update({
@@ -35,6 +30,11 @@ const PreviewRoute = PreviewRouteImport.update({
 const OverlayRoute = OverlayRouteImport.update({
   id: '/overlay',
   path: '/overlay',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MarqueeRoute = MarqueeRouteImport.update({
+  id: '/marquee',
+  path: '/marquee',
   getParentRoute: () => rootRouteImport,
 } as any)
 const FlowEditorRoute = FlowEditorRouteImport.update({
@@ -57,18 +57,18 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/App': typeof AppRoute
   '/flow-editor': typeof FlowEditorRoute
+  '/marquee': typeof MarqueeRoute
   '/overlay': typeof OverlayRoute
   '/preview': typeof PreviewRoute
-  '/scenes': typeof ScenesRoute
   '/sonics': typeof SonicsRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/App': typeof AppRoute
   '/flow-editor': typeof FlowEditorRoute
+  '/marquee': typeof MarqueeRoute
   '/overlay': typeof OverlayRoute
   '/preview': typeof PreviewRoute
-  '/scenes': typeof ScenesRoute
   '/sonics': typeof SonicsRoute
 }
 export interface FileRoutesById {
@@ -76,9 +76,9 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/App': typeof AppRoute
   '/flow-editor': typeof FlowEditorRoute
+  '/marquee': typeof MarqueeRoute
   '/overlay': typeof OverlayRoute
   '/preview': typeof PreviewRoute
-  '/scenes': typeof ScenesRoute
   '/sonics': typeof SonicsRoute
 }
 export interface FileRouteTypes {
@@ -87,27 +87,27 @@ export interface FileRouteTypes {
     | '/'
     | '/App'
     | '/flow-editor'
+    | '/marquee'
     | '/overlay'
     | '/preview'
-    | '/scenes'
     | '/sonics'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/App'
     | '/flow-editor'
+    | '/marquee'
     | '/overlay'
     | '/preview'
-    | '/scenes'
     | '/sonics'
   id:
     | '__root__'
     | '/'
     | '/App'
     | '/flow-editor'
+    | '/marquee'
     | '/overlay'
     | '/preview'
-    | '/scenes'
     | '/sonics'
   fileRoutesById: FileRoutesById
 }
@@ -115,9 +115,9 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AppRoute: typeof AppRoute
   FlowEditorRoute: typeof FlowEditorRoute
+  MarqueeRoute: typeof MarqueeRoute
   OverlayRoute: typeof OverlayRoute
   PreviewRoute: typeof PreviewRoute
-  ScenesRoute: typeof ScenesRoute
   SonicsRoute: typeof SonicsRoute
 }
 
@@ -128,13 +128,6 @@ declare module '@tanstack/react-router' {
       path: '/sonics'
       fullPath: '/sonics'
       preLoaderRoute: typeof SonicsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/scenes': {
-      id: '/scenes'
-      path: '/scenes'
-      fullPath: '/scenes'
-      preLoaderRoute: typeof ScenesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/preview': {
@@ -149,6 +142,13 @@ declare module '@tanstack/react-router' {
       path: '/overlay'
       fullPath: '/overlay'
       preLoaderRoute: typeof OverlayRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/marquee': {
+      id: '/marquee'
+      path: '/marquee'
+      fullPath: '/marquee'
+      preLoaderRoute: typeof MarqueeRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/flow-editor': {
@@ -179,9 +179,9 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AppRoute: AppRoute,
   FlowEditorRoute: FlowEditorRoute,
+  MarqueeRoute: MarqueeRoute,
   OverlayRoute: OverlayRoute,
   PreviewRoute: PreviewRoute,
-  ScenesRoute: ScenesRoute,
   SonicsRoute: SonicsRoute,
 }
 export const routeTree = rootRouteImport

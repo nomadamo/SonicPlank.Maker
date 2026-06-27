@@ -95,15 +95,24 @@ export function AudioNode(NodeRef: NodeProps<FlowNodeType>) {
 
     if (!isPlayingVal) return;
 
+    // Throttle IPC to ~4fps — the overlay contentKey only changes at whole-second
+    // boundaries, so 60fps sends were creating ~56 wasted IPC round-trips per second
+    // that pressured Chromium's offscreen compositor scheduling and caused RAF jitter
+    // in the overlay window, manifesting as periodic overlay flicker.
     let animFrame: number;
+    let lastSendMs = -Infinity;
     const updateTime = () => {
-      const audioInstance = getFlowAudio(node.id);
-      if (audioInstance) {
-        window.electron.sendAudioTime(
-          node.id,
-          audioInstance.audio.currentTime,
-          audioInstance.audio.paused,
-        );
+      const now = performance.now();
+      if (now - lastSendMs >= 250) {
+        const audioInstance = getFlowAudio(node.id);
+        if (audioInstance) {
+          window.electron.sendAudioTime(
+            node.id,
+            audioInstance.audio.currentTime,
+            audioInstance.audio.paused,
+          );
+        }
+        lastSendMs = now;
       }
       animFrame = requestAnimationFrame(updateTime);
     };

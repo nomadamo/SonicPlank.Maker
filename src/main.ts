@@ -30,6 +30,8 @@ import {
 import started from "electron-squirrel-startup";
 import { inDevelopment } from "./constants";
 import { spawn } from "node:child_process";
+import AdmZip from "adm-zip";
+import type { EventSubWsListener } from "@twurple/eventsub-ws";
 
 // ── GPU / capture acceleration ───────────────────────────────────────────────
 // All enable-features flags MUST be in a single appendSwitch call.
@@ -66,6 +68,8 @@ app.commandLine.appendSwitch("webrtc-max-cpu-consumption-percentage", "75");
 
 let ffmpegProcess: any = null;
 let activeOverlays: any[] = [];
+const cachedChatMessages = new Map<string, any[]>();
+const twitchListeners = new Map<string, EventSubWsListener>();
 let previewWin: BrowserWindow | null = null;
 let overlayWindow: BrowserWindow | null = null;
 let overlayConfigWidth = 1920;
@@ -636,6 +640,19 @@ const themesDir = path.join(
   "Themes",
 );
 
+// Overlay themes directory (separate from UI color themes)
+const overlayThemesDir = path.join(
+  app.getPath("appData"),
+  "SonicPlank.Maker",
+  "OverlayThemes",
+);
+
+function ensureOverlayThemesDir() {
+  if (!fs.existsSync(overlayThemesDir)) {
+    fs.mkdirSync(overlayThemesDir, { recursive: true });
+  }
+}
+
 function ensureThemesDir() {
   if (!fs.existsSync(themesDir)) {
     fs.mkdirSync(themesDir, { recursive: true });
@@ -947,10 +964,101 @@ const registerIpcHandlers = () => {
   });
 
   ipcMain.on("sendChatMessages", (event, nodeId, messages) => {
+    cachedChatMessages.set(nodeId, messages);
     BrowserWindow.getAllWindows().forEach((win) => {
       if (win.webContents !== event.sender) {
         win.webContents.send("onChatMessagesUpdated", nodeId, messages);
       }
+    });
+  });
+
+  ipcMain.handle("getChatMessages", () => Object.fromEntries(cachedChatMessages));
+
+  ipcMain.handle(
+    "connectTwitchChat",
+    async (_, nodeId: string, channel: string, token: string, maxMessages: number) => {
+      // Stop any existing listener for this node
+      const prev = twitchListeners.get(nodeId);
+      if (prev) {
+        prev.stop();
+        twitchListeners.delete(nodeId);
+      }
+
+      const rawToken = token.replace(/^oauth:/i, "");
+      if (!rawToken) return { success: false, error: "No token provided" };
+
+      try {
+        // Validate token → get clientId + userId without needing to know them upfront
+        const validateRes = await fetch("https://id.twitch.tv/oauth2/validate", {
+          headers: { Authorization: `OAuth ${rawToken}` },
+        });
+        if (!validateRes.ok) {
+          throw new Error(`Token validation failed: ${validateRes.status}`);
+        }
+        const { client_id: clientId, user_id: userId, scopes } =
+          (await validateRes.json()) as { client_id: string; user_id: string; scopes: string[] };
+
+        // Ensure the token has the required scope
+        if (!scopes.includes("user:read:chat")) {
+          throw new Error(
+            'Token missing "user:read:chat" scope — re-generate with that scope checked',
+          );
+        }
+
+        const { StaticAuthProvider } = await import("@twurple/auth");
+        const { ApiClient } = await import("@twurple/api");
+        const { EventSubWsListener } = await import("@twurple/eventsub-ws");
+
+        const authProvider = new StaticAuthProvider(clientId, rawToken, scopes);
+        const apiClient = new ApiClient({ authProvider });
+
+        // Resolve broadcaster's user ID
+        const broadcaster = await apiClient.users.getUserByName(channel.toLowerCase().replace(/^#/, ""));
+        if (!broadcaster) throw new Error(`Channel "${channel}" not found on Twitch`);
+
+        const listener = new EventSubWsListener({ apiClient });
+        twitchListeners.set(nodeId, listener);
+        listener.start();
+
+        listener.onChannelChatMessage(broadcaster.id, userId, (event) => {
+          const newMsg = {
+            id: event.messageId,
+            username: event.chatterDisplayName,
+            color: event.color || "#9147ff",
+            message: event.messageText,
+            timestamp: Date.now(),
+          };
+          const existing = cachedChatMessages.get(nodeId) ?? [];
+          const next = [...existing, newMsg].slice(-Math.max(1, maxMessages));
+          cachedChatMessages.set(nodeId, next);
+          BrowserWindow.getAllWindows().forEach((win) => {
+            win.webContents.send("onChatMessagesUpdated", nodeId, next);
+          });
+        });
+
+        return { success: true };
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error("[TwitchChat]", msg);
+        const cleanup = twitchListeners.get(nodeId);
+        if (cleanup) {
+          cleanup.stop();
+          twitchListeners.delete(nodeId);
+        }
+        return { success: false, error: msg };
+      }
+    },
+  );
+
+  ipcMain.handle("disconnectTwitchChat", (_, nodeId: string) => {
+    const listener = twitchListeners.get(nodeId);
+    if (listener) {
+      listener.stop();
+      twitchListeners.delete(nodeId);
+    }
+    cachedChatMessages.delete(nodeId);
+    BrowserWindow.getAllWindows().forEach((win) => {
+      win.webContents.send("onChatMessagesUpdated", nodeId, []);
     });
   });
 
@@ -1277,6 +1385,133 @@ const registerIpcHandlers = () => {
       console.error(`Failed to load theme styles for: ${themeId}`, err);
     }
     return "";
+  });
+
+  // ── Overlay Theme IPC ────────────────────────────────────────────────────────
+
+  ipcMain.handle("installOverlayTheme", async (_event, filePath: string) => {
+    ensureOverlayThemesDir();
+    try {
+      const zip = new AdmZip(filePath);
+      const jsonEntry = zip.getEntry("theme.json");
+      if (!jsonEntry) return { error: "theme.json not found in archive" };
+      const meta = JSON.parse(jsonEntry.getData().toString("utf8"));
+      if (!meta.id || !meta.name) return { error: "theme.json missing required 'id' or 'name' field" };
+      const themeId = path.basename(String(meta.id));
+      const destDir = path.join(overlayThemesDir, themeId);
+      zip.extractAllTo(destDir, true);
+      const previewPath = path.join(destDir, "preview.png");
+      return {
+        id: themeId,
+        name: meta.name,
+        author: meta.author ?? "",
+        description: meta.description ?? "",
+        previewImagePath: fs.existsSync(previewPath) ? previewPath : undefined,
+        themeDir: destDir,
+      };
+    } catch (err: any) {
+      console.error("Failed to install overlay theme:", err);
+      return { error: String(err?.message ?? err) };
+    }
+  });
+
+  ipcMain.handle("getInstalledOverlayThemes", async () => {
+    ensureOverlayThemesDir();
+    try {
+      const entries = fs.readdirSync(overlayThemesDir);
+      const themes: any[] = [];
+      for (const entry of entries) {
+        const dir = path.join(overlayThemesDir, entry);
+        if (!fs.statSync(dir).isDirectory()) continue;
+        const jsonPath = path.join(dir, "theme.json");
+        if (!fs.existsSync(jsonPath)) continue;
+        try {
+          const meta = JSON.parse(fs.readFileSync(jsonPath, "utf8"));
+          const previewPath = path.join(dir, "preview.png");
+          themes.push({
+            id: entry,
+            name: meta.name ?? entry,
+            author: meta.author ?? "",
+            description: meta.description ?? "",
+            previewImagePath: fs.existsSync(previewPath) ? previewPath : undefined,
+            themeDir: dir,
+          });
+        } catch {
+          // skip malformed theme
+        }
+      }
+      return themes;
+    } catch (err) {
+      console.error("Failed to list overlay themes:", err);
+      return [];
+    }
+  });
+
+  ipcMain.handle("loadOverlayTheme", async (_event, themeId: string) => {
+    ensureOverlayThemesDir();
+    const cleanId = path.basename(String(themeId));
+    const dir = path.join(overlayThemesDir, cleanId);
+    const jsonPath = path.join(dir, "theme.json");
+    if (!fs.existsSync(jsonPath)) return null;
+    try {
+      const raw = JSON.parse(fs.readFileSync(jsonPath, "utf8"));
+      const previewPath = path.join(dir, "preview.png");
+      return {
+        id: cleanId,
+        name: raw.name ?? cleanId,
+        author: raw.author ?? "",
+        description: raw.description ?? "",
+        previewImagePath: fs.existsSync(previewPath) ? previewPath : undefined,
+        themeDir: dir,
+        variables: Array.isArray(raw.variables) ? raw.variables : [],
+        elements: Array.isArray(raw.elements) ? raw.elements : [],
+        components: Array.isArray(raw.components) ? raw.components : [],
+      };
+    } catch (err) {
+      console.error(`Failed to load overlay theme '${themeId}':`, err);
+      return null;
+    }
+  });
+
+  // ── Marquee theme authoring IPC ─────────────────────────────────────────────
+
+  ipcMain.handle("saveOverlayTheme", async (_event, { themeJson, assets, savePath }: {
+    themeJson: string;
+    assets: { localPath: string; archiveName: string }[];
+    savePath: string;
+  }) => {
+    try {
+      const zip = new AdmZip();
+      zip.addFile("theme.json", Buffer.from(themeJson, "utf8"));
+      for (const { localPath, archiveName } of assets) {
+        if (fs.existsSync(localPath)) {
+          zip.addLocalFile(localPath, "assets", archiveName);
+        }
+      }
+      zip.writeZip(savePath);
+      return { success: true };
+    } catch (err: any) {
+      console.error("Failed to save overlay theme:", err);
+      return { success: false, error: String(err?.message ?? err) };
+    }
+  });
+
+  ipcMain.handle("openThemeForEditing", async (_event, filePath: string) => {
+    try {
+      const zip = new AdmZip(filePath);
+      const themeJson = zip.readAsText("theme.json");
+      if (!themeJson) return { error: "theme.json not found in archive" };
+      const tmpDir = path.join(
+        app.getPath("temp"),
+        "SonicPlank-MarqueeEdit",
+        crypto.randomUUID(),
+      );
+      zip.extractAllTo(tmpDir, true);
+      return { themeJson, tmpDir };
+    } catch (err: any) {
+      console.error("Failed to open theme for editing:", err);
+      return { error: String(err?.message ?? err) };
+    }
   });
 
   // Open the Edit Overlay window as an in-process BrowserWindow.

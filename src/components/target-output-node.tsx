@@ -18,6 +18,7 @@ import { chatMessagesStore, type ChatMessage } from "@/store/chatMessagesStore";
 import { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { useNativePreview } from "@/hooks/useNativePreview";
 import { isValidConnection } from "@/utils/flow-connections";
+import { nodeTypeToOverlayType } from "@/utils/overlay-type-map";
 import { useSetAtom } from "jotai";
 import { updateNodeDataAtom } from "@/store/flowStore";
 import { useTransientNodeState } from "@/store/transientNodeStore";
@@ -650,13 +651,35 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
               "visualizerOverlayNode",
               "nowPlayingNode",
               "twitchChatNode",
+              "overlayThemeNode",
             ].includes(n.type || "")
           ),
       )
       .sort((a, b) => a.position.y - b.position.y);
 
+    // Types provided by real (non-theme) overlay nodes — used to suppress theme placeholders
+    const realOverlayTypes = new Set<string>(
+      overlayNodes
+        .filter((n) => n.type !== "overlayThemeNode")
+        .map((n) => nodeTypeToOverlayType(n.type ?? "")),
+    );
+
     const list: OverlayElement[] = [];
     overlayNodes.forEach((n) => {
+      // overlayThemeNode expands to multiple pre-resolved elements
+      if (n.type === "overlayThemeNode") {
+        const resolved = (n.data.resolvedElements as OverlayElement[] | undefined) ?? [];
+        for (const el of resolved) {
+          // Suppress component placeholder when a real node of the same type is connected
+          if (el._isComponentBase && realOverlayTypes.has(el.type)) continue;
+          // Strip internal marker before sending to renderer
+          // eslint-disable-next-line @typescript-eslint/no-unused-vars
+          const { _isComponentBase: _dropped, ...clean } = el;
+          list.push(clean as OverlayElement);
+        }
+        return;
+      }
+
       const type = (
         n.type === "nowPlayingNode"
           ? "nowPlaying"

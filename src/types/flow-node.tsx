@@ -6,6 +6,72 @@ export interface NodeTrigger {
   action: string; // Action name, e.g. "togglePlay"
 }
 
+export interface OverlayThemeVariable {
+  key: string;
+  label: string;
+  default: string;
+}
+
+export interface OverlayThemeElement {
+  id: string;
+  type: "image" | "text" | "color";
+  asset?: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  opacity: number;
+  textContent?: string;
+  fontSize?: number;
+  textColor?: string;
+  fontFamily?: string;
+  fontWeight?: string;
+  fontStyle?: string;
+  backgroundColor?: string;
+}
+
+export interface OverlayThemeMeta {
+  id: string;
+  name: string;
+  author?: string;
+  description?: string;
+  previewImagePath?: string;
+  themeDir: string;
+}
+
+export interface OverlayThemeLayout extends OverlayThemeMeta {
+  variables: OverlayThemeVariable[];
+  elements: OverlayThemeElement[];
+  components: OverlayThemeComponent[];
+}
+
+export interface ComponentStyleProps {
+  textContent?: string;
+  fontSize?: number;
+  textColor?: string;
+  fontFamily?: string;
+  fontWeight?: string;
+  fontStyle?: string;
+  backgroundColor?: string;
+  asset?: string;
+  visualizerType?: string;
+  barColor?: string;
+  progressColor?: string;
+  maxMessages?: number;
+}
+
+export interface OverlayThemeComponent {
+  id: string;
+  componentType: "text" | "color" | "image" | "visualizer" | "nowPlaying" | "twitchChat";
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  opacity: number;
+  styleProps: ComponentStyleProps;
+  decorations: OverlayThemeElement[];
+}
+
 export interface OverlayElement {
   id: string;
   type: "text" | "color" | "image" | "visualizer" | "nowPlaying" | "twitchChat";
@@ -20,6 +86,8 @@ export interface OverlayElement {
   backgroundColor?: string;
   imagePath?: string;
   visualizerType?: string; // "bars" | "wave" | "circle" | "blocks" | "dots"
+  barColor?: string;
+  progressColor?: string;
   fontFamily?: string;
   fontWeight?: string;
   fontStyle?: string;
@@ -29,6 +97,7 @@ export interface OverlayElement {
   audioNodeId?: string;
   duration?: number;
   maxMessages?: number;
+  _isComponentBase?: boolean;
 }
 
 export type FlowNodeType<

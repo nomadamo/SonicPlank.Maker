@@ -485,6 +485,42 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                 </span>
               </div>
             </div>
+
+            <Separator />
+
+            {/* Twitch Chat */}
+            <div className="flex flex-col gap-3">
+              <div className="flex flex-col gap-0.5">
+                <label className="text-sm font-medium text-left">Twitch Chat</label>
+                <span className="text-xs text-muted-foreground text-left">
+                  Requires a user access token with the{" "}
+                  <code className="text-indigo-400 text-[11px]">user:read:chat</code> scope.
+                  Generate one at{" "}
+                  <a
+                    href="https://twitchtokengenerator.com/"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-indigo-400 hover:underline"
+                    onClick={(e) => { e.preventDefault(); window.open("https://twitchtokengenerator.com/"); }}
+                  >
+                    twitchtokengenerator.com
+                  </a>
+                  {" "}— select <em>Custom Scope Token</em> and check <code className="text-indigo-400 text-[11px]">user:read:chat</code>.
+                </span>
+              </div>
+              <div className="flex flex-col gap-2">
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs text-muted-foreground">OAuth Token</label>
+                  <input
+                    type="password"
+                    placeholder="oauth:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                    value={settings.twitchToken || ""}
+                    onChange={(e) => updateSettings({ twitchToken: e.target.value.trim() })}
+                    className="w-full bg-muted border border-border rounded px-2.5 py-1.5 text-sm text-foreground focus:border-indigo-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+            </div>
           </TabsContent>
 
           {/* Audio Tab */}

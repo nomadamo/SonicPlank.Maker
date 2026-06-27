@@ -37,6 +37,10 @@ export type AppSettings = {
   // Global RTMP Targets
   rtmpTargets: RtmpTarget[];
 
+  // Twitch chat IRC credentials (needed since Twitch deprecated anonymous connections)
+  twitchUsername?: string;
+  twitchToken?: string;
+
   // Legacy fields to be ignored/removed later but kept for transition
   streamUrl?: string;
   streamToken?: string;

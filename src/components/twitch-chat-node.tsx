@@ -2,11 +2,11 @@ import { BaseNodeCard } from "./base-node";
 import { Handle, NodeProps, Position } from "@xyflow/react";
 import { MessageSquare } from "lucide-react";
 import { FlowNodeType } from "@/types/flow-node";
-import { useSetAtom } from "jotai";
+import { useAtomValue, useSetAtom } from "jotai";
 import { updateNodeDataAtom } from "@/store/flowStore";
+import { settingsAtom } from "@/store/settingsStore";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import tmi from "tmi.js";
-import { chatMessagesStore, type ChatMessage } from "@/store/chatMessagesStore";
+import { chatMessagesStore } from "@/store/chatMessagesStore";
 
 const DEFAULTS = {
   x: 2,
@@ -43,9 +43,11 @@ type ConnectionStatus = "idle" | "connecting" | "connected" | "error";
 export function TwitchChatNode(NodeRef: NodeProps<FlowNodeType>) {
   const node = NodeRef;
   const updateNodeData = useSetAtom(updateNodeDataAtom);
-  const clientRef = useRef<tmi.Client | null>(null);
+  const settings = useAtomValue(settingsAtom);
   const [status, setStatus] = useState<ConnectionStatus>("idle");
   const [messageCount, setMessageCount] = useState(0);
+  const [errorText, setErrorText] = useState<string | null>(null);
+  const connectedNodeId = useRef<string | null>(null);
 
   useEffect(() => {
     if (node.data.x === undefined) {
@@ -82,63 +84,66 @@ export function TwitchChatNode(NodeRef: NodeProps<FlowNodeType>) {
     handleUpdate(draft);
   }, [draft, handleUpdate]);
 
+  // Track incoming messages via IPC so the counter stays live
+  useEffect(() => {
+    window.electron.onChatMessagesUpdated((nodeId, messages) => {
+      if (nodeId === node.id) {
+        setMessageCount(messages.length);
+        chatMessagesStore.set(nodeId, messages);
+      }
+    });
+    return () => {
+      window.electron.removeOnChatMessagesUpdated();
+    };
+  }, [node.id]);
+
   const connect = useCallback(
-    (channel: string) => {
-      const ch = channel.trim().replace(/^#/, "");
-      if (!ch) return;
-
-      setStatus("connecting");
-
-      const client = new tmi.Client({ channels: [ch] });
-      clientRef.current = client;
-
-      client.connect().then(() => {
-        setStatus("connected");
-      }).catch(() => {
+    async (channel: string) => {
+      const token = settings.twitchToken ?? "";
+      if (!token) {
         setStatus("error");
-        clientRef.current = null;
-      });
+        setErrorText("No OAuth token — add one in Settings → General.");
+        return;
+      }
 
-      client.on("message", (_ch, tags, message) => {
-        const newMsg: ChatMessage = {
-          id: tags.id ?? crypto.randomUUID(),
-          username: tags["display-name"] ?? tags.username ?? "anon",
-          color: tags.color ?? "#9147ff",
-          message,
-          timestamp: Date.now(),
-        };
-        const max = committed.maxMessages;
-        const existing = chatMessagesStore.get(node.id) ?? [];
-        let next = [...existing, newMsg];
-        if (next.length > max) next = next.slice(-max);
-        chatMessagesStore.set(node.id, next);
-        window.electron.sendChatMessages(node.id, next);
-        setMessageCount((c) => c + 1);
-      });
+      handleApply();
+      setStatus("connecting");
+      setErrorText(null);
 
-      client.on("disconnected", () => {
-        setStatus("idle");
-        clientRef.current = null;
-      });
+      const result = await window.electron.connectTwitchChat(
+        node.id,
+        channel.trim().replace(/^#/, ""),
+        token,
+        committed.maxMessages,
+      );
+
+      if (result.success) {
+        connectedNodeId.current = node.id;
+        setStatus("connected");
+      } else {
+        setStatus("error");
+        setErrorText(result.error ?? "Connection failed");
+      }
     },
-    [committed.maxMessages, node.id],
+    [node.id, settings.twitchToken, committed.maxMessages, handleApply],
   );
 
   const disconnect = useCallback(() => {
-    clientRef.current?.disconnect().catch(() => {});
-    clientRef.current = null;
+    window.electron.disconnectTwitchChat(node.id).catch(() => {});
+    connectedNodeId.current = null;
     chatMessagesStore.delete(node.id);
-    window.electron.sendChatMessages(node.id, []);
     setStatus("idle");
     setMessageCount(0);
+    setErrorText(null);
   }, [node.id]);
 
-  // Clean up on unmount
+  // Disconnect on unmount
   useEffect(() => {
     return () => {
-      clientRef.current?.disconnect().catch(() => {});
-      chatMessagesStore.delete(node.id);
-      window.electron.sendChatMessages(node.id, []);
+      if (connectedNodeId.current === node.id) {
+        window.electron.disconnectTwitchChat(node.id).catch(() => {});
+        chatMessagesStore.delete(node.id);
+      }
     };
   }, [node.id]);
 
@@ -153,10 +158,11 @@ export function TwitchChatNode(NodeRef: NodeProps<FlowNodeType>) {
     idle: "Disconnected",
     connecting: "Connecting…",
     connected: `Connected · ${messageCount} msg${messageCount !== 1 ? "s" : ""}`,
-    error: "Connection failed",
+    error: "Error",
   }[status];
 
   const isActive = status === "connected" || status === "connecting";
+  const hasToken = !!settings.twitchToken;
 
   return (
     <>
@@ -195,11 +201,8 @@ export function TwitchChatNode(NodeRef: NodeProps<FlowNodeType>) {
                 </button>
               ) : (
                 <button
-                  onClick={() => {
-                    handleApply();
-                    connect(draft.channel);
-                  }}
-                  disabled={!draft.channel.trim()}
+                  onClick={() => connect(draft.channel)}
+                  disabled={!draft.channel.trim() || !hasToken}
                   className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-semibold rounded cursor-pointer transition-colors shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   Connect
@@ -210,6 +213,14 @@ export function TwitchChatNode(NodeRef: NodeProps<FlowNodeType>) {
               <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${statusDot}`} />
               <span className="text-[9px] text-muted-foreground">{statusLabel}</span>
             </div>
+            {errorText && (
+              <span className="text-[9px] text-red-400 text-left">{errorText}</span>
+            )}
+            {!hasToken && !isActive && (
+              <span className="text-[9px] text-amber-400 text-left">
+                Add a Twitch OAuth token in Settings → General.
+              </span>
+            )}
           </div>
 
           {/* Position & size */}

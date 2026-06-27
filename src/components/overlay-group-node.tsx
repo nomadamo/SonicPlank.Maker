@@ -19,6 +19,7 @@ const OVERLAY_NODE_TYPES = [
   "visualizerOverlayNode",
   "nowPlayingNode",
   "twitchChatNode",
+  "overlayThemeNode",
 ];
 
 interface SourceRole {
@@ -269,6 +270,9 @@ export function OverlayGroupNode(NodeRef: NodeProps<FlowNodeType>) {
                   descriptor = data.channel
                     ? `#${String(data.channel).replace(/^#/, "")}`
                     : "Not connected";
+                } else if (item.type === "overlayThemeNode") {
+                  typeLabel = "Theme";
+                  descriptor = data.themeLayout?.name ?? (data.selectedThemeId ? String(data.selectedThemeId) : "None selected");
                 }
 
                 return (

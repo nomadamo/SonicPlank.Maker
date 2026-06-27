@@ -1,4 +1,5 @@
 import type { AudioMetadata } from "./utils/get-audio-data";
+import type { OverlayThemeMeta, OverlayThemeLayout } from "./types/flow-node";
 
 export interface ScreenCaptureSource {
   id: string;
@@ -71,6 +72,9 @@ declare global {
       onNativeWindowClose: (callback: () => void) => void;
       removeOnNativeWindowClose: () => void;
       sendChatMessages: (nodeId: string, messages: any[]) => void;
+      getChatMessages: () => Promise<Record<string, any[]>>;
+      connectTwitchChat: (nodeId: string, channel: string, token: string, maxMessages: number) => Promise<{ success: boolean; error?: string }>;
+      disconnectTwitchChat: (nodeId: string) => Promise<void>;
       onChatMessagesUpdated: (callback: (nodeId: string, messages: any[]) => void) => void;
       removeOnChatMessagesUpdated: () => void;
       openEditOverlay: (args: { aspect: string; fitMode?: string }) => Promise<void>;
@@ -87,6 +91,11 @@ declare global {
       removeOnPreviewFrame: () => void;
       getAvailableThemes: () => Promise<any[]>;
       loadThemeStyles: (themeName: string) => Promise<string>;
+      installOverlayTheme: (filePath: string) => Promise<OverlayThemeMeta | { error: string }>;
+      getInstalledOverlayThemes: () => Promise<OverlayThemeMeta[]>;
+      loadOverlayTheme: (themeId: string) => Promise<OverlayThemeLayout | null>;
+      saveOverlayTheme: (args: { themeJson: string; assets: { localPath: string; archiveName: string }[]; savePath: string }) => Promise<{ success: boolean; error?: string }>;
+      openThemeForEditing: (filePath: string) => Promise<{ themeJson: string; tmpDir: string } | { error: string }>;
       sendAudioTime: (nodeId: string, currentTime: number, paused: boolean) => void;
       onAudioTimeUpdated: (callback: (nodeId: string, currentTime: number, paused: boolean) => void) => void;
       removeOnAudioTimeUpdated: () => void;

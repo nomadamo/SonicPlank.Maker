@@ -26,7 +26,7 @@ import {
   LibraryIcon,
   SettingsIcon,
   ListMusicIcon,
-  ClapperboardIcon,
+  LayoutTemplate as LayoutTemplateIcon,
 } from "lucide-react";
 import {
   ChromeCloseIcon,
@@ -54,7 +54,10 @@ import {
   currentPlaybackAtom,
   useLibraryStore,
   pollSpotifyPlaybackAtom,
+  spotifyNeedsReauthAtom,
+  authenticateSpotify,
 } from "@/store/libraryStore";
+import { toast } from "sonner";
 import {
   timelineDataAtom,
   loadTimelineDataAtom,
@@ -114,8 +117,9 @@ function TitleBarButton({
 function CloseAppButton() {
   const { setQuitRequested } = useStateMachine();
   const sonicsUnsaved = useAtomValue(sonicsHasUnsavedChangesAtom);
+  const sonicsPath = useAtomValue(sonicsCurrentPathAtom);
   const flowUnsaved = useAtomValue(flowHasUnsavedChangesAtom);
-  const hasUnsavedChanges = sonicsUnsaved || flowUnsaved;
+  const hasUnsavedChanges = (sonicsUnsaved && !!sonicsPath) || flowUnsaved;
 
   function CheckUnsaved() {
     if (hasUnsavedChanges) {
@@ -135,8 +139,9 @@ function CloseAppButton() {
 function ExitMenuItem() {
   const { setQuitRequested } = useStateMachine();
   const sonicsUnsaved = useAtomValue(sonicsHasUnsavedChangesAtom);
+  const sonicsPath = useAtomValue(sonicsCurrentPathAtom);
   const flowUnsaved = useAtomValue(flowHasUnsavedChangesAtom);
-  const hasUnsavedChanges = sonicsUnsaved || flowUnsaved;
+  const hasUnsavedChanges = (sonicsUnsaved && !!sonicsPath) || flowUnsaved;
 
   function CheckUnsaved() {
     if (hasUnsavedChanges) {
@@ -162,6 +167,8 @@ export default function App() {
   const { items: libraryItems } = useLibraryStore();
   const [showVisualizer, setShowVisualizer] = useState(false);
   const pollPlayback = useSetAtom(pollSpotifyPlaybackAtom);
+  const spotifyNeedsReauth = useAtomValue(spotifyNeedsReauthAtom);
+  const reconnectSpotify = useSetAtom(authenticateSpotify);
 
   const [sonicsData] = useAtom(timelineDataAtom);
   const loadSonicsData = useSetAtom(loadTimelineDataAtom);
@@ -180,11 +187,23 @@ export default function App() {
     return () => clearInterval(interval);
   }, [pollPlayback]);
 
+  useEffect(() => {
+    if (!spotifyNeedsReauth) return;
+    toast.error("Spotify session expired", {
+      description: "Re-connect to restore playback.",
+      duration: 12000,
+      action: {
+        label: "Re-connect",
+        onClick: () => reconnectSpotify(),
+      },
+    });
+  }, [spotifyNeedsReauth, reconnectSpotify]);
+
   const { setQuitRequested } = useStateMachine();
 
   useEffect(() => {
     window.electron.onNativeWindowClose(() => {
-      const hasUnsavedChanges = sonicsUnsaved || flowUnsaved;
+      const hasUnsavedChanges = (sonicsUnsaved && !!sonicsPath) || flowUnsaved;
       if (hasUnsavedChanges) {
         setQuitRequested(true);
       } else {
@@ -194,7 +213,7 @@ export default function App() {
     return () => {
       window.electron.removeOnNativeWindowClose();
     };
-  }, [sonicsUnsaved, flowUnsaved, setQuitRequested]);
+  }, [sonicsUnsaved, sonicsPath, flowUnsaved, setQuitRequested]);
 
   const items: TabProps[] = [
     {
@@ -213,9 +232,9 @@ export default function App() {
     },
     {
       id: 3,
-      label: "Scenes",
-      icon: <ClapperboardIcon />,
-      to: "/scenes",
+      label: "Marquee",
+      icon: <LayoutTemplateIcon />,
+      to: "/marquee",
       className: "[&.active]:font-bold",
     },
     {
@@ -254,10 +273,10 @@ export default function App() {
   const initialSonicsRef = useRef(sonicsData);
   useEffect(() => {
     if (sonicsData !== initialSonicsRef.current) {
-      setSonicsUnsaved(true);
+      if (sonicsPath) setSonicsUnsaved(true);
       initialSonicsRef.current = sonicsData;
     }
-  }, [sonicsData, setSonicsUnsaved]);
+  }, [sonicsData, setSonicsUnsaved, sonicsPath]);
 
   const initialFlowRef = useRef(flowData);
   useEffect(() => {
