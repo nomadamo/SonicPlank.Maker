@@ -517,16 +517,16 @@ function PreviewComponent() {
                     <div
                       key={h}
                       onMouseDown={(e) => handleMouseDownResize(e, overlay, h)}
-                      className="absolute w-2.5 h-2.5 bg-white border-2 border-indigo-600 rounded-full shadow z-50 hover:bg-indigo-400"
+                      className="absolute w-4 h-4 bg-white border-2 border-indigo-600 rounded-full shadow z-50 hover:bg-indigo-400"
                       style={{
                         cursor:
                           h === "tl" || h === "br"
                             ? "nwse-resize"
                             : "nesw-resize",
-                        top: h.startsWith("t") ? "-5px" : undefined,
-                        bottom: h.startsWith("b") ? "-5px" : undefined,
-                        left: h.endsWith("l") ? "-5px" : undefined,
-                        right: h.endsWith("r") ? "-5px" : undefined,
+                        top: h.startsWith("t") ? "-8px" : undefined,
+                        bottom: h.startsWith("b") ? "-8px" : undefined,
+                        left: h.endsWith("l") ? "-8px" : undefined,
+                        right: h.endsWith("r") ? "-8px" : undefined,
                       }}
                     />
                   ))}
@@ -534,37 +534,37 @@ function PreviewComponent() {
                   {/* Side handles */}
                   <div
                     onMouseDown={(e) => handleMouseDownResize(e, overlay, "t")}
-                    className="absolute w-2.5 h-2.5 bg-white border-2 border-indigo-600 rounded-full shadow z-50 hover:bg-indigo-400 cursor-ns-resize"
+                    className="absolute w-4 h-4 bg-white border-2 border-indigo-600 rounded-full shadow z-50 hover:bg-indigo-400 cursor-ns-resize"
                     style={{
-                      top: "-5px",
+                      top: "-8px",
                       left: "50%",
                       transform: "translateX(-50%)",
                     }}
                   />
                   <div
                     onMouseDown={(e) => handleMouseDownResize(e, overlay, "b")}
-                    className="absolute w-2.5 h-2.5 bg-white border-2 border-indigo-600 rounded-full shadow z-50 hover:bg-indigo-400 cursor-ns-resize"
+                    className="absolute w-4 h-4 bg-white border-2 border-indigo-600 rounded-full shadow z-50 hover:bg-indigo-400 cursor-ns-resize"
                     style={{
-                      bottom: "-5px",
+                      bottom: "-8px",
                       left: "50%",
                       transform: "translateX(-50%)",
                     }}
                   />
                   <div
                     onMouseDown={(e) => handleMouseDownResize(e, overlay, "l")}
-                    className="absolute w-2.5 h-2.5 bg-white border-2 border-indigo-600 rounded-full shadow z-50 hover:bg-indigo-400 cursor-ew-resize"
+                    className="absolute w-4 h-4 bg-white border-2 border-indigo-600 rounded-full shadow z-50 hover:bg-indigo-400 cursor-ew-resize"
                     style={{
                       top: "50%",
-                      left: "-5px",
+                      left: "-8px",
                       transform: "translateY(-50%)",
                     }}
                   />
                   <div
                     onMouseDown={(e) => handleMouseDownResize(e, overlay, "r")}
-                    className="absolute w-2.5 h-2.5 bg-white border-2 border-indigo-600 rounded-full shadow z-50 hover:bg-indigo-400 cursor-ew-resize"
+                    className="absolute w-4 h-4 bg-white border-2 border-indigo-600 rounded-full shadow z-50 hover:bg-indigo-400 cursor-ew-resize"
                     style={{
                       top: "50%",
-                      right: "-5px",
+                      right: "-8px",
                       transform: "translateY(-50%)",
                     }}
                   />

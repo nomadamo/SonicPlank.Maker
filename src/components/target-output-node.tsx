@@ -1107,10 +1107,18 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
       return;
     }
 
-    // Set size to match the incoming preview
-    if (canvas.width !== srcCanvas.width || canvas.height !== srcCanvas.height) {
-      canvas.width = srcCanvas.width;
-      canvas.height = srcCanvas.height;
+    // Scale the preview pipe canvas up to source resolution.
+    // The named pipe delivers frames downscaled by 3×; multiply back so the
+    // compositor canvas (and the JPEG forwarded to the overlay editor) is at
+    // the native source resolution rather than the small thumbnail size.
+    // During streaming the canvas is already locked to encoder dims — don't touch it.
+    if (!isStreamingRef.current) {
+      const targetW = srcCanvas.width * 3;
+      const targetH = srcCanvas.height * 3;
+      if (canvas.width !== targetW || canvas.height !== targetH) {
+        canvas.width = targetW;
+        canvas.height = targetH;
+      }
     }
 
     ctx.imageSmoothingEnabled = true;
@@ -1367,6 +1375,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
             encoder: (settings.streamEncoder as string) || "libx264",
             audioDeviceIds: captureAudio ? resolvedAudioDeviceIds : undefined,
             recordPath: settings.recordStreamEnabled && settings.recordingPath ? settings.recordingPath : undefined,
+            twitchToken: target.preset === "twitch" ? (settings.twitchToken ?? undefined) : undefined,
             sources: streamSources,
           });
         } catch (err: any) {

@@ -48,6 +48,7 @@ import { useStateMachine } from "@/store/stateMachine";
 import { useSettings } from "@/store/settingsStore";
 import { SettingsDialog } from "@/components/settings-dialog";
 import { inDevelopment } from "@/constants";
+import { useVodTracking } from "@/hooks/use-vod-tracking";
 import appIcon from "@/img/icon.png";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import {
@@ -201,6 +202,8 @@ export default function App() {
       },
     });
   }, [spotifyNeedsReauth, reconnectSpotify]);
+
+  useVodTracking();
 
   const { setQuitRequested } = useStateMachine();
 
@@ -672,7 +675,7 @@ export default function App() {
         duration={2000}
         closeButton={false}
         position="bottom-right"
-        visibleToasts={1}
+        visibleToasts={3}
       />
     </>
   );

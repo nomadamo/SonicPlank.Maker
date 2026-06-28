@@ -3,6 +3,7 @@ import { cn } from "@/lib/utils";
 import { Handle, NodeProps, Position } from "@xyflow/react";
 import {
   AppWindow as AppWindowIcon,
+  Camera as CameraIcon,
   Monitor as MonitorIcon,
   RefreshCw as RefreshCwIcon,
 } from "lucide-react";
@@ -189,6 +190,7 @@ export function CaptureSourceNode(NodeRef: NodeProps<FlowNodeType>) {
   // Group sources for display
   const monitors = sources.filter((s: NativeCaptureSource) => s.kind === "monitor");
   const windows = sources.filter((s: NativeCaptureSource) => s.kind === "window");
+  const webcams = sources.filter((s: NativeCaptureSource) => s.kind === "webcam");
 
   return (
     <>
@@ -200,7 +202,7 @@ export function CaptureSourceNode(NodeRef: NodeProps<FlowNodeType>) {
         iconColor="indigo"
         icon={MonitorIcon}
         title="Capture Source"
-        subtitle="Select display/window"
+        subtitle="Select display/window/camera"
         anchorName={`--captureSourceNode_${node.id}`}
         headerActions={
           <button
@@ -267,6 +269,23 @@ export function CaptureSourceNode(NodeRef: NodeProps<FlowNodeType>) {
                           className="flex items-center gap-2 p-2 hover:bg-muted rounded cursor-pointer text-sm text-foreground/80"
                         >
                           <AppWindowIcon className="w-4 h-4 text-muted-foreground shrink-0 inline mr-1.5" />
+                          <span className="truncate max-w-[200px]">{src.name}</span>
+                        </SelectItem>
+                      ))}
+                    </>
+                  )}
+                  {webcams.length > 0 && (
+                    <>
+                      <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider px-2 pt-2 pb-0.5">
+                        Cameras
+                      </div>
+                      {webcams.map((src: NativeCaptureSource) => (
+                        <SelectItem
+                          key={src.id}
+                          value={src.id}
+                          className="flex items-center gap-2 p-2 hover:bg-muted rounded cursor-pointer text-sm text-foreground/80"
+                        >
+                          <CameraIcon className="w-4 h-4 text-muted-foreground shrink-0 inline mr-1.5" />
                           <span className="truncate max-w-[200px]">{src.name}</span>
                         </SelectItem>
                       ))}

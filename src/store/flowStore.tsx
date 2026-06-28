@@ -128,6 +128,21 @@ export const flowHasUnsavedChangesAtom = atom<boolean>(false);
 // Other nodes (e.g. TwitchChatNode) can watch this to auto-connect.
 export const isStreamingAtom = atom<boolean>(false);
 
+export type VodPlatform = "twitch" | "youtube" | "custom";
+
+export type VodStatus = {
+  platform: VodPlatform;
+  filePath: string;
+} & (
+  | { phase: "recording_saved" }
+  | { phase: "searching" }
+  | { phase: "found"; vodUrl: string }
+  | { phase: "not_found" }
+  | { phase: "error"; message: string }
+);
+
+export const vodStatusAtom = atom<VodStatus | null>(null);
+
 export const flowNodeAtomFamily = atomFamily((id) =>
   atom(
     (get) => {

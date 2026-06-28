@@ -94,16 +94,20 @@ async fn main() -> Result<()> {
         Arc::clone(&compositor_cfg),
     );
 
+    // Data pipe is secondary: if the client disconnects, the core keeps running.
+    let preview_enabled_pipe = Arc::clone(&preview_enabled);
+    let pipe_frame_rx = composited_tx.subscribe();
+    tokio::spawn(async move {
+        if let Err(e) = run_data_pipe(data_pipe, token, pipe_frame_rx, preview_enabled_pipe).await {
+            warn!("Data pipe exited: {e}");
+        }
+    });
+
     tokio::select! {
         result = run_stdin_commands(frame_tx.clone(), composited_tx.clone(), Arc::clone(&preview_enabled), stream_evt_tx, stream_evt_rx, Arc::clone(&compositor_cfg), verbose) => {
             if let Err(e) = result {
                 error!("Control plane error: {e:#}");
                 std::process::exit(1);
-            }
-        }
-        result = run_data_pipe(data_pipe, token, composited_tx.subscribe(), preview_enabled) => {
-            if let Err(e) = result {
-                error!("Data pipe error: {e:#}");
             }
         }
         _ = tokio::signal::ctrl_c() => {
@@ -513,22 +517,27 @@ async fn run_data_pipe(
         }
         last_preview_time = tokio::time::Instant::now();
 
-        let scale = 3;
-        let scaled_w = raw.width / scale;
-        let scaled_h = raw.height / scale;
+        // Downsample by 3 for the preview pipe (BGRA→RGBA + box filter).
+        // The overlay editor's full-resolution preview comes via the JPEG
+        // compositor path, not this pipe.
+        let scale: u32 = 3;
+        let scaled_w = (raw.width / scale).max(1);
+        let scaled_h = (raw.height / scale).max(1);
         let mut scaled_pixels = Vec::with_capacity((scaled_w * scaled_h * 4) as usize);
 
-        for y in 0..scaled_h {
-            for x in 0..scaled_w {
-                let src_idx = ((y * scale * raw.width + x * scale) * 4) as usize;
-                let b = raw.pixels[src_idx];
-                let g = raw.pixels[src_idx + 1];
-                let r = raw.pixels[src_idx + 2];
-                let a = raw.pixels[src_idx + 3];
-                scaled_pixels.push(r); // R
-                scaled_pixels.push(g); // G
-                scaled_pixels.push(b); // B
-                scaled_pixels.push(a); // A
+        for y in (0..raw.height).step_by(scale as usize) {
+            for x in (0..raw.width).step_by(scale as usize) {
+                let i = ((y * raw.width + x) * 4) as usize;
+                if i + 3 < raw.pixels.len() {
+                    let b = raw.pixels[i];
+                    let g = raw.pixels[i + 1];
+                    let r = raw.pixels[i + 2];
+                    let a = raw.pixels[i + 3];
+                    scaled_pixels.push(r);
+                    scaled_pixels.push(g);
+                    scaled_pixels.push(b);
+                    scaled_pixels.push(a);
+                }
             }
         }
 

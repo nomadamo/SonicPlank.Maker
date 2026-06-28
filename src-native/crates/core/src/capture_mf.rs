@@ -13,6 +13,7 @@ use windows::Win32::Media::MediaFoundation::{
     MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE, MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID,
     MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK,
     MF_SOURCE_READER_FIRST_VIDEO_STREAM,
+    MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING,
     MF_SOURCE_READERF_ERROR,
     MFVideoFormat_RGB32, IMFMediaType, MFCreateMediaType,
     MF_MT_MAJOR_TYPE, MFMediaType_Video, MF_MT_SUBTYPE, MF_MT_FRAME_SIZE,
@@ -81,8 +82,15 @@ fn run_capture_loop(
         // 2. Create MediaSource
         let source: IMFMediaSource = MFCreateDeviceSource(&attrs).context("Failed to create device source for webcam")?;
 
-        // 3. Create SourceReader
-        let reader: IMFSourceReader = MFCreateSourceReaderFromMediaSource(&source, None).context("Failed to create source reader")?;
+        // 3. Create SourceReader with video processing enabled so MF can
+        //    automatically convert from the camera's native format (NV12/YUY2/MJPEG)
+        //    to RGB32 without requiring a manual conversion step.
+        let mut reader_attrs: Option<IMFAttributes> = None;
+        MFCreateAttributes(&mut reader_attrs, 1)?;
+        let reader_attrs = reader_attrs.unwrap();
+        let _ = reader_attrs.SetUINT32(&MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING, 1);
+
+        let reader: IMFSourceReader = MFCreateSourceReaderFromMediaSource(&source, Some(&reader_attrs)).context("Failed to create source reader")?;
 
         // 4. Set MediaType to RGB32 (BGRA)
         let media_type: IMFMediaType = MFCreateMediaType()?;
@@ -137,11 +145,18 @@ fn run_capture_loop(
                     
                     if size >= expected_size {
                         let slice = std::slice::from_raw_parts(data_ptr, expected_size);
+                        // MFVideoFormat_RGB32 delivers BGRX — alpha byte is 0.
+                        // Force alpha=255 so the compositor and preview pipe don't
+                        // treat every pixel as fully transparent.
+                        let mut pixels = slice.to_vec();
+                        for chunk in pixels.chunks_exact_mut(4) {
+                            chunk[3] = 255;
+                        }
                         let raw = RawFrame {
                             source_id: source_id.to_string(),
                             width,
                             height,
-                            pixels: slice.to_vec(),
+                            pixels,
                             // MF timestamp is in 100ns units, same scale as WGC.
                             timestamp_100ns: timestamp,
                         };

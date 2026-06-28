@@ -361,6 +361,8 @@ contextBridge.exposeInMainWorld("electron", {
       fitMode?: string;
       encoder?: string;
       audioDeviceIds?: string[];
+      recordPath?: string;
+      twitchToken?: string;
       sources: {
         source_id: string;
         is_primary: boolean;
@@ -375,6 +377,18 @@ contextBridge.exposeInMainWorld("electron", {
   },
   stopNativeStream: async (): Promise<{ success: boolean }> => {
     return await ipcRenderer.invoke("stopNativeStream");
+  },
+  onVodStatus: (callback: (status: any) => void) => {
+    ipcRenderer.on("onVodStatus", (_event, status) => callback(status));
+  },
+  removeOnVodStatus: () => {
+    ipcRenderer.removeAllListeners("onVodStatus");
+  },
+  openRecordingFolder: async (filePath: string): Promise<void> => {
+    await ipcRenderer.invoke("openRecordingFolder", filePath);
+  },
+  openExternalUrl: async (url: string): Promise<void> => {
+    await ipcRenderer.invoke("openExternalUrl", url);
   },
 
   // ── Encoder config ──────────────────────────────────────────────────────────

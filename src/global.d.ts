@@ -1,5 +1,6 @@
 import type { AudioMetadata } from "./utils/get-audio-data";
 import type { OverlayThemeMeta, OverlayThemeLayout } from "./types/flow-node";
+import type { VodStatus } from "./store/flowStore";
 
 export interface ScreenCaptureSource {
   id: string;
@@ -131,6 +132,7 @@ declare global {
           encoder?: string;
           audioDeviceIds?: string[];
           recordPath?: string;
+          twitchToken?: string;
           sources: {
             source_id: string;
             is_primary: boolean;
@@ -142,6 +144,10 @@ declare global {
         },
       ) => Promise<{ success: boolean; width: number; height: number }>;
       stopNativeStream: () => Promise<{ success: boolean }>;
+      onVodStatus: (callback: (status: VodStatus) => void) => void;
+      removeOnVodStatus: () => void;
+      openRecordingFolder: (filePath: string) => Promise<void>;
+      openExternalUrl: (url: string) => Promise<void>;
       getEncoderConfig: () => Promise<EncoderConfig | null>;
       setEncoderConfig: (config: EncoderConfig) => Promise<void>;
     };
@@ -151,7 +157,7 @@ declare global {
 export interface NativeCaptureSource {
   id: string;
   name: string;
-  kind: "monitor" | "window";
+  kind: "monitor" | "window" | "webcam";
 }
 
 export interface EncoderPreset {

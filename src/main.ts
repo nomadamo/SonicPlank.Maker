@@ -7,6 +7,7 @@ import {
   MessageChannelMain,
   session,
   screen,
+  shell,
 } from "electron";
 import {
   readData,
@@ -287,6 +288,11 @@ let activeCaptureSourceId: string | null = null;
 let nativeStreamStartAt: number | null = null;
 let nativePreviewActive = false;
 
+// VOD tracking state — set at stream start, consumed at stream stop.
+let activeRecordFilePath: string | null = null;
+let activeStreamRtmpUrl: string | null = null;
+let activeStreamTwitchToken: string | null = null;
+
 // Set up a persistent readline on core stdout. Must be called after coreProcess
 // is assigned. Subsequent calls are no-ops (already started guard).
 function startCoreEventLoop(): void {
@@ -543,10 +549,25 @@ async function startCore(): Promise<void> {
 
   const spawnEnv = { ...process.env };
   if (!app.isPackaged) {
-    // FFmpeg shared DLLs live next to the dev package headers/libs.
-    const ffmpegBin =
-      "C:\\ffmpeg-dev\\ffmpeg-n7.1-latest-win64-gpl-shared-7.1\\bin";
-    spawnEnv.PATH = `${ffmpegBin};${spawnEnv.PATH ?? ""}`;
+    // In dev, prepend the FFmpeg bin dir to PATH so the debug binary can
+    // find the shared DLLs. Read FFMPEG_DIR from .cargo/config.toml so this
+    // stays in sync when the FFmpeg version is bumped.
+    try {
+      const cargoConfigPath = path.resolve(
+        __dirname,
+        "../../src-native/.cargo/config.toml",
+      );
+      const cargoConfig = fs.readFileSync(cargoConfigPath, "utf-8");
+      const match = cargoConfig.match(/FFMPEG_DIR\s*=\s*\{\s*value\s*=\s*"([^"]+)"/);
+      if (match?.[1]) {
+        const ffmpegDir = JSON.parse(`"${match[1]}"`);
+        const ffmpegBin = path.join(ffmpegDir, "bin");
+        spawnEnv.PATH = `${ffmpegBin};${spawnEnv.PATH ?? ""}`;
+        console.log(`[Core] dev DLL path: ${ffmpegBin}`);
+      }
+    } catch (err) {
+      console.warn("[Core] could not read FFMPEG_DIR from config.toml:", err);
+    }
   }
 
   const coreArgs: string[] = [];
@@ -612,7 +633,9 @@ function sendCoreCommand(cmd: Record<string, unknown>): void {
     console.warn("[Core] stdin not writable --- command dropped:", cmd);
     return;
   }
-  coreProcess.stdin.write(JSON.stringify(cmd) + "\n");
+  coreProcess.stdin.write(JSON.stringify(cmd) + "\n", (err) => {
+    if (err) console.warn("[Core] stdin write error:", err.message);
+  });
 }
 
 function stopCore(): void {
@@ -692,6 +715,56 @@ if (started) {
 }
 
 let forceClose = false;
+
+// ── VOD tracking helpers ──────────────────────────────────────────────────────
+
+function detectStreamPlatform(rtmpUrl: string): "twitch" | "youtube" | "custom" {
+  const u = rtmpUrl.toLowerCase();
+  if (u.includes("twitch.tv") || u.includes("twitchapps.com") || u.includes("live.twitch.tv")) return "twitch";
+  if (u.includes("youtube.com") || u.includes("googlevideo.com")) return "youtube";
+  return "custom";
+}
+
+type VodStatusPayload =
+  | { phase: "recording_saved"; platform: string; filePath: string }
+  | { phase: "searching";       platform: string; filePath: string }
+  | { phase: "found";           platform: string; filePath: string; vodUrl: string }
+  | { phase: "not_found";       platform: string; filePath: string }
+  | { phase: "error";           platform: string; filePath: string; message: string };
+
+function broadcastVodStatus(status: VodStatusPayload) {
+  BrowserWindow.getAllWindows().forEach((win) => {
+    win.webContents.send("onVodStatus", status);
+  });
+}
+
+async function pollTwitchVod(
+  userId: string,
+  clientId: string,
+  token: string,
+  streamStopTime: number,
+): Promise<string | null> {
+  const deadline = streamStopTime + 3 * 60 * 1000;
+  const windowStart = streamStopTime - 60 * 1000;
+  while (Date.now() < deadline) {
+    await new Promise<void>((r) => setTimeout(r, 5_000));
+    try {
+      const res = await fetch(
+        `https://api.twitch.tv/helix/videos?user_id=${userId}&type=archive&first=1`,
+        { headers: { "Client-Id": clientId, Authorization: `Bearer ${token}` } },
+      );
+      if (!res.ok) continue;
+      const json = (await res.json()) as { data: { id: string; created_at: string }[] };
+      const video = json.data[0];
+      if (video && new Date(video.created_at).getTime() >= windowStart) {
+        return `https://www.twitch.tv/videos/${video.id}`;
+      }
+    } catch {
+      // keep polling
+    }
+  }
+  return null;
+}
 
 const registerIpcHandlers = () => {
   ipcMain.handle("closeApp", (event) => {
@@ -1549,10 +1622,10 @@ const registerIpcHandlers = () => {
       previewWin = new BrowserWindow({
         icon: getIconPath(),
         autoHideMenuBar: true,
-        minWidth: 800,
-        minHeight: 450,
-        width: 1280,
-        height: 720,
+        minWidth: 960,
+        minHeight: 540,
+        width: 1920,
+        height: 1080,
         title: "Overlay Editor",
         webPreferences: {
           devTools: inDevelopment,
@@ -1746,6 +1819,7 @@ const registerIpcHandlers = () => {
         encoder?: string;
         audioDeviceIds?: string[];
         recordPath?: string;
+      twitchToken?: string;
         sources: {
           source_id: string;
           is_primary: boolean;
@@ -1788,6 +1862,11 @@ const registerIpcHandlers = () => {
         recordFilePath = path.join(options.recordPath, `recording_${ts}.mp4`);
       }
 
+      // Persist for VOD tracking on stop.
+      activeRecordFilePath = recordFilePath;
+      activeStreamRtmpUrl = options.rtmpUrl;
+      activeStreamTwitchToken = options.twitchToken ?? null;
+
       // Delegate encoding and RTMP delivery entirely to the Rust core.
       sendCoreCommand({
         type: "start_stream",
@@ -1815,7 +1894,16 @@ const registerIpcHandlers = () => {
   );
 
   ipcMain.handle("stopNativeStream", async () => {
+    // Snapshot tracking state before clearing — async VOD polling needs these.
+    const recordedFilePath = activeRecordFilePath;
+    const streamRtmpUrl = activeStreamRtmpUrl;
+    const streamTwitchToken = activeStreamTwitchToken;
+
     nativeStreamStartAt = null;
+    activeRecordFilePath = null;
+    activeStreamRtmpUrl = null;
+    activeStreamTwitchToken = null;
+
     if (coreProcess) {
       sendCoreCommand({ type: "stop_stream" });
       await waitForCoreEvent("stream_stopped", 5_000).catch(() => {});
@@ -1836,7 +1924,48 @@ const registerIpcHandlers = () => {
     }
     activeStreamSources = [];
 
+    // Fire-and-forget VOD tracking if recording was active.
+    if (recordedFilePath) {
+      const platform = detectStreamPlatform(streamRtmpUrl ?? "");
+      const stopTime = Date.now();
+      broadcastVodStatus({ phase: "recording_saved", platform, filePath: recordedFilePath });
+
+      if (platform === "twitch" && streamTwitchToken) {
+        void (async () => {
+          try {
+            broadcastVodStatus({ phase: "searching", platform, filePath: recordedFilePath });
+            const rawToken = streamTwitchToken.replace(/^oauth:/i, "");
+            const validateRes = await fetch("https://id.twitch.tv/oauth2/validate", {
+              headers: { Authorization: `OAuth ${rawToken}` },
+            });
+            if (!validateRes.ok) throw new Error(`Token validation failed (${validateRes.status})`);
+            const { client_id: clientId, user_id: userId } = (await validateRes.json()) as {
+              client_id: string;
+              user_id: string;
+            };
+            const vodUrl = await pollTwitchVod(userId, clientId, rawToken, stopTime);
+            if (vodUrl) {
+              broadcastVodStatus({ phase: "found", platform, filePath: recordedFilePath, vodUrl });
+            } else {
+              broadcastVodStatus({ phase: "not_found", platform, filePath: recordedFilePath });
+            }
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            broadcastVodStatus({ phase: "error", platform, filePath: recordedFilePath, message });
+          }
+        })();
+      }
+    }
+
     return { success: true };
+  });
+
+  ipcMain.handle("openRecordingFolder", (_event, filePath: string) => {
+    shell.showItemInFolder(filePath);
+  });
+
+  ipcMain.handle("openExternalUrl", (_event, url: string) => {
+    return shell.openExternal(url);
   });
 
   // ── Encoder config (encoder-config.json) ─────────────────────────────────
