@@ -398,4 +398,18 @@ contextBridge.exposeInMainWorld("electron", {
   setEncoderConfig: async (config: unknown): Promise<void> => {
     await ipcRenderer.invoke("setEncoderConfig", config);
   },
+
+  // ── Scene hotkeys ────────────────────────────────────────────────────────────
+  registerSceneHotkeys: async (args: { nodeId: string; scenes: any[] }): Promise<{ registered: string[]; failed: string[] }> => {
+    return await ipcRenderer.invoke("registerSceneHotkeys", args);
+  },
+  unregisterSceneHotkeys: async (args: { nodeId: string }): Promise<void> => {
+    await ipcRenderer.invoke("unregisterSceneHotkeys", args);
+  },
+  onSceneSwitch: (callback: (event: any) => void) => {
+    ipcRenderer.on("onSceneSwitch", (_event, data) => callback(data));
+  },
+  removeOnSceneSwitch: () => {
+    ipcRenderer.removeAllListeners("onSceneSwitch");
+  },
 });

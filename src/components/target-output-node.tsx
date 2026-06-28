@@ -582,8 +582,34 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
       }
     }
 
+    // Apply theme source slot overrides from a connected overlayThemeNode
+    const themeNode = nodes.find((n) =>
+      n.type === "overlayThemeNode" &&
+      edges.some((e) => e.source === n.id && e.target === node.id),
+    );
+    if (themeNode) {
+      const layout = themeNode.data.themeLayout as OverlayThemeLayout | null;
+      const activeSceneId = (themeNode.data.activeSceneId as string) ?? "base";
+      const activeScene = layout?.scenes?.find((s) => s.id === activeSceneId) ?? layout?.scenes?.[0];
+      const slots = activeScene?.sources ?? [];
+      if (slots.length > 0) {
+        let pipIdx = 0;
+        for (const src of streamSources) {
+          const slot = src.is_primary
+            ? slots.find((s) => s.role === "primary")
+            : slots.filter((s) => s.role === "pip")[pipIdx++];
+          if (slot) {
+            src.x_percent = slot.x;
+            src.y_percent = slot.y;
+            src.w_percent = slot.width;
+            src.h_percent = slot.height;
+          }
+        }
+      }
+    }
+
     return streamSources;
-  }, [edges, nodes, connectedOverlayGroupNode, connectedCaptureSources, effectiveRoles]);
+  }, [edges, nodes, node.id, connectedOverlayGroupNode, connectedCaptureSources, effectiveRoles]);
 
   // Keep the Rust core's compositor config in sync with the current UI layout
   const prevCoreConfigRef = useRef("");
@@ -878,7 +904,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
 
       // Option 1: if a theme is active, find a matching component slot and use its
       // position/size/styleProps instead of the node's own values.
-      const themeComp = themeLayout?.components?.find((c) => c.componentType === type);
+      const themeComp = (themeLayout?.scenes?.[0] ?? themeLayout?.scenes?.find((s) => s.id === "base"))?.components?.find((c) => c.componentType === type);
       const sp = themeComp?.styleProps;
 
       list.push({

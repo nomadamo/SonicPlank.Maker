@@ -2,6 +2,18 @@ import type { AudioMetadata } from "./utils/get-audio-data";
 import type { OverlayThemeMeta, OverlayThemeLayout } from "./types/flow-node";
 import type { VodStatus } from "./store/flowStore";
 
+export interface SceneSwitchEvent {
+  nodeId: string;
+  sceneId: string;
+  durationMs: number;
+}
+
+export interface SceneHotkeyRegistration {
+  sceneId: string;
+  hotkey: string;
+  durationMs: number;
+}
+
 export interface ScreenCaptureSource {
   id: string;
   name: string;
@@ -148,6 +160,10 @@ declare global {
       removeOnVodStatus: () => void;
       openRecordingFolder: (filePath: string) => Promise<void>;
       openExternalUrl: (url: string) => Promise<void>;
+      registerSceneHotkeys: (args: { nodeId: string; scenes: SceneHotkeyRegistration[] }) => Promise<{ registered: string[]; failed: string[] }>;
+      unregisterSceneHotkeys: (args: { nodeId: string }) => Promise<void>;
+      onSceneSwitch: (callback: (event: SceneSwitchEvent) => void) => void;
+      removeOnSceneSwitch: () => void;
       getEncoderConfig: () => Promise<EncoderConfig | null>;
       setEncoderConfig: (config: EncoderConfig) => Promise<void>;
     };

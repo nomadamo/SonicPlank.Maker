@@ -12,6 +12,31 @@ export interface OverlayThemeVariable {
   default: string;
 }
 
+export interface SceneTransition {
+  durationMs: number;
+}
+
+export interface ThemeSourceSlot {
+  id: string;
+  role: "primary" | "pip";
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  fitMode: "contain" | "cover" | "stretch";
+  opacity: number;
+}
+
+export interface ThemeScene {
+  id: string;
+  name: string;
+  hotkey?: string;
+  transition: SceneTransition;
+  elements: OverlayThemeElement[];
+  components: OverlayThemeComponent[];
+  sources: ThemeSourceSlot[];
+}
+
 export interface OverlayThemeElement {
   id: string;
   type: "image" | "text" | "color";
@@ -41,8 +66,7 @@ export interface OverlayThemeMeta {
 
 export interface OverlayThemeLayout extends OverlayThemeMeta {
   variables: OverlayThemeVariable[];
-  elements: OverlayThemeElement[];
-  components: OverlayThemeComponent[];
+  scenes: ThemeScene[];
 }
 
 export interface ComponentStyleProps {

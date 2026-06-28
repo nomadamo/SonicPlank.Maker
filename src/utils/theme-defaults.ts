@@ -11,8 +11,9 @@ export function getThemeDefaultForType(
   for (const node of nodes) {
     if (node.type !== "overlayThemeNode") continue;
     const layout = node.data.themeLayout as OverlayThemeLayout | null | undefined;
-    if (!layout?.components?.length) continue;
-    const comp = layout.components.find((c) => c.componentType === componentType);
+    const baseScene = layout?.scenes?.[0];
+    if (!baseScene?.components?.length) continue;
+    const comp = baseScene.components.find((c) => c.componentType === componentType);
     if (comp) return { x: comp.x, y: comp.y, width: comp.width, height: comp.height };
   }
   return null;
