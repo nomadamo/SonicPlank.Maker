@@ -56,6 +56,8 @@ function formatTime(seconds: number): string {
 
 function OverlayWindowComponent() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const isTransitioningRef = useRef(false);
   const overlaysRef = useRef<OverlayElement[]>([]);
   const audioDataMapRef = useRef<Record<string, number[]>>({});
   const audioTimesRef = useRef<Record<string, { currentTime: number; duration: number }>>({});
@@ -98,6 +100,17 @@ function OverlayWindowComponent() {
     window.electron.onOverlaysUpdated((updated) => {
       overlaysRef.current = updated ?? [];
       overlaysReadyRef.current = true;
+      if (isTransitioningRef.current && containerRef.current) {
+        isTransitioningRef.current = false;
+        containerRef.current.style.opacity = "1";
+      }
+    });
+
+    window.electron.onSceneSwitch((event) => {
+      if (!containerRef.current) return;
+      isTransitioningRef.current = true;
+      containerRef.current.style.transition = `opacity ${event.durationMs}ms ease-in-out`;
+      containerRef.current.style.opacity = "0";
     });
 
     window.electron.onAudioDataUpdated((id, data) => {
@@ -133,6 +146,7 @@ function OverlayWindowComponent() {
       window.electron.removeOnAudioDataUpdated();
       window.electron.removeOnAudioTimeUpdated();
       window.electron.removeOnChatMessagesUpdated();
+      window.electron.removeOnSceneSwitch();
     };
   }, []);
 
@@ -619,9 +633,8 @@ function OverlayWindowComponent() {
   }, [renderLoop]);
 
   return (
-    <canvas 
-      ref={canvasRef} 
-      className="fixed inset-0 w-full h-full pointer-events-none" 
-    />
+    <div ref={containerRef} className="fixed inset-0 pointer-events-none" style={{ opacity: 1 }}>
+      <canvas ref={canvasRef} className="w-full h-full" />
+    </div>
   );
 }

@@ -11,6 +11,8 @@ import {
   OverlayThemeComponent,
   OverlayThemeElement,
   OverlayThemeVariable,
+  ThemeScene,
+  ThemeSourceSlot,
 } from "@/types/flow-node";
 import { ComponentPreviewCanvas } from "@/components/marquee/component-preview-canvas";
 import { createFileRoute } from "@tanstack/react-router";
@@ -18,6 +20,7 @@ import {
   BarChart2,
   FolderOpen,
   ImagePlus,
+  Layers,
   MessageSquare,
   Music,
   Plus,
@@ -27,6 +30,7 @@ import {
   Trash2,
   Type,
   Undo2,
+  Video,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -192,12 +196,35 @@ function ResizeHandles({ onMouseDown }: { onMouseDown: (e: React.MouseEvent, h: 
   );
 }
 
+function createBaseScene(): ThemeScene {
+  return { id: "base", name: "Base", transition: { durationMs: 500 }, elements: [], components: [], sources: [] };
+}
+
+function newSourceSlot(role: ThemeSourceSlot["role"]): ThemeSourceSlot {
+  return {
+    id: crypto.randomUUID(),
+    role,
+    x: role === "primary" ? 0 : 70,
+    y: role === "primary" ? 0 : 75,
+    width: role === "primary" ? 100 : 25,
+    height: role === "primary" ? 100 : 22,
+    fitMode: "contain",
+    opacity: 1,
+  };
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 function Marquee() {
   const [meta, setMeta] = useState<ThemeMeta>(DEFAULT_META);
-  const [elements, setElements] = useState<OverlayThemeElement[]>([]);
-  const [components, setComponents] = useState<OverlayThemeComponent[]>([]);
+  const [scenes, setScenes] = useState<ThemeScene[]>([createBaseScene()]);
+  const [activeSceneId, setActiveSceneId] = useState<string>("base");
+  const activeSceneIdRef = useRef<string>("base");
+  activeSceneIdRef.current = activeSceneId;
+
+  const activeScene = scenes.find((s) => s.id === activeSceneId) ?? scenes[0];
+  const elements = activeScene?.elements ?? [];
+  const components = activeScene?.components ?? [];
   const [variables, setVariables] = useState<OverlayThemeVariable[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [focusedComponentId, setFocusedComponentId] = useState<string | null>(null);
@@ -210,35 +237,35 @@ function Marquee() {
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const focusedCanvasRef = useRef<HTMLDivElement | null>(null);
 
+  const sources      = activeScene?.sources ?? [];
   const selectedEl   = elements.find((e) => e.id === selectedId) ?? null;
   const selectedComp = components.find((c) => c.id === selectedId) ?? null;
+  const selectedSlot = sources.find((s) => s.id === selectedId) ?? null;
 
   // ─── Unified drag/resize refs ─────────────────────────────────────────────
   const activeDragId     = useRef<string | null>(null);
-  const activeDragSource = useRef<"element" | "component" | "decoration" | null>(null);
+  const activeDragSource = useRef<"element" | "component" | "decoration" | "source" | null>(null);
   const dragStart        = useRef({ offsetX: 0, offsetY: 0, width: 0, height: 0 });
 
   const activeResizeId     = useRef<string | null>(null);
-  const activeResizeSource = useRef<"element" | "component" | "decoration" | null>(null);
+  const activeResizeSource = useRef<"element" | "component" | "decoration" | "source" | null>(null);
   const activeHandle       = useRef<string | null>(null);
   const resizeStart        = useRef({ x: 0, y: 0, width: 0, height: 0, clickX: 0, clickY: 0, aspectRatio: 1 });
 
   const [, forceRender] = useState(0);
 
   // ─── Undo / Redo ─────────────────────────────────────────────────────────
-  type HistoryEntry = { elements: OverlayThemeElement[]; components: OverlayThemeComponent[] };
-  const historyRef      = useRef<HistoryEntry[]>([{ elements: [], components: [] }]);
+  type HistoryEntry = { scenes: ThemeScene[] };
+  const historyRef      = useRef<HistoryEntry[]>([{ scenes: [createBaseScene()] }]);
   const historyIdxRef   = useRef(0);
   const suppressHistRef = useRef(false);
   const histTimerRef    = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Always-current refs so the mouseup closure can read the latest values.
-  const elementsRef     = useRef(elements);  elementsRef.current   = elements;
-  const componentsRef   = useRef(components); componentsRef.current = components;
+  const scenesRef       = useRef(scenes); scenesRef.current = scenes;
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
 
-  const pushHistory = useCallback((elems: OverlayThemeElement[], comps: OverlayThemeComponent[]) => {
-    historyRef.current = [...historyRef.current.slice(0, historyIdxRef.current + 1), { elements: elems, components: comps }];
+  const pushHistory = useCallback((scns: ThemeScene[]) => {
+    historyRef.current = [...historyRef.current.slice(0, historyIdxRef.current + 1), { scenes: scns }];
     historyIdxRef.current = historyRef.current.length - 1;
     setCanUndo(historyIdxRef.current > 0);
     setCanRedo(false);
@@ -250,8 +277,7 @@ function Marquee() {
     suppressHistRef.current = true;
     historyIdxRef.current--;
     const snap = historyRef.current[historyIdxRef.current];
-    setElements(snap.elements);
-    setComponents(snap.components);
+    setScenes(snap.scenes);
     setCanUndo(historyIdxRef.current > 0);
     setCanRedo(true);
   }, []);
@@ -262,11 +288,46 @@ function Marquee() {
     suppressHistRef.current = true;
     historyIdxRef.current++;
     const snap = historyRef.current[historyIdxRef.current];
-    setElements(snap.elements);
-    setComponents(snap.components);
+    setScenes(snap.scenes);
     setCanUndo(true);
     setCanRedo(historyIdxRef.current < historyRef.current.length - 1);
   }, []);
+
+  // ─── Scene-scoped element/component setters ───────────────────────────────
+  // These always target the active scene using a ref so they're stable across
+  // renders (safe to use inside useEffect closures set up at mount time).
+  const setActiveElements = useCallback(
+    (updater: OverlayThemeElement[] | ((prev: OverlayThemeElement[]) => OverlayThemeElement[])) => {
+      const sceneId = activeSceneIdRef.current;
+      setScenes((prev) => prev.map((s) => {
+        if (s.id !== sceneId) return s;
+        const next = typeof updater === "function" ? updater(s.elements) : updater;
+        return { ...s, elements: next };
+      }));
+    }, [],
+  );
+
+  const setActiveComponents = useCallback(
+    (updater: OverlayThemeComponent[] | ((prev: OverlayThemeComponent[]) => OverlayThemeComponent[])) => {
+      const sceneId = activeSceneIdRef.current;
+      setScenes((prev) => prev.map((s) => {
+        if (s.id !== sceneId) return s;
+        const next = typeof updater === "function" ? updater(s.components) : updater;
+        return { ...s, components: next };
+      }));
+    }, [],
+  );
+
+  const setActiveSources = useCallback(
+    (updater: ThemeSourceSlot[] | ((prev: ThemeSourceSlot[]) => ThemeSourceSlot[])) => {
+      const sceneId = activeSceneIdRef.current;
+      setScenes((prev) => prev.map((s) => {
+        if (s.id !== sceneId) return s;
+        const next = typeof updater === "function" ? updater(s.sources ?? []) : updater;
+        return { ...s, sources: next };
+      }));
+    }, [],
+  );
 
   const pct = useCallback((e: MouseEvent) => {
     const rect = canvasRef.current?.getBoundingClientRect();
@@ -295,9 +356,11 @@ function Marquee() {
         const newX = Math.round(Math.max(0, Math.min(100 - s.width, x - s.offsetX)) * 10) / 10;
         const newY = Math.round(Math.max(0, Math.min(100 - s.height, y - s.offsetY)) * 10) / 10;
         if (src === "element") {
-          setElements((prev) => prev.map((el) => el.id === activeDragId.current ? { ...el, x: newX, y: newY } : el));
+          setActiveElements((prev) => prev.map((el) => el.id === activeDragId.current ? { ...el, x: newX, y: newY } : el));
         } else if (src === "component") {
-          setComponents((prev) => prev.map((c) => c.id === activeDragId.current ? { ...c, x: newX, y: newY } : c));
+          setActiveComponents((prev) => prev.map((c) => c.id === activeDragId.current ? { ...c, x: newX, y: newY } : c));
+        } else if (src === "source") {
+          setActiveSources((prev) => prev.map((s) => s.id === activeDragId.current ? { ...s, x: newX, y: newY } : s));
         } else if (src === "decoration") {
           setFocusedDraftComp((prev) => !prev ? prev : { ...prev, decorations: prev.decorations.map((d) => d.id === activeDragId.current ? { ...d, x: newX, y: newY } : d) });
         }
@@ -338,9 +401,11 @@ function Marquee() {
         const patch = { x: r(nx), y: r(ny), width: r(nw), height: r(nh) };
 
         if (src === "element") {
-          setElements((prev) => prev.map((el) => el.id === activeResizeId.current ? { ...el, ...patch } : el));
+          setActiveElements((prev) => prev.map((el) => el.id === activeResizeId.current ? { ...el, ...patch } : el));
         } else if (src === "component") {
-          setComponents((prev) => prev.map((c) => c.id === activeResizeId.current ? { ...c, ...patch } : c));
+          setActiveComponents((prev) => prev.map((c) => c.id === activeResizeId.current ? { ...c, ...patch } : c));
+        } else if (src === "source") {
+          setActiveSources((prev) => prev.map((s) => s.id === activeResizeId.current ? { ...s, ...patch } : s));
         } else if (src === "decoration") {
           setFocusedDraftComp((prev) => !prev ? prev : { ...prev, decorations: prev.decorations.map((d) => d.id === activeResizeId.current ? { ...d, ...patch } : d) });
         }
@@ -359,7 +424,7 @@ function Marquee() {
       if (wasDragging || wasResizing) {
         if (histTimerRef.current) clearTimeout(histTimerRef.current);
         suppressHistRef.current = true;
-        pushHistory(elementsRef.current, componentsRef.current);
+        pushHistory(scenesRef.current);
       }
     };
 
@@ -375,9 +440,9 @@ function Marquee() {
   useEffect(() => {
     if (suppressHistRef.current) { suppressHistRef.current = false; return; }
     if (histTimerRef.current) clearTimeout(histTimerRef.current);
-    histTimerRef.current = setTimeout(() => { pushHistory(elements, components); }, 400);
+    histTimerRef.current = setTimeout(() => { pushHistory(scenesRef.current); }, 400);
     return () => { if (histTimerRef.current) clearTimeout(histTimerRef.current); };
-  }, [elements, components, pushHistory]);
+  }, [scenes, pushHistory]);
 
   // Ctrl+Z / Ctrl+Y keyboard shortcuts.
   useEffect(() => {
@@ -390,7 +455,7 @@ function Marquee() {
   }, [undo, redo]);
 
   const startDrag = useCallback(
-    (e: React.MouseEvent, item: { id: string; x: number; y: number; width: number; height: number }, source: "element" | "component" | "decoration") => {
+    (e: React.MouseEvent, item: { id: string; x: number; y: number; width: number; height: number }, source: "element" | "component" | "decoration" | "source") => {
       e.preventDefault();
       e.stopPropagation();
       const ref = source === "decoration" ? focusedCanvasRef : canvasRef;
@@ -408,7 +473,7 @@ function Marquee() {
   );
 
   const startResize = useCallback(
-    (e: React.MouseEvent, item: { id: string; x: number; y: number; width: number; height: number }, handle: string, source: "element" | "component" | "decoration") => {
+    (e: React.MouseEvent, item: { id: string; x: number; y: number; width: number; height: number }, handle: string, source: "element" | "component" | "decoration" | "source") => {
       e.preventDefault();
       e.stopPropagation();
       const ref = source === "decoration" ? focusedCanvasRef : canvasRef;
@@ -436,65 +501,117 @@ function Marquee() {
     const fullPath = paths[0];
     const bname = fileBasename(fullPath);
     const el = newElement("image", { asset: bname, width: 30, height: 20 });
-    setElements((prev) => [...prev, el]);
+    setActiveElements((prev) => [...prev, el]);
     setAssetPaths((prev) => ({ ...prev, [bname]: `file:///${fullPath.replace(/\\/g, "/")}` }));
     setSelectedId(el.id);
-  }, []);
+  }, [setActiveElements]);
 
   const addText = useCallback(() => {
     const el = newElement("text", { textContent: "Text", fontSize: 24, textColor: "#ffffff", fontFamily: "sans-serif", fontWeight: "normal", fontStyle: "normal", width: 30, height: 10 });
-    setElements((prev) => [...prev, el]);
+    setActiveElements((prev) => [...prev, el]);
     setSelectedId(el.id);
-  }, []);
+  }, [setActiveElements]);
 
   const addColor = useCallback(() => {
     const el = newElement("color", { backgroundColor: "#7c3aed", width: 30, height: 15 });
-    setElements((prev) => [...prev, el]);
+    setActiveElements((prev) => [...prev, el]);
     setSelectedId(el.id);
-  }, []);
+  }, [setActiveElements]);
 
   const addComponent = useCallback((type: CompType) => {
     const c = newComponent(type);
-    setComponents((prev) => [...prev, c]);
+    setScenes((prev) => {
+      const sceneId = activeSceneIdRef.current;
+      const baseHasType = prev.find((s) => s.id === "base")?.components.some((bc) => bc.componentType === type) ?? true;
+      return prev.map((s) => {
+        if (s.id === "base" && sceneId !== "base" && !baseHasType) {
+          return { ...s, components: [...s.components, newComponent(type)] };
+        }
+        if (s.id === sceneId) {
+          return { ...s, components: [...s.components, c] };
+        }
+        return s;
+      });
+    });
     setSelectedId(c.id);
   }, []);
 
+  const addSourceSlot = useCallback((role: ThemeSourceSlot["role"]) => {
+    const slot = newSourceSlot(role);
+    setActiveSources((prev) => [...prev, slot]);
+    setSelectedId(slot.id);
+  }, [setActiveSources]);
+
   const deleteSelected = useCallback(() => {
     if (!selectedId) return;
-    setElements((prev) => prev.filter((e) => e.id !== selectedId));
-    setComponents((prev) => prev.filter((c) => c.id !== selectedId));
+    setActiveElements((prev) => prev.filter((e) => e.id !== selectedId));
+    setActiveComponents((prev) => prev.filter((c) => c.id !== selectedId));
+    setActiveSources((prev) => prev.filter((s) => s.id !== selectedId));
     setSelectedId(null);
-  }, [selectedId]);
+  }, [selectedId, setActiveElements, setActiveComponents, setActiveSources]);
+
+  const updateSourceSlot = useCallback((patch: Partial<ThemeSourceSlot>) => {
+    setActiveSources((prev) => prev.map((s) => s.id === selectedId ? { ...s, ...patch } : s));
+  }, [selectedId, setActiveSources]);
 
   const updateEl = useCallback((patch: Partial<OverlayThemeElement>) => {
-    setElements((prev) => prev.map((e) => (e.id === selectedId ? { ...e, ...patch } : e)));
-  }, [selectedId]);
+    setActiveElements((prev) => prev.map((e) => (e.id === selectedId ? { ...e, ...patch } : e)));
+  }, [selectedId, setActiveElements]);
 
   const updateComp = useCallback((patch: Partial<OverlayThemeComponent>) => {
-    setComponents((prev) => prev.map((c) => (c.id === selectedId ? { ...c, ...patch } : c)));
-  }, [selectedId]);
+    setActiveComponents((prev) => prev.map((c) => (c.id === selectedId ? { ...c, ...patch } : c)));
+  }, [selectedId, setActiveComponents]);
 
   const updateCompStyle = useCallback((patch: Partial<ComponentStyleProps>) => {
-    setComponents((prev) => prev.map((c) => c.id === selectedId ? { ...c, styleProps: { ...c.styleProps, ...patch } } : c));
-  }, [selectedId]);
+    setActiveComponents((prev) => prev.map((c) => c.id === selectedId ? { ...c, styleProps: { ...c.styleProps, ...patch } } : c));
+  }, [selectedId, setActiveComponents]);
 
   // ─── Focused editor ───────────────────────────────────────────────────────
   const openFocusedEditor = useCallback((compId: string) => {
-    const comp = components.find((c) => c.id === compId);
+    const sceneId = activeSceneIdRef.current;
+    const comp = scenes.find((s) => s.id === sceneId)?.components.find((c) => c.id === compId);
     if (!comp) return;
     setFocusedDraftComp({ ...comp, decorations: comp.decorations.map((d) => ({ ...d })) });
     setFocusedComponentId(compId);
     setFocusedSelectedDecId(null);
     setSelectedId(null);
-  }, [components]);
+  }, [scenes]);
 
   const handleFocusedApply = useCallback(() => {
     if (!focusedDraftComp) return;
-    setComponents((prev) => prev.map((c) => c.id === focusedDraftComp.id ? focusedDraftComp : c));
+    setActiveComponents((prev) => prev.map((c) => c.id === focusedDraftComp.id ? focusedDraftComp : c));
     setFocusedComponentId(null);
     setFocusedDraftComp(null);
     setFocusedSelectedDecId(null);
-  }, [focusedDraftComp]);
+  }, [focusedDraftComp, setActiveComponents]);
+
+  // ─── Scene management ─────────────────────────────────────────────────────
+  const addScene = useCallback(() => {
+    const id = crypto.randomUUID();
+    setScenes((prev) => {
+      const s: ThemeScene = { id, name: `Scene ${prev.length + 1}`, transition: { durationMs: 500 }, elements: [], components: [] };
+      return [...prev, s];
+    });
+    setActiveSceneId(id);
+  }, []);
+
+  const deleteScene = useCallback((id: string) => {
+    if (id === "base") return;
+    setScenes((prev) => {
+      const next = prev.filter((s) => s.id !== id);
+      return next;
+    });
+    setActiveSceneId((prev) => (prev === id ? "base" : prev));
+  }, []);
+
+  const updateScene = useCallback((id: string, patch: Partial<Pick<ThemeScene, "name" | "hotkey" | "transition">>) => {
+    setScenes((prev) => prev.map((s) => s.id === id ? {
+      ...s,
+      name: patch.name ?? s.name,
+      hotkey: patch.hotkey !== undefined ? (patch.hotkey || undefined) : s.hotkey,
+      transition: patch.transition ? { ...s.transition, ...patch.transition } : s.transition,
+    } : s));
+  }, []);
 
   const handleFocusedCancel = useCallback(() => {
     setFocusedComponentId(null);
@@ -546,7 +663,7 @@ function Marquee() {
   // ─── Save / Open ──────────────────────────────────────────────────────────
   const buildThemeJson = () => JSON.stringify({
     id: meta.id, name: meta.name, author: meta.author, version: meta.version,
-    description: meta.description, variables, elements, components,
+    description: meta.description, variables, scenes,
   }, null, 2);
 
   const handleOpen = useCallback(async () => {
@@ -561,17 +678,29 @@ function Marquee() {
     const parsed = JSON.parse(themeJson);
     setMeta({ id: parsed.id ?? crypto.randomUUID(), name: parsed.name ?? "Untitled", author: parsed.author ?? "", version: parsed.version ?? "1.0.0", description: parsed.description ?? "" });
     setVariables(parsed.variables ?? []);
-    setElements(parsed.elements ?? []);
-    setComponents(parsed.components ?? []);
+    const loadedScenes: ThemeScene[] = (parsed.scenes ?? [createBaseScene()]).map((s: ThemeScene) => ({
+      ...s,
+      sources: s.sources ?? [],
+    }));
+    setScenes(loadedScenes);
+    setActiveSceneId(loadedScenes[0]?.id ?? "base");
     const newAssetPaths: Record<string, string> = {};
-    for (const el of (parsed.elements ?? []) as OverlayThemeElement[]) {
-      if (el.asset) newAssetPaths[el.asset] = `file:///${`${tmpDir}/assets/${el.asset}`.replace(/\\/g, "/")}`;
+    for (const scene of loadedScenes) {
+      for (const el of scene.elements) {
+        if (el.asset) newAssetPaths[el.asset] = `file:///${`${tmpDir}/assets/${el.asset}`.replace(/\\/g, "/")}`;
+      }
+      for (const comp of scene.components) {
+        if (comp.styleProps.asset) newAssetPaths[comp.styleProps.asset] = `file:///${`${tmpDir}/assets/${comp.styleProps.asset}`.replace(/\\/g, "/")}`;
+        for (const dec of comp.decorations) {
+          if (dec.asset) newAssetPaths[dec.asset] = `file:///${`${tmpDir}/assets/${dec.asset}`.replace(/\\/g, "/")}`;
+        }
+      }
     }
     setAssetPaths(newAssetPaths);
     setOpenFilePath(paths[0]);
     setSelectedId(null);
     // Reset history so the loaded state is the undo floor.
-    historyRef.current = [{ elements: parsed.elements ?? [], components: parsed.components ?? [] }];
+    historyRef.current = [{ scenes: loadedScenes }];
     historyIdxRef.current = 0;
     suppressHistRef.current = true;
     setCanUndo(false);
@@ -589,17 +718,30 @@ function Marquee() {
       if (result.canceled || !result.filePath) return;
       savePath = result.filePath as string;
     }
-    const assets: { localPath: string; archiveName: string }[] = [];
-    for (const el of elements) {
-      if (el.asset && assetPaths[el.asset]) {
-        assets.push({ localPath: assetPaths[el.asset].replace(/^file:\/\/\//, "").replace(/\//g, "\\"), archiveName: el.asset });
+    const assetMap = new Map<string, string>();
+    for (const scene of scenes) {
+      for (const el of scene.elements) {
+        if (el.asset && assetPaths[el.asset] && !assetMap.has(el.asset))
+          assetMap.set(el.asset, assetPaths[el.asset]);
+      }
+      for (const comp of scene.components) {
+        if (comp.styleProps.asset && assetPaths[comp.styleProps.asset] && !assetMap.has(comp.styleProps.asset))
+          assetMap.set(comp.styleProps.asset, assetPaths[comp.styleProps.asset]);
+        for (const dec of comp.decorations) {
+          if (dec.asset && assetPaths[dec.asset] && !assetMap.has(dec.asset))
+            assetMap.set(dec.asset, assetPaths[dec.asset]);
+        }
       }
     }
+    const assets = Array.from(assetMap.entries()).map(([archiveName, localUrl]) => ({
+      localPath: localUrl.replace(/^file:\/\/\//, "").replace(/\//g, "\\"),
+      archiveName,
+    }));
     const res = await window.electron.saveOverlayTheme({ themeJson: buildThemeJson(), assets, savePath: savePath! });
     if (res.success) setOpenFilePath(savePath);
     else alert(`Save failed: ${res.error ?? "unknown error"}`);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [meta, elements, components, variables, assetPaths, openFilePath]);
+  }, [meta, scenes, variables, assetPaths, openFilePath]);
 
   // ─── Canvas helpers ───────────────────────────────────────────────────────
   const elementTypeIcon = (type: OverlayThemeElement["type"]) => {
@@ -668,7 +810,31 @@ function Marquee() {
     );
   };
 
-  const isEmpty = elements.length === 0 && components.length === 0;
+  const renderCanvasSourceSlot = (slot: ThemeSourceSlot) => {
+    const isSelected = slot.id === selectedId;
+    const isPrimary = slot.role === "primary";
+    const borderCls = isPrimary ? "border-indigo-500" : "border-teal-500";
+    const bgCls     = isPrimary ? "bg-indigo-950/40"  : "bg-teal-950/40";
+    const textCls   = isPrimary ? "text-indigo-300"   : "text-teal-300";
+    return (
+      <div
+        key={slot.id}
+        onMouseDown={(e) => startDrag(e, slot, "source")}
+        className={`absolute select-none cursor-move border-2 border-dashed ${borderCls} ${bgCls} flex items-center justify-center ${isSelected ? "ring-2 ring-violet-400" : `hover:ring-1 hover:ring-violet-400/50`}`}
+        style={{ left: `${slot.x}%`, top: `${slot.y}%`, width: `${slot.width}%`, height: `${slot.height}%`, opacity: slot.opacity, zIndex: isSelected ? 10 : 0 }}
+      >
+        <div className={`flex flex-col items-center gap-0.5 pointer-events-none ${textCls}`}>
+          <Video className="w-5 h-5 opacity-70" />
+          <span className="text-[8px] font-bold uppercase tracking-widest opacity-80">
+            {isPrimary ? "Primary" : "PiP"}
+          </span>
+        </div>
+        {isSelected && <ResizeHandles onMouseDown={(e, h) => startResize(e, slot, h, "source")} />}
+      </div>
+    );
+  };
+
+  const isEmpty = (activeScene?.elements.length ?? 0) === 0 && (activeScene?.components.length ?? 0) === 0 && sources.length === 0;
 
   // ─── Render ───────────────────────────────────────────────────────────────
   return (
@@ -714,6 +880,93 @@ function Marquee() {
           {/* ── Left panel ── */}
           <div className="w-52 shrink-0 border-r border-border flex flex-col overflow-hidden">
 
+            {/* Scenes */}
+            <div className="shrink-0 border-b border-border p-2">
+              <div className="flex items-center justify-between mb-1.5">
+                <div className="flex items-center gap-1 text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">
+                  <Layers className="w-3 h-3" /> Scenes
+                </div>
+                <button onClick={addScene}
+                  className="flex items-center gap-0.5 text-[9px] text-violet-400 hover:text-violet-300 cursor-pointer">
+                  <Plus className="w-2.5 h-2.5" /> Add
+                </button>
+              </div>
+              <div className="flex flex-col gap-0.5 mb-1.5">
+                {scenes.map((scene) => (
+                  <div key={scene.id}
+                    onClick={() => setActiveSceneId(scene.id)}
+                    className={`flex items-center justify-between px-2 py-1 rounded cursor-pointer text-[10px] transition-colors ${
+                      scene.id === activeSceneId
+                        ? "bg-violet-600/20 border border-violet-500/40 text-violet-200"
+                        : "hover:bg-secondary border border-transparent text-foreground/70"
+                    }`}>
+                    <span className="truncate flex-1 font-medium">{scene.name}</span>
+                    <div className="flex items-center gap-1 shrink-0 ml-1">
+                      {scene.hotkey && (
+                        <span className="text-[8px] font-mono bg-muted border border-border/60 rounded px-1">{scene.hotkey}</span>
+                      )}
+                      {scene.id !== "base" && (
+                        <button onClick={(e) => { e.stopPropagation(); deleteScene(scene.id); }}
+                          className="text-red-400 hover:text-red-300 cursor-pointer">
+                          <Trash2 className="w-2.5 h-2.5" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {/* Active scene config */}
+              {activeScene && (
+                <div className="flex flex-col gap-1 pt-1 border-t border-border/30">
+                  <input
+                    value={activeScene.name}
+                    onChange={(e) => updateScene(activeScene.id, { name: e.target.value })}
+                    disabled={activeScene.id === "base"}
+                    placeholder="Scene name"
+                    className="w-full bg-muted border border-border rounded px-1.5 py-0.5 text-[9px] text-foreground focus:border-violet-500 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+                  />
+                  <input
+                    value={activeScene.hotkey ?? ""}
+                    onChange={(e) => updateScene(activeScene.id, { hotkey: e.target.value })}
+                    placeholder="Hotkey (e.g. Alt+1)"
+                    className="w-full bg-muted border border-border rounded px-1.5 py-0.5 text-[9px] text-foreground focus:border-violet-500 focus:outline-none font-mono"
+                  />
+                  <div className="flex items-center gap-1">
+                    <label className="text-[9px] text-muted-foreground shrink-0">Fade</label>
+                    <input
+                      type="number" min={100} max={5000} step={100}
+                      value={activeScene.transition.durationMs}
+                      onChange={(e) => updateScene(activeScene.id, { transition: { durationMs: parseInt(e.target.value) || 500 } })}
+                      className="flex-1 min-w-0 bg-muted border border-border rounded px-1.5 py-0.5 text-[9px] text-foreground focus:border-violet-500 focus:outline-none"
+                    />
+                    <span className="text-[9px] text-muted-foreground shrink-0">ms</span>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Sources */}
+            <div className="shrink-0 border-b border-border p-2">
+              <div className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5 flex items-center gap-1">
+                <Video className="w-3 h-3" /> Capture Sources
+              </div>
+              <div className="flex gap-1">
+                <button
+                  onClick={() => addSourceSlot("primary")}
+                  disabled={sources.some((s) => s.role === "primary")}
+                  title="Add primary source slot"
+                  className="flex-1 flex items-center justify-center gap-1 py-1 text-[10px] font-semibold bg-indigo-600/20 hover:bg-indigo-600/40 border border-indigo-500/30 text-indigo-300 rounded cursor-pointer transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+                  <Video className="w-3 h-3" /> Primary
+                </button>
+                <button
+                  onClick={() => addSourceSlot("pip")}
+                  title="Add PiP source slot"
+                  className="flex-1 flex items-center justify-center gap-1 py-1 text-[10px] font-semibold bg-teal-600/20 hover:bg-teal-600/40 border border-teal-500/30 text-teal-300 rounded cursor-pointer transition-colors">
+                  <Video className="w-3 h-3" /> + PiP
+                </button>
+              </div>
+            </div>
+
             {/* Decorations add buttons */}
             <div className="shrink-0 border-b border-border p-2">
               <div className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">Decorations</div>
@@ -758,7 +1011,7 @@ function Marquee() {
                 <div className="px-2 pb-1 text-[10px] text-muted-foreground italic">None</div>
               )}
               {elements.length > 0 && (
-                <SortableList items={elements} onChange={setElements} renderItem={(el) => (
+                <SortableList items={elements} onChange={(v) => setActiveElements(v)} renderItem={(el) => (
                   <SortableItem id={el.id}>
                     <div onClick={() => setSelectedId(el.id)}
                       className={`flex items-center gap-1.5 px-2 py-1.5 w-full cursor-pointer transition-colors rounded mx-1 my-0.5 ${el.id === selectedId ? "bg-violet-600/20 text-violet-200" : "hover:bg-secondary text-foreground/80"}`}>
@@ -778,7 +1031,7 @@ function Marquee() {
                 <div className="px-2 pb-1 text-[10px] text-muted-foreground italic">None</div>
               )}
               {components.length > 0 && (
-                <SortableList items={components} onChange={setComponents} renderItem={(comp) => (
+                <SortableList items={components} onChange={(v) => setActiveComponents(v)} renderItem={(comp) => (
                   <SortableItem id={comp.id}>
                     <div onClick={() => setSelectedId(comp.id)} onDoubleClick={() => openFocusedEditor(comp.id)}
                       className={`flex items-center gap-1.5 px-2 py-1.5 w-full cursor-pointer transition-colors rounded mx-1 my-0.5 ${comp.id === selectedId ? "bg-violet-600/20 text-violet-200" : "hover:bg-secondary text-foreground/80"}`}>
@@ -788,6 +1041,20 @@ function Marquee() {
                     </div>
                   </SortableItem>
                 )} />
+              )}
+
+              {/* Source slot layer list */}
+              {sources.length > 0 && (
+                <>
+                  <div className="px-2 pt-2 pb-0.5 text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">Source Slots</div>
+                  {sources.map((slot) => (
+                    <div key={slot.id} onClick={() => setSelectedId(slot.id)}
+                      className={`flex items-center gap-1.5 px-2 py-1.5 cursor-pointer transition-colors rounded mx-1 my-0.5 ${slot.id === selectedId ? "bg-violet-600/20 text-violet-200" : "hover:bg-secondary text-foreground/80"}`}>
+                      <Video className={`w-3 h-3 shrink-0 ${slot.role === "primary" ? "text-indigo-400" : "text-teal-400"}`} />
+                      <span className="truncate flex-1 text-[10px]">{slot.role === "primary" ? "Primary" : "PiP"}</span>
+                    </div>
+                  ))}
+                </>
               )}
 
               {/* Variables */}
@@ -822,8 +1089,14 @@ function Marquee() {
               style={{ aspectRatio: "16/9", maxHeight: "100%", maxWidth: "100%", width: "min(100%, calc((100vh - 120px) * 16/9))" }}>
               <div ref={canvasRef} className="absolute inset-0"
                 onClick={(e) => { if (e.target === e.currentTarget) setSelectedId(null); }}>
+                {sources.map(renderCanvasSourceSlot)}
                 {elements.map(renderCanvasElement)}
                 {components.map(renderCanvasComponent)}
+              </div>
+              {/* Active scene label */}
+              <div className="absolute top-1 left-1 flex items-center gap-1 px-1.5 py-0.5 bg-black/60 rounded text-[8px] font-semibold text-violet-300 pointer-events-none">
+                <Layers className="w-2.5 h-2.5" />
+                {activeScene?.name ?? "Base"}
               </div>
               {isEmpty && (
                 <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none gap-2">
@@ -838,7 +1111,7 @@ function Marquee() {
           <div className="w-56 shrink-0 border-l border-border flex flex-col overflow-y-auto">
             {!selectedId && (
               <div className="flex-1 flex items-center justify-center text-[10px] text-muted-foreground italic p-4 text-center">
-                Select an element or component to edit its properties
+                Select an element, component, or source slot to edit its properties
               </div>
             )}
 
@@ -941,6 +1214,52 @@ function Marquee() {
                     </button>
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* Source slot properties */}
+            {selectedSlot && !selectedEl && !selectedComp && (
+              <div className="flex flex-col gap-3 p-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <Video className={`w-3.5 h-3.5 ${selectedSlot.role === "primary" ? "text-indigo-400" : "text-teal-400"}`} />
+                    <span className={`text-[10px] font-semibold uppercase tracking-wider ${selectedSlot.role === "primary" ? "text-indigo-300" : "text-teal-300"}`}>
+                      {selectedSlot.role === "primary" ? "Primary Source" : "PiP Source"}
+                    </span>
+                  </div>
+                  <button onClick={deleteSelected} className="text-red-400 hover:text-red-300 cursor-pointer" title="Delete"><Trash2 className="w-3.5 h-3.5" /></button>
+                </div>
+
+                {/* Position & Size */}
+                <div className="grid grid-cols-2 gap-1.5">
+                  {(["x","y","width","height"] as const).map((field) => (
+                    <div key={field} className="flex flex-col gap-0.5">
+                      <label className="text-[9px] text-muted-foreground uppercase">{field === "width" ? "W" : field === "height" ? "H" : field.toUpperCase()}</label>
+                      <input type="number" value={selectedSlot[field]} step={0.1}
+                        onChange={(e) => updateSourceSlot({ [field]: parseFloat(e.target.value) || 0 })}
+                        className="w-full bg-muted border border-border rounded px-1.5 py-1 text-[10px] text-foreground focus:border-violet-500 focus:outline-none" />
+                    </div>
+                  ))}
+                </div>
+
+                {/* Opacity */}
+                <div className="flex flex-col gap-0.5">
+                  <label className="text-[9px] text-muted-foreground uppercase">Opacity</label>
+                  <input type="range" min={0} max={1} step={0.01} value={selectedSlot.opacity}
+                    onChange={(e) => updateSourceSlot({ opacity: parseFloat(e.target.value) })} className="w-full accent-violet-500" />
+                  <span className="text-[9px] text-muted-foreground text-right">{Math.round(selectedSlot.opacity * 100)}%</span>
+                </div>
+
+                {/* Fit Mode */}
+                <div className="flex flex-col gap-0.5">
+                  <label className="text-[9px] text-muted-foreground uppercase">Fit Mode</label>
+                  <select value={selectedSlot.fitMode} onChange={(e) => updateSourceSlot({ fitMode: e.target.value as ThemeSourceSlot["fitMode"] })}
+                    className="w-full bg-muted border border-border rounded px-1 py-1 text-[10px] text-foreground focus:border-violet-500 focus:outline-none">
+                    <option value="contain">Contain</option>
+                    <option value="cover">Cover</option>
+                    <option value="stretch">Stretch</option>
+                  </select>
+                </div>
               </div>
             )}
 

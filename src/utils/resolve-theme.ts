@@ -5,7 +5,7 @@ export function substituteVars(text: string, vars: Record<string, string>): stri
 }
 
 function resolveThemeElement(
-  el: OverlayThemeLayout["elements"][number],
+  el: OverlayThemeLayout["scenes"][number]["elements"][number],
   idPrefix: string,
   layout: OverlayThemeLayout,
   vars: Record<string, string>,
@@ -37,14 +37,21 @@ function resolveThemeElement(
   return resolved;
 }
 
-export function resolveThemeElements(layout: OverlayThemeLayout, vars: Record<string, string>): OverlayElement[] {
-  const idPfx = `theme::${layout.id}`;
+export function resolveThemeElements(
+  layout: OverlayThemeLayout,
+  vars: Record<string, string>,
+  sceneId = "base",
+): OverlayElement[] {
+  const scene = layout.scenes?.find((s) => s.id === sceneId) ?? layout.scenes?.[0];
+  if (!scene) return [];
 
-  const resolved: OverlayElement[] = layout.elements.map((el) =>
+  const idPfx = `theme::${layout.id}::scene::${scene.id}`;
+
+  const resolved: OverlayElement[] = scene.elements.map((el) =>
     resolveThemeElement(el, idPfx, layout, vars),
   );
 
-  for (const comp of layout.components ?? []) {
+  for (const comp of scene.components ?? []) {
     const sp = comp.styleProps;
     resolved.push({
       id:              `${idPfx}::comp::${comp.id}`,

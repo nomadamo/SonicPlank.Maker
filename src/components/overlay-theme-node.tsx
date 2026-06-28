@@ -1,7 +1,7 @@
 import { BaseNodeCard } from "./base-node";
 import { Handle, NodeProps, Position } from "@xyflow/react";
-import { Palette as PaletteIcon } from "lucide-react";
-import { FlowNodeType, OverlayThemeMeta, OverlayThemeLayout, OverlayElement } from "@/types/flow-node";
+import { Palette as PaletteIcon, AlertTriangle } from "lucide-react";
+import { FlowNodeType, OverlayThemeMeta, OverlayThemeLayout } from "@/types/flow-node";
 import { useSetAtom } from "jotai";
 import { updateNodeDataAtom } from "@/store/flowStore";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -13,10 +13,12 @@ export function OverlayThemeNode(NodeRef: NodeProps<FlowNodeType>) {
 
   const [themes, setThemes] = useState<OverlayThemeMeta[]>([]);
   const [loading, setLoading] = useState(false);
+  const [failedHotkeys, setFailedHotkeys] = useState<string[]>([]);
 
   const selectedThemeId = (node.data.selectedThemeId as string | null) ?? null;
   const variables = (node.data.variables as Record<string, string>) ?? {};
   const themeLayout = (node.data.themeLayout as OverlayThemeLayout | null) ?? null;
+  const activeSceneId = (node.data.activeSceneId as string) ?? "base";
 
   const [draftVars, setDraftVars] = useState<Record<string, string>>(variables);
   const prevSelectedId = useRef<string | null>(null);
@@ -25,6 +27,42 @@ export function OverlayThemeNode(NodeRef: NodeProps<FlowNodeType>) {
   useEffect(() => {
     window.electron.getInstalledOverlayThemes().then(setThemes).catch(console.error);
   }, []);
+
+  // Register/unregister hotkeys whenever the loaded theme changes
+  useEffect(() => {
+    if (!themeLayout || !selectedThemeId) return;
+
+    const scenesWithHotkeys = (themeLayout.scenes ?? [])
+      .filter((s) => s.hotkey)
+      .map((s) => ({ sceneId: s.id, hotkey: s.hotkey!, durationMs: s.transition.durationMs }));
+
+    if (scenesWithHotkeys.length === 0) return;
+
+    window.electron
+      .registerSceneHotkeys({ nodeId: node.id, scenes: scenesWithHotkeys })
+      .then(({ failed }) => {
+        setFailedHotkeys(failed);
+      })
+      .catch(console.error);
+
+    return () => {
+      window.electron.unregisterSceneHotkeys({ nodeId: node.id }).catch(console.error);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [themeLayout, node.id]);
+
+  // Listen for scene switches targeting this node
+  useEffect(() => {
+    window.electron.onSceneSwitch((event) => {
+      if (event.nodeId !== node.id || !themeLayout) return;
+      const resolved = resolveThemeElements(themeLayout, variables, event.sceneId);
+      updateNodeData({ id: node.id, patch: { activeSceneId: event.sceneId, resolvedElements: resolved } });
+    });
+    return () => {
+      window.electron.removeOnSceneSwitch();
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [themeLayout, variables, node.id]);
 
   // When selected theme changes, load its layout and resolve elements
   useEffect(() => {
@@ -37,7 +75,8 @@ export function OverlayThemeNode(NodeRef: NodeProps<FlowNodeType>) {
       for (const v of layout.variables) {
         initialVars[v.key] = variables[v.key] ?? v.default ?? "";
       }
-      const resolved = resolveThemeElements(layout, initialVars);
+      const baseSceneId = layout.scenes?.[0]?.id ?? "base";
+      const resolved = resolveThemeElements(layout, initialVars, baseSceneId);
       setDraftVars(initialVars);
       updateNodeData({
         id: node.id,
@@ -45,6 +84,7 @@ export function OverlayThemeNode(NodeRef: NodeProps<FlowNodeType>) {
           themeLayout: layout,
           variables: initialVars,
           resolvedElements: resolved,
+          activeSceneId: baseSceneId,
         },
       });
       setLoading(false);
@@ -56,7 +96,7 @@ export function OverlayThemeNode(NodeRef: NodeProps<FlowNodeType>) {
   }, [selectedThemeId]);
 
   const handleThemeSelect = useCallback((themeId: string) => {
-    updateNodeData({ id: node.id, patch: { selectedThemeId: themeId, themeLayout: null, resolvedElements: [] } });
+    updateNodeData({ id: node.id, patch: { selectedThemeId: themeId, themeLayout: null, resolvedElements: [], activeSceneId: "base" } });
   }, [node.id, updateNodeData]);
 
   const handleVarChange = useCallback((key: string, value: string) => {
@@ -65,15 +105,16 @@ export function OverlayThemeNode(NodeRef: NodeProps<FlowNodeType>) {
 
   const handleApply = useCallback(() => {
     if (!themeLayout) return;
-    const resolved = resolveThemeElements(themeLayout, draftVars);
+    const resolved = resolveThemeElements(themeLayout, draftVars, activeSceneId);
     updateNodeData({ id: node.id, patch: { variables: draftVars, resolvedElements: resolved } });
-  }, [themeLayout, draftVars, node.id, updateNodeData]);
+  }, [themeLayout, draftVars, activeSceneId, node.id, updateNodeData]);
 
   const varsAreDirty = themeLayout
     ? themeLayout.variables.some((v) => draftVars[v.key] !== (variables[v.key] ?? v.default ?? ""))
     : false;
 
   const selectedMeta = themes.find((t) => t.id === selectedThemeId);
+  const scenes = themeLayout?.scenes ?? [];
 
   return (
     <>
@@ -134,6 +175,48 @@ export function OverlayThemeNode(NodeRef: NodeProps<FlowNodeType>) {
           {/* Loading indicator */}
           {loading && (
             <div className="text-[10px] text-violet-400 animate-pulse">Loading theme…</div>
+          )}
+
+          {/* Scenes list */}
+          {scenes.length > 1 && (
+            <div className="flex flex-col gap-1.5 border-t border-border/40 pt-2.5">
+              <label className="text-[9px] font-semibold text-muted-foreground uppercase tracking-wider">
+                Scenes
+              </label>
+              <div className="flex flex-col gap-1">
+                {scenes.map((scene) => {
+                  const isActive = scene.id === activeSceneId;
+                  const hasFailed = failedHotkeys.includes(scene.id);
+                  return (
+                    <div
+                      key={scene.id}
+                      className={`flex items-center justify-between rounded px-2 py-1 text-xs transition-colors ${
+                        isActive
+                          ? "bg-violet-600/20 border border-violet-500/40 text-foreground"
+                          : "bg-muted border border-transparent text-muted-foreground"
+                      }`}
+                    >
+                      <span className="truncate font-medium">{scene.name}</span>
+                      <div className="flex items-center gap-1 shrink-0 ml-2">
+                        {hasFailed && (
+                          <span title="Hotkey failed to register">
+                            <AlertTriangle size={10} className="text-amber-400" />
+                          </span>
+                        )}
+                        {scene.hotkey && (
+                          <span className="text-[9px] bg-muted border border-border/60 rounded px-1 py-0.5 font-mono text-muted-foreground">
+                            {scene.hotkey}
+                          </span>
+                        )}
+                        {isActive && (
+                          <span className="text-[9px] text-violet-400 font-semibold">LIVE</span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           )}
 
           {/* Variable inputs */}

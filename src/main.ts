@@ -3,6 +3,7 @@ import {
   BrowserWindow,
   desktopCapturer,
   dialog,
+  globalShortcut,
   ipcMain,
   MessageChannelMain,
   session,
@@ -1550,8 +1551,9 @@ const registerIpcHandlers = () => {
         previewImagePath: fs.existsSync(previewPath) ? previewPath : undefined,
         themeDir: dir,
         variables: Array.isArray(raw.variables) ? raw.variables : [],
-        elements: Array.isArray(raw.elements) ? raw.elements : [],
-        components: Array.isArray(raw.components) ? raw.components : [],
+        scenes: Array.isArray(raw.scenes)
+          ? raw.scenes.map((s: any) => ({ ...s, sources: Array.isArray(s.sources) ? s.sources : [] }))
+          : [{ id: "base", name: "Base", transition: { durationMs: 500 }, elements: Array.isArray(raw.elements) ? raw.elements : [], components: Array.isArray(raw.components) ? raw.components : [], sources: [] }],
       };
     } catch (err) {
       console.error(`Failed to load overlay theme '${themeId}':`, err);
@@ -1994,6 +1996,60 @@ const registerIpcHandlers = () => {
       JSON.stringify(config, null, 2) + "\n",
       "utf-8",
     );
+  });
+
+  // ── Scene hotkeys ────────────────────────────────────────────────────────────
+  // nodeId → list of registered accelerators for that overlay-theme node
+  const nodeHotkeys = new Map<string, string[]>();
+
+  ipcMain.handle(
+    "registerSceneHotkeys",
+    (
+      _event,
+      args: { nodeId: string; scenes: { sceneId: string; hotkey: string; durationMs: number }[] },
+    ): { registered: string[]; failed: string[] } => {
+      const { nodeId, scenes } = args;
+
+      // Unregister any existing hotkeys for this node
+      const existing = nodeHotkeys.get(nodeId) ?? [];
+      for (const accel of existing) {
+        globalShortcut.unregister(accel);
+      }
+      nodeHotkeys.delete(nodeId);
+
+      const registered: string[] = [];
+      const failed: string[] = [];
+
+      for (const scene of scenes) {
+        if (!scene.hotkey) continue;
+        const ok = globalShortcut.register(scene.hotkey, () => {
+          const payload = { nodeId, sceneId: scene.sceneId, durationMs: scene.durationMs };
+          for (const win of BrowserWindow.getAllWindows()) {
+            win.webContents.send("onSceneSwitch", payload);
+          }
+        });
+        if (ok) {
+          registered.push(scene.sceneId);
+        } else {
+          failed.push(scene.sceneId);
+        }
+      }
+
+      nodeHotkeys.set(nodeId, registered.map((sid) => scenes.find((s) => s.sceneId === sid)!.hotkey));
+      return { registered, failed };
+    },
+  );
+
+  ipcMain.handle("unregisterSceneHotkeys", (_event, args: { nodeId: string }) => {
+    const accels = nodeHotkeys.get(args.nodeId) ?? [];
+    for (const accel of accels) {
+      globalShortcut.unregister(accel);
+    }
+    nodeHotkeys.delete(args.nodeId);
+  });
+
+  app.on("will-quit", () => {
+    globalShortcut.unregisterAll();
   });
 
   ipcMain.handle("initiateSpotifyAuth", () => {
