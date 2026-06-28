@@ -34,7 +34,7 @@ anyhow           = "1"
 sonicplank-ipc   = { path = "crates/ipc" }
 # FFmpeg raw FFI bindings — bindgen generates them at build time from the
 # headers pointed to by FFMPEG_DIR (set in .cargo/config.toml).
-ffmpeg-sys-next  = "7"
+ffmpeg-sys-next  = "8"
 # Audio capture and lock-free ringbuffers
 cpal             = "0.15"
 ringbuf          = "0.4"

@@ -698,7 +698,7 @@ fn check_features(
         );
     }
 
-    let version_check_info = [("avcodec", 56, 62, 0, 108)];
+    let version_check_info = [("avcodec", 56, 63, 0, 108)];
     for &(lib, begin_version_major, end_version_major, begin_version_minor, end_version_minor) in
         version_check_info.iter()
     {
@@ -851,6 +851,8 @@ fn check_features(
         ("ffmpeg_6_1", 60, 31),
         ("ffmpeg_7_0", 61, 3),
         ("ffmpeg_7_1", 61, 19),
+        ("ffmpeg_8_0", 62, 3),
+        ("ffmpeg_8_1", 62, 28),
     ];
     for &(ffmpeg_version_flag, lavc_version_major, lavc_version_minor) in
         ffmpeg_lavc_versions.iter()
@@ -1508,8 +1510,12 @@ fn main() {
         builder = builder
             .header(search_include(&include_paths, "libavcodec/avcodec.h"))
             .header(search_include(&include_paths, "libavcodec/dv_profile.h"))
-            .header(search_include(&include_paths, "libavcodec/avfft.h"))
             .header(search_include(&include_paths, "libavcodec/vorbis_parser.h"));
+
+        // avfft.h was removed in FFmpeg 7.0
+        if ffmpeg_major_version < 7 {
+            builder = builder.header(search_include(&include_paths, "libavcodec/avfft.h"));
+        }
 
         if ffmpeg_major_version < 5 {
             builder = builder.header(search_include(&include_paths, "libavcodec/vaapi.h"))

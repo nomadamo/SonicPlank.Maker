@@ -795,7 +795,7 @@ unsafe fn run_encoder_unsafe(
     let sws = sws_getContext(
         crop_w, crop_h, AVPixelFormat::AV_PIX_FMT_BGRA,
         dst_w, dst_h, AVPixelFormat::AV_PIX_FMT_YUV420P,
-        SWS_FAST_BILINEAR as i32,
+        SwsFlags::SWS_FAST_BILINEAR as i32,
         ptr::null_mut(), ptr::null_mut(), ptr::null(),
     );
     if sws.is_null() {

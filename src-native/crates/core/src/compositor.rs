@@ -168,7 +168,7 @@ pub fn composite_frame(
                 sws_getContext(
                     src_w, src_h, AVPixelFormat::AV_PIX_FMT_BGRA,
                     pw, ph, AVPixelFormat::AV_PIX_FMT_BGRA,
-                    SWS_BILINEAR as i32, std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null()
+                    SwsFlags::SWS_BILINEAR as i32, std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null()
                 )
             };
             pip_scalers.insert(def.source_id.clone(), (ctx, src_w, src_h, pw, ph));
