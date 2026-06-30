@@ -23,9 +23,10 @@ import { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import { useNativePreview } from "@/hooks/useNativePreview";
 import { isValidConnection } from "@/utils/flow-connections";
 import { nodeTypeToOverlayType } from "@/utils/overlay-type-map";
-import { useAtom, useSetAtom } from "jotai";
-import { updateNodeDataAtom, isStreamingAtom } from "@/store/flowStore";
+import { useAtom, useAtomValue, useSetAtom } from "jotai";
+import { updateNodeDataAtom, isStreamingAtom, apiCommandAtom } from "@/store/flowStore";
 import { installedThemesAtom } from "@/store/settingsStore";
+import type { RtmpTarget } from "@/store/settingsStore";
 import { useTransientNodeState } from "@/store/transientNodeStore";
 import { useSettings } from "@/store/settingsStore";
 import { getFlowAudioAnalyser } from "@/utils/flowAudioRegistry";
@@ -107,6 +108,8 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const updateNodeData = useSetAtom(updateNodeDataAtom);
   const setGlobalIsStreaming = useSetAtom(isStreamingAtom);
+  const apiCommand = useAtomValue(apiCommandAtom);
+  const handledApiCmdId = useRef(-1);
   const { settings, updateSettings } = useSettings();
   const { getVal, setVal } = useTransientNodeState(node.id, "targetOutputNode");
 
@@ -139,9 +142,13 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
   const [dynamicAspectRatio, setDynamicAspectRatio] = useState<string>("16/9");
 
   // ── Theme state ───────────────────────────────────────────────────────────────
-  const selectedThemeId = (node.data.selectedThemeId as string | null) ?? null;
-  const themeLayout     = (node.data.themeLayout as OverlayThemeLayout | null) ?? null;
-  const themeVariables  = (node.data.themeVariables as Record<string, string>) ?? {};
+  const selectedThemeId    = (node.data.selectedThemeId as string | null) ?? null;
+  const themeLayout        = (node.data.themeLayout as OverlayThemeLayout | null) ?? null;
+  const themeVariables     = (node.data.themeVariables as Record<string, string>) ?? {};
+  const outputActiveSceneId = (node.data.activeSceneId as string | undefined)
+    ?? themeLayout?.defaultSceneId
+    ?? themeLayout?.scenes?.[0]?.id
+    ?? "base";
   const [installedThemes, setInstalledThemes] = useAtom(installedThemesAtom);
   const [themeLoading, setThemeLoading] = useState(false);
   const [draftThemeVars, setDraftThemeVars] = useState<Record<string, string>>(themeVariables);
@@ -164,7 +171,11 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
   }, [installedThemes, selectedThemeId, node.id, updateNodeData]);
 
   useEffect(() => {
-    if (!selectedThemeId || selectedThemeId === prevThemeId.current) return;
+    if (!selectedThemeId) {
+      prevThemeId.current = null;
+      return;
+    }
+    if (selectedThemeId === prevThemeId.current) return;
     prevThemeId.current = selectedThemeId;
     setThemeLoading(true);
     window.electron.loadOverlayTheme(selectedThemeId).then((layout) => {
@@ -173,13 +184,29 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
       for (const v of layout.variables) {
         initialVars[v.key] = themeVariables[v.key] ?? v.default ?? "";
       }
-      const resolved = resolveThemeElements(layout, initialVars);
+      const defaultId = layout.defaultSceneId ?? layout.scenes?.[0]?.id ?? "base";
+      const resolved = resolveThemeElements(layout, initialVars, defaultId);
       setDraftThemeVars(initialVars);
-      updateNodeData({ id: node.id, patch: { themeLayout: layout, themeVariables: initialVars, themeResolvedElements: resolved } });
+      updateNodeData({ id: node.id, patch: { themeLayout: layout, themeVariables: initialVars, themeResolvedElements: resolved, activeSceneId: defaultId }, markUnsaved: false });
       setThemeLoading(false);
     }).catch(console.error);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedThemeId]);
+
+  // Reset to defaultSceneId when streaming starts so stale activeSceneId doesn't persist
+  const prevIsStreamingRef = useRef(false);
+  useEffect(() => {
+    if (isStreaming && !prevIsStreamingRef.current && selectedThemeId) {
+      window.electron.loadOverlayTheme(selectedThemeId).then((layout) => {
+        if (!layout) return;
+        const defaultId = layout.defaultSceneId ?? layout.scenes?.[0]?.id ?? "base";
+        const resolved = resolveThemeElements(layout, draftThemeVars, defaultId);
+        updateNodeData({ id: node.id, patch: { themeLayout: layout, activeSceneId: defaultId, themeResolvedElements: resolved }, markUnsaved: false });
+      }).catch(console.error);
+    }
+    prevIsStreamingRef.current = isStreaming ?? false;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isStreaming]);
 
   const handleThemeSelect = useCallback((themeId: string) => {
     updateNodeData({ id: node.id, patch: { selectedThemeId: themeId, themeLayout: null, themeResolvedElements: [] } });
@@ -187,9 +214,9 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
 
   const handleThemeVarApply = useCallback(() => {
     if (!themeLayout) return;
-    const resolved = resolveThemeElements(themeLayout, draftThemeVars);
+    const resolved = resolveThemeElements(themeLayout, draftThemeVars, outputActiveSceneId);
     updateNodeData({ id: node.id, patch: { themeVariables: draftThemeVars, themeResolvedElements: resolved } });
-  }, [themeLayout, draftThemeVars, node.id, updateNodeData]);
+  }, [themeLayout, draftThemeVars, outputActiveSceneId, node.id, updateNodeData]);
 
   const themeVarsDirty = themeLayout
     ? themeLayout.variables.some((v) => draftThemeVars[v.key] !== (themeVariables[v.key] ?? v.default ?? ""))
@@ -402,6 +429,23 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
   }, [edges, nodes, node.id]);
 
   // Overlay Compositor node — may carry capture source role config
+  const currentScene = useMemo(() => {
+    if (themeLayout?.scenes?.length) {
+      const scene = themeLayout.scenes.find((s) => s.id === outputActiveSceneId) ?? themeLayout.scenes[0];
+      return { name: scene.name, total: themeLayout.scenes.length };
+    }
+    // Legacy: connected overlayThemeNode
+    const themeNode = nodes.find(
+      (n) => n.type === "overlayThemeNode" && edges.some((e) => e.source === n.id && e.target === node.id),
+    );
+    if (!themeNode) return null;
+    const layout = themeNode.data.themeLayout as OverlayThemeLayout | null;
+    if (!layout?.scenes?.length) return null;
+    const activeId = (themeNode.data.activeSceneId as string) ?? layout.scenes[0].id;
+    const scene = layout.scenes.find((s) => s.id === activeId) ?? layout.scenes[0];
+    return { name: scene.name, total: layout.scenes.length };
+  }, [themeLayout, outputActiveSceneId, nodes, edges, node.id]);
+
   const connectedOverlayGroupNode = useMemo(() => {
     const overlayEdge = edges.find(
       (e) =>
@@ -1341,14 +1385,23 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
     }
   }, []);
 
+  const createClip = useCallback(async () => {
+    const res = await window.electron.createTwitchClip();
+    if (res && "clipUrl" in res) {
+      showToast(`Clip created: ${res.clipUrl}`);
+    } else {
+      showToast("Clip failed — only available during a live Twitch stream.");
+    }
+  }, []);
+
   // RTMP Streaming — Phase 1 GPU-offload pipeline.
   // Preferred path: the compositor canvas is encoded to H.264 on the GPU by a
   // WebCodecs VideoEncoder (off the JS main thread), and FFmpeg only muxes to
   // FLV (`-c copy`). No JPEG generation loss, no FFmpeg re-encode.
   // Fallback path (no WebCodecs H.264): the legacy canvas → JPEG → FFmpeg
   // transcode loop.
-  const startStreaming = useCallback(async () => {
-    const target = settings.rtmpTargets?.find((t) => t.id === targetId);
+  const startStreaming = useCallback(async (targetOverride?: RtmpTarget) => {
+    const target = targetOverride ?? settings.rtmpTargets?.find((t) => t.id === targetId);
     if (!target || !target.url || !captureSourceId) return;
 
     const base = target.url.trim();
@@ -1400,8 +1453,13 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
             fitMode: fitMode,
             encoder: (settings.streamEncoder as string) || "libx264",
             audioDeviceIds: captureAudio ? resolvedAudioDeviceIds : undefined,
-            recordPath: settings.recordStreamEnabled && settings.recordingPath ? settings.recordingPath : undefined,
+            // Pass "" when recording is enabled but no path chosen — main resolves "" to the default documents folder.
+            recordPath: settings.recordStreamEnabled ? (settings.recordingPath || "") : undefined,
             twitchToken: target.preset === "twitch" ? (settings.twitchToken ?? undefined) : undefined,
+            youtubeClientId: settings.youtubeClientId,
+            youtubeClientSecret: settings.youtubeClientSecret,
+            youtubeRefreshToken: settings.youtubeRefreshToken,
+            youtubeAutoUpload: settings.youtubeAutoUpload,
             sources: streamSources,
           });
         } catch (err: any) {
@@ -1698,6 +1756,53 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
       if (isRecording) stopRecording();
     }
   }, [isPreviewActive, isRecording, stopRecording]);
+
+  // Handle external API commands (Stream Deck integration)
+  useEffect(() => {
+    if (!apiCommand || apiCommand.id === handledApiCmdId.current) return;
+    handledApiCmdId.current = apiCommand.id;
+    if (apiCommand.action === "toggleStream") {
+      const platform = apiCommand.payload.platform as string | undefined;
+      const matchTarget = (platform && platform !== "all")
+        ? settings.rtmpTargets?.find((t) => t.preset === platform)
+        : undefined;
+      if (isStreaming) void stopStreaming();
+      else void startStreaming(matchTarget);
+    } else if (apiCommand.action === "toggleRecording") {
+      const recordType = apiCommand.payload.recordType as string | undefined;
+      if (recordType === "clip") {
+        void createClip();
+      } else {
+        if (isRecording) stopRecording();
+        else startRecording();
+      }
+    } else if (
+      (apiCommand.action === "switchScene" || apiCommand.action === "nextScene" || apiCommand.action === "prevScene") &&
+      themeLayout?.scenes?.length
+    ) {
+      const scenes = themeLayout.scenes;
+      const currentId = (node.data.activeSceneId as string | undefined) ?? scenes[0].id;
+      const currentIdx = scenes.findIndex((s) => s.id === currentId);
+      let target: typeof scenes[number] | undefined;
+      if (apiCommand.action === "switchScene") {
+        const query = String(apiCommand.payload.scene ?? "");
+        target = scenes.find((s) => s.id === query || s.name.toLowerCase() === query.toLowerCase());
+      } else if (apiCommand.action === "nextScene") {
+        target = scenes[(currentIdx < 0 ? 0 : currentIdx + 1) % scenes.length];
+      } else {
+        target = scenes[currentIdx <= 0 ? scenes.length - 1 : currentIdx - 1];
+      }
+      if (target && target.id !== currentId) {
+        const durationMs = apiCommand.payload.durationMs !== undefined
+          ? Number(apiCommand.payload.durationMs)
+          : (target.transition?.durationMs ?? 500);
+        const resolved = resolveThemeElements(themeLayout, draftThemeVars, target.id);
+        updateNodeData({ id: node.id, patch: { activeSceneId: target.id, themeResolvedElements: resolved }, markUnsaved: false });
+        void window.electron.triggerSceneSwitch({ nodeId: node.id, sceneId: target.id, durationMs });
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [apiCommand]);
 
   return (
     <>
@@ -2139,7 +2244,7 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
                   Cancel
                 </button>
                 <button
-                  onClick={startStreaming}
+                  onClick={() => void startStreaming()}
                   disabled={isStarting}
                   className={cn(
                     "text-[10px] px-2 py-0.5 rounded font-medium flex items-center gap-1.5 transition-all",
@@ -2165,6 +2270,15 @@ export function TargetOutputNode(NodeRef: NodeProps<FlowNodeType>) {
         {/* Node status / info */}
         <div className="text-[10px] text-muted-foreground border-t border-border/80 pt-3 flex flex-col gap-1">
           <div>Connected overlays: {overlays.length}</div>
+          {currentScene && (
+            <div className="flex items-center gap-1">
+              <span>Scene:</span>
+              <span className="text-violet-400 font-semibold truncate">{currentScene.name}</span>
+              {currentScene.total > 1 && (
+                <span className="text-muted-foreground/60 shrink-0">({currentScene.total} total)</span>
+              )}
+            </div>
+          )}
           {sourceNode ? (
             <div className="text-muted-foreground">
               Source:{" "}

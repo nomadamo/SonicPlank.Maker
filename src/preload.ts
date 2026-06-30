@@ -378,11 +378,17 @@ contextBridge.exposeInMainWorld("electron", {
   stopNativeStream: async (): Promise<{ success: boolean }> => {
     return await ipcRenderer.invoke("stopNativeStream");
   },
+  createTwitchClip: async (): Promise<{ clipUrl: string } | { error: string }> => {
+    return await ipcRenderer.invoke("createTwitchClip");
+  },
   onVodStatus: (callback: (status: any) => void) => {
     ipcRenderer.on("onVodStatus", (_event, status) => callback(status));
   },
   removeOnVodStatus: () => {
     ipcRenderer.removeAllListeners("onVodStatus");
+  },
+  initiateYoutubeAuth: async (opts: { clientId: string; clientSecret: string }): Promise<{ refreshToken: string }> => {
+    return await ipcRenderer.invoke("initiateYoutubeAuth", opts);
   },
   openRecordingFolder: async (filePath: string): Promise<void> => {
     await ipcRenderer.invoke("openRecordingFolder", filePath);
@@ -412,4 +418,17 @@ contextBridge.exposeInMainWorld("electron", {
   removeOnSceneSwitch: () => {
     ipcRenderer.removeAllListeners("onSceneSwitch");
   },
+
+  // ── Stream Deck API bridge ────────────────────────────────────────────────
+  sendApiStateUpdate: (patch: Record<string, unknown>): void => {
+    ipcRenderer.send("apiStateUpdate", patch);
+  },
+  onApiCommand: (callback: (cmd: Record<string, unknown>) => void): void => {
+    ipcRenderer.on("apiCommand", (_event, cmd) => callback(cmd as Record<string, unknown>));
+  },
+  removeOnApiCommand: (): void => {
+    ipcRenderer.removeAllListeners("apiCommand");
+  },
+  triggerSceneSwitch: (args: { nodeId: string; sceneId: string; durationMs: number }): Promise<void> =>
+    ipcRenderer.invoke("triggerSceneSwitch", args),
 });

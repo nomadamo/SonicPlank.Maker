@@ -515,15 +515,13 @@ function FlowEditor() {
     if (latestFlowDataRef.current.nodes === flowNodesData) return;
     setCurrentNodes(flowNodesData || []);
     setPersistRequested(true);
-    setHasUnsavedChanges(true);
-  }, [flowNodesData, setCurrentNodes, setPersistRequested, setHasUnsavedChanges]);
+  }, [flowNodesData, setCurrentNodes, setPersistRequested]);
 
   useEffect(() => {
     if (latestFlowDataRef.current.edges === flowEdgesData) return;
     setCurrentEdges(flowEdgesData || []);
     setPersistRequested(true);
-    setHasUnsavedChanges(true);
-  }, [flowEdgesData, setCurrentEdges, setPersistRequested, setHasUnsavedChanges]);
+  }, [flowEdgesData, setCurrentEdges, setPersistRequested]);
 
   // ─── ReactFlow → Store sync (debounced 200ms) ───────────────────────────────
   useEffect(() => {

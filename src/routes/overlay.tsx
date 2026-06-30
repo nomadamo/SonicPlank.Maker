@@ -58,6 +58,9 @@ function OverlayWindowComponent() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const isTransitioningRef = useRef(false);
+  const pendingOverlaysRef = useRef<OverlayElement[] | null>(null);
+  const transitionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fadeOutHandlerRef = useRef<((e: TransitionEvent) => void) | null>(null);
   const overlaysRef = useRef<OverlayElement[]>([]);
   const audioDataMapRef = useRef<Record<string, number[]>>({});
   const audioTimesRef = useRef<Record<string, { currentTime: number; duration: number }>>({});
@@ -98,19 +101,75 @@ function OverlayWindowComponent() {
       .catch(() => {});
 
     window.electron.onOverlaysUpdated((updated) => {
-      overlaysRef.current = updated ?? [];
       overlaysReadyRef.current = true;
-      if (isTransitioningRef.current && containerRef.current) {
-        isTransitioningRef.current = false;
-        containerRef.current.style.opacity = "1";
+      if (isTransitioningRef.current) {
+        // Fade-out in progress — hold the new data until the fade-out completes.
+        pendingOverlaysRef.current = updated ?? [];
+      } else {
+        overlaysRef.current = updated ?? [];
       }
     });
 
     window.electron.onSceneSwitch((event) => {
-      if (!containerRef.current) return;
+      const container = containerRef.current;
+
+      // Always cancel any prior in-flight transition first
+      if (transitionTimeoutRef.current) {
+        clearTimeout(transitionTimeoutRef.current);
+        transitionTimeoutRef.current = null;
+      }
+      if (container && fadeOutHandlerRef.current) {
+        container.removeEventListener("transitionend", fadeOutHandlerRef.current);
+        fadeOutHandlerRef.current = null;
+      }
+
+      // Instant switch — reset state and apply any queued overlays
+      if (!event.durationMs || !container) {
+        if (container) {
+          container.style.transition = "none";
+          container.style.opacity = "1";
+        }
+        isTransitioningRef.current = false;
+        if (pendingOverlaysRef.current !== null) {
+          overlaysRef.current = pendingOverlaysRef.current;
+          pendingOverlaysRef.current = null;
+        }
+        return;
+      }
+
       isTransitioningRef.current = true;
-      containerRef.current.style.transition = `opacity ${event.durationMs}ms ease-in-out`;
-      containerRef.current.style.opacity = "0";
+      pendingOverlaysRef.current = null;
+
+      container.style.transition = `opacity ${event.durationMs}ms ease-in-out`;
+      container.style.opacity = "0";
+
+      const finishTransition = () => {
+        if (fadeOutHandlerRef.current) {
+          container.removeEventListener("transitionend", fadeOutHandlerRef.current);
+          fadeOutHandlerRef.current = null;
+        }
+        if (transitionTimeoutRef.current) {
+          clearTimeout(transitionTimeoutRef.current);
+          transitionTimeoutRef.current = null;
+        }
+        if (pendingOverlaysRef.current !== null) {
+          overlaysRef.current = pendingOverlaysRef.current;
+          pendingOverlaysRef.current = null;
+        }
+        isTransitioningRef.current = false;
+        container.style.opacity = "1";
+      };
+
+      const onFadeOut = (e: TransitionEvent) => {
+        if (e.target !== container || e.propertyName !== "opacity") return;
+        finishTransition();
+      };
+
+      fadeOutHandlerRef.current = onFadeOut;
+      container.addEventListener("transitionend", onFadeOut);
+
+      // Fallback: force completion if transitionend never fires in offscreen mode
+      transitionTimeoutRef.current = setTimeout(finishTransition, event.durationMs + 100);
     });
 
     window.electron.onAudioDataUpdated((id, data) => {
@@ -142,6 +201,11 @@ function OverlayWindowComponent() {
 
     return () => {
       clearInterval(chatSyncInterval);
+      if (transitionTimeoutRef.current) clearTimeout(transitionTimeoutRef.current);
+      if (containerRef.current && fadeOutHandlerRef.current) {
+        containerRef.current.removeEventListener("transitionend", fadeOutHandlerRef.current);
+        fadeOutHandlerRef.current = null;
+      }
       window.electron.removeOnOverlaysUpdated(() => {});
       window.electron.removeOnAudioDataUpdated();
       window.electron.removeOnAudioTimeUpdated();
@@ -185,8 +249,15 @@ function OverlayWindowComponent() {
       const hVal = (overlay.height / 100) * canvas.height;
 
       if (overlay.type === "color" && overlay.backgroundColor) {
+        const r = Math.min(wVal, hVal) * ((overlay.borderRadius ?? 0) / 100);
         ctx.fillStyle = overlay.backgroundColor;
-        ctx.fillRect(xVal, yVal, wVal, hVal);
+        if (r > 0) {
+          ctx.beginPath();
+          ctx.roundRect(xVal, yVal, wVal, hVal, r);
+          ctx.fill();
+        } else {
+          ctx.fillRect(xVal, yVal, wVal, hVal);
+        }
       } else if (overlay.type === "text" && overlay.textContent) {
         const sizePx = Math.round(
           (overlay.fontSize || 4) * (canvas.height / 100),
@@ -200,10 +271,20 @@ function OverlayWindowComponent() {
           };
           textFontCacheRef.current.set(overlay.id, fontEntry);
         }
+        const align = overlay.textAlign || "left";
+        const drawX = align === "center" ? xVal + wVal / 2 : align === "right" ? xVal + wVal : xVal;
         ctx.font = fontEntry.fontStr;
         ctx.fillStyle = overlay.textColor || "#ffffff";
+        ctx.textAlign = align;
         ctx.textBaseline = "top";
-        ctx.fillText(overlay.textContent, xVal, yVal);
+        ctx.save();
+        ctx.rect(xVal, yVal, wVal, hVal);
+        ctx.clip();
+        const lines = overlay.textContent.split("\n");
+        const lineH = sizePx * 1.25;
+        lines.forEach((line, i) => ctx.fillText(line, drawX, yVal + i * lineH));
+        ctx.restore();
+        ctx.textAlign = "left"; // reset to default
       } else if (overlay.type === "image" && overlay.imagePath) {
         let img = cardImageCacheRef.current[overlay.imagePath];
         if (!img) {
@@ -216,8 +297,43 @@ function OverlayWindowComponent() {
           cardImageCacheRef.current[overlay.imagePath] = img;
         }
         if (img.complete && img.naturalWidth > 0) {
-          ctx.drawImage(img, xVal, yVal, wVal, hVal);
+          // object-contain: scale to fit within bounds, centered, preserving aspect ratio
+          const imgAspect = img.naturalWidth / img.naturalHeight;
+          const boxAspect = wVal / hVal;
+          let dw: number, dh: number, dx: number, dy: number;
+          if (imgAspect > boxAspect) {
+            dw = wVal; dh = wVal / imgAspect;
+            dx = xVal; dy = yVal + (hVal - dh) / 2;
+          } else {
+            dh = hVal; dw = hVal * imgAspect;
+            dy = yVal; dx = xVal + (wVal - dw) / 2;
+          }
+          const r = Math.min(dw, dh) * ((overlay.borderRadius ?? 0) / 100);
+          if (r > 0) {
+            ctx.save();
+            ctx.beginPath();
+            ctx.roundRect(dx, dy, dw, dh, r);
+            ctx.clip();
+            ctx.drawImage(img, dx, dy, dw, dh);
+            ctx.restore();
+          } else {
+            ctx.drawImage(img, dx, dy, dw, dh);
+          }
         }
+      } else if (overlay.type === "blur") {
+        // Capture current canvas state, apply blur, clip to element bounds
+        const offscreen = new OffscreenCanvas(canvas.width, canvas.height);
+        const offCtx = offscreen.getContext("2d")!;
+        offCtx.drawImage(canvas, 0, 0);
+        const blurPx = (overlay.blurRadius ?? 10) * (canvas.height / 1080);
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(xVal, yVal, wVal, hVal);
+        ctx.clip();
+        ctx.filter = `blur(${blurPx}px)`;
+        ctx.drawImage(offscreen, 0, 0);
+        ctx.filter = "none";
+        ctx.restore();
       } else if (overlay.type === "visualizer") {
         // We receive raw audio data via IPC
         const rawAudioData = audioDataMapRef.current[overlay.id];

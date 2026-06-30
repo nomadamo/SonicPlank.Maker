@@ -668,12 +668,15 @@ unsafe fn run_encoder_unsafe(
                 return None;
             }
             // Mirror all streams from the RTMP context so stream indices match.
+            // Zero out codec_tag so the MP4 muxer picks the correct container tag
+            // (RTMP/FLV uses 0x07 for H.264 which is incompatible with MP4's avc1).
             let num_streams = (*ofmt_ctx).nb_streams as usize;
             for i in 0..num_streams {
                 let src = *(*ofmt_ctx).streams.add(i);
                 let dst = avformat_new_stream(rec_ctx, ptr::null());
                 if dst.is_null() { continue; }
                 avcodec_parameters_copy((*dst).codecpar, (*src).codecpar);
+                (*(*dst).codecpar).codec_tag = 0;
                 (*dst).time_base = (*src).time_base;
             }
             if avio_open(&mut (*rec_ctx).pb, path_c.as_ptr(), AVIO_FLAG_WRITE as i32) < 0 {

@@ -23,6 +23,7 @@ import path from "node:path";
 import fs from "node:fs";
 import crypto from "node:crypto";
 import net from "node:net";
+import http from "node:http";
 import readline from "node:readline";
 import {
   SPOTIFY_CLIENT_ID,
@@ -34,6 +35,8 @@ import { inDevelopment } from "./constants";
 import { spawn } from "node:child_process";
 import AdmZip from "adm-zip";
 import type { EventSubWsListener } from "@twurple/eventsub-ws";
+import { startApiServer, stopApiServer, updateApiState, broadcastWsEvent } from "./api-server";
+import { refreshYoutubeAccessToken, uploadVideoToYoutube } from "./youtube-upload";
 
 // ── GPU / capture acceleration ───────────────────────────────────────────────
 // All enable-features flags MUST be in a single appendSwitch call.
@@ -76,6 +79,23 @@ let previewWin: BrowserWindow | null = null;
 let overlayWindow: BrowserWindow | null = null;
 let overlayConfigWidth = 1920;
 let overlayConfigHeight = 1080;
+let overlayStreamFps = 30;
+let overlayThrottleMs = 100;
+let overlayFpsRestoreTimeout: ReturnType<typeof setTimeout> | null = null;
+
+function bumpOverlayFrameRateForTransition(durationMs: number): void {
+  if (!overlayWindow || overlayWindow.isDestroyed()) return;
+  if (overlayFpsRestoreTimeout) clearTimeout(overlayFpsRestoreTimeout);
+  overlayWindow.webContents.setFrameRate(overlayStreamFps);
+  overlayThrottleMs = Math.round(1000 / overlayStreamFps);
+  overlayFpsRestoreTimeout = setTimeout(() => {
+    if (overlayWindow && !overlayWindow.isDestroyed()) {
+      overlayWindow.webContents.setFrameRate(10);
+    }
+    overlayThrottleMs = 100;
+    overlayFpsRestoreTimeout = null;
+  }, durationMs * 2 + 500);
+}
 
 // ── Overlay shared memory (SHM) ──────────────────────────────────────────────
 // Electron writes BGRA overlay pixels directly into a page-file-backed section
@@ -173,13 +193,20 @@ async function ensureOverlayWindow(): Promise<void> {
     // Limit repaint rate --- 1080p BGRA is ~8 MB/frame; 10fps keeps pipe pressure manageable.
     overlayWindow.webContents.setFrameRate(10);
 
+    // Gate SHM writes until the overlay route has fully loaded to prevent the Electron
+    // loading animation from leaking into the stream as the first composited frame.
+    let overlayWindowReady = false;
+    overlayWindow.webContents.once("did-finish-load", () => {
+      overlayWindowReady = true;
+    });
+
     // Forward each paint as an overlay frame written directly into shared memory.
     // Belt-and-suspenders JS throttle in case Chromium fires events faster than setFrameRate.
     let lastOverlaySendMs = 0;
     overlayWindow.webContents.on("paint", (_event, _dirty, image) => {
-      if (!_shmViewPtr) return;
+      if (!_shmViewPtr || !overlayWindowReady) return;
       const now = Date.now();
-      if (now - lastOverlaySendMs < 100) return; // max 10 fps; bail before toBitmap()
+      if (now - lastOverlaySendMs < overlayThrottleMs) return; // dynamic fps; bail before toBitmap()
       lastOverlaySendMs = now;
 
       const size = image.getSize();
@@ -293,6 +320,15 @@ let nativePreviewActive = false;
 let activeRecordFilePath: string | null = null;
 let activeStreamRtmpUrl: string | null = null;
 let activeStreamTwitchToken: string | null = null;
+let activeStreamTwitchUserId: string | null = null;
+let activeStreamTwitchClientId: string | null = null;
+let activeStreamYoutubeClientId: string | null = null;
+let activeStreamYoutubeClientSecret: string | null = null;
+let activeStreamYoutubeRefreshToken: string | null = null;
+let activeStreamYoutubeAutoUpload = false;
+
+// Viewer count polling
+let viewerCountIntervalId: ReturnType<typeof setInterval> | null = null;
 
 // Set up a persistent readline on core stdout. Must be called after coreProcess
 // is assigned. Subsequent calls are no-ops (already started guard).
@@ -729,14 +765,47 @@ function detectStreamPlatform(rtmpUrl: string): "twitch" | "youtube" | "custom" 
 type VodStatusPayload =
   | { phase: "recording_saved"; platform: string; filePath: string }
   | { phase: "searching";       platform: string; filePath: string }
+  | { phase: "uploading";       platform: string; filePath: string; progress: number }
   | { phase: "found";           platform: string; filePath: string; vodUrl: string }
   | { phase: "not_found";       platform: string; filePath: string }
   | { phase: "error";           platform: string; filePath: string; message: string };
 
+async function pollViewerCount(): Promise<void> {
+  if (!activeStreamTwitchToken || !activeStreamTwitchUserId || !activeStreamTwitchClientId) return;
+  try {
+    const rawToken = activeStreamTwitchToken.replace(/^oauth:/i, "");
+    const res = await fetch(
+      `https://api.twitch.tv/helix/streams?user_id=${activeStreamTwitchUserId}`,
+      { headers: { "Client-ID": activeStreamTwitchClientId, Authorization: `Bearer ${rawToken}` } },
+    );
+    if (!res.ok) return;
+    const data = (await res.json()) as { data?: { viewer_count: number }[] };
+    const count = data.data?.[0]?.viewer_count ?? 0;
+    updateApiState({ viewerCount: count });
+    broadcastWsEvent("streamState", { streaming: true, viewerCount: count });
+  } catch { /* ignore — stream may have just stopped */ }
+}
+
+async function createTwitchClipApi(): Promise<string | null> {
+  if (!activeStreamTwitchToken || !activeStreamTwitchUserId || !activeStreamTwitchClientId) return null;
+  try {
+    const rawToken = activeStreamTwitchToken.replace(/^oauth:/i, "");
+    const res = await fetch(
+      `https://api.twitch.tv/helix/clips?broadcaster_id=${activeStreamTwitchUserId}`,
+      {
+        method: "POST",
+        headers: { "Client-ID": activeStreamTwitchClientId, Authorization: `Bearer ${rawToken}` },
+      },
+    );
+    if (!res.ok) return null;
+    const data = (await res.json()) as { data?: { id: string }[] };
+    const id = data.data?.[0]?.id;
+    return id ? `https://clips.twitch.tv/${id}` : null;
+  } catch { return null; }
+}
+
 function broadcastVodStatus(status: VodStatusPayload) {
-  BrowserWindow.getAllWindows().forEach((win) => {
-    win.webContents.send("onVodStatus", status);
-  });
+  broadcastSafe("onVodStatus", status);
 }
 
 async function pollTwitchVod(
@@ -745,10 +814,10 @@ async function pollTwitchVod(
   token: string,
   streamStopTime: number,
 ): Promise<string | null> {
-  const deadline = streamStopTime + 3 * 60 * 1000;
-  const windowStart = streamStopTime - 60 * 1000;
+  const deadline = streamStopTime + 20 * 60 * 1000; // 20-minute window (Twitch processing takes 5-15 min)
+  const windowStart = streamStopTime - 2 * 60 * 1000;
   while (Date.now() < deadline) {
-    await new Promise<void>((r) => setTimeout(r, 5_000));
+    await new Promise<void>((r) => setTimeout(r, 15_000));
     try {
       const res = await fetch(
         `https://api.twitch.tv/helix/videos?user_id=${userId}&type=archive&first=1`,
@@ -765,6 +834,18 @@ async function pollTwitchVod(
     }
   }
   return null;
+}
+
+function safeSend(win: Electron.BrowserWindow, channel: string, ...args: unknown[]): void {
+  try {
+    if (!win.isDestroyed()) win.webContents.send(channel, ...args);
+  } catch {
+    // Render frame may be disposed during navigation/reload — swallow silently
+  }
+}
+
+function broadcastSafe(channel: string, ...args: unknown[]): void {
+  BrowserWindow.getAllWindows().forEach((win) => safeSend(win, channel, ...args));
 }
 
 const registerIpcHandlers = () => {
@@ -1015,10 +1096,7 @@ const registerIpcHandlers = () => {
   ipcMain.handle("setOverlays", (_event, overlays) => {
     try {
       activeOverlays = overlays || [];
-      // Broadcast to all renderer windows (editor + preview)
-      BrowserWindow.getAllWindows().forEach((win) => {
-        win.webContents.send("onOverlaysUpdated", activeOverlays);
-      });
+      broadcastSafe("onOverlaysUpdated", activeOverlays);
     } catch (error) {
       console.error("Failed to propagate overlays:", error);
       throw error;
@@ -1031,18 +1109,14 @@ const registerIpcHandlers = () => {
 
   ipcMain.on("sendAudioData", (event, visualizerId, dataArray) => {
     BrowserWindow.getAllWindows().forEach((win) => {
-      if (win.webContents !== event.sender) {
-        win.webContents.send("onAudioDataUpdated", visualizerId, dataArray);
-      }
+      if (win.webContents !== event.sender) safeSend(win, "onAudioDataUpdated", visualizerId, dataArray);
     });
   });
 
   ipcMain.on("sendChatMessages", (event, nodeId, messages) => {
     cachedChatMessages.set(nodeId, messages);
     BrowserWindow.getAllWindows().forEach((win) => {
-      if (win.webContents !== event.sender) {
-        win.webContents.send("onChatMessagesUpdated", nodeId, messages);
-      }
+      if (win.webContents !== event.sender) safeSend(win, "onChatMessagesUpdated", nodeId, messages);
     });
   });
 
@@ -1105,9 +1179,7 @@ const registerIpcHandlers = () => {
           const existing = cachedChatMessages.get(nodeId) ?? [];
           const next = [...existing, newMsg].slice(-Math.max(1, maxMessages));
           cachedChatMessages.set(nodeId, next);
-          BrowserWindow.getAllWindows().forEach((win) => {
-            win.webContents.send("onChatMessagesUpdated", nodeId, next);
-          });
+          broadcastSafe("onChatMessagesUpdated", nodeId, next);
         });
 
         return { success: true };
@@ -1131,18 +1203,14 @@ const registerIpcHandlers = () => {
       twitchListeners.delete(nodeId);
     }
     cachedChatMessages.delete(nodeId);
-    BrowserWindow.getAllWindows().forEach((win) => {
-      win.webContents.send("onChatMessagesUpdated", nodeId, []);
-    });
+    broadcastSafe("onChatMessagesUpdated", nodeId, []);
   });
 
   ipcMain.on("sendAudioTime", (event, nodeId, currentTime, paused) => {
     // Broadcast to ALL windows including the sender — audio-node, now-playing-node,
     // and target-output-node all live in the same renderer window, so excluding
     // the sender would silently drop every update before it reaches the compositor.
-    BrowserWindow.getAllWindows().forEach((win) => {
-      win.webContents.send("onAudioTimeUpdated", nodeId, currentTime, paused);
-    });
+    broadcastSafe("onAudioTimeUpdated", nodeId, currentTime, paused);
   });
 
   // function spawnFfmpegStream(ffmpegArgs: string[]) {
@@ -1551,6 +1619,7 @@ const registerIpcHandlers = () => {
         previewImagePath: fs.existsSync(previewPath) ? previewPath : undefined,
         themeDir: dir,
         variables: Array.isArray(raw.variables) ? raw.variables : [],
+        defaultSceneId: typeof raw.defaultSceneId === "string" ? raw.defaultSceneId : undefined,
         scenes: Array.isArray(raw.scenes)
           ? raw.scenes.map((s: any) => ({ ...s, sources: Array.isArray(s.sources) ? s.sources : [] }))
           : [{ id: "base", name: "Base", transition: { durationMs: 500 }, elements: Array.isArray(raw.elements) ? raw.elements : [], components: Array.isArray(raw.components) ? raw.components : [], sources: [] }],
@@ -1821,7 +1890,11 @@ const registerIpcHandlers = () => {
         encoder?: string;
         audioDeviceIds?: string[];
         recordPath?: string;
-      twitchToken?: string;
+        twitchToken?: string;
+        youtubeClientId?: string;
+        youtubeClientSecret?: string;
+        youtubeRefreshToken?: string;
+        youtubeAutoUpload?: boolean;
         sources: {
           source_id: string;
           is_primary: boolean;
@@ -1858,16 +1931,28 @@ const registerIpcHandlers = () => {
       }
 
       // Build a timestamped recording path if the caller requested recording.
+      // options.recordPath === undefined → no recording; "" → use default documents folder.
       let recordFilePath: string | null = null;
-      if (options.recordPath) {
+      if (options.recordPath !== undefined) {
+        const dir = options.recordPath
+          || path.join(app.getPath("documents"), "SonicPlank.Maker", "recordings");
+        try { fs.mkdirSync(dir, { recursive: true }); } catch { /* already exists */ }
         const ts = new Date().toISOString().replace(/[:.]/g, "-").replace("T", "_").slice(0, 19);
-        recordFilePath = path.join(options.recordPath, `recording_${ts}.mp4`);
+        recordFilePath = path.join(dir, `recording_${ts}.mp4`);
+        console.log(`[Recording] Will write to: ${recordFilePath}`);
       }
 
       // Persist for VOD tracking on stop.
       activeRecordFilePath = recordFilePath;
       activeStreamRtmpUrl = options.rtmpUrl;
       activeStreamTwitchToken = options.twitchToken ?? null;
+      activeStreamYoutubeClientId = options.youtubeClientId ?? null;
+      activeStreamYoutubeClientSecret = options.youtubeClientSecret ?? null;
+      activeStreamYoutubeRefreshToken = options.youtubeRefreshToken ?? null;
+      activeStreamYoutubeAutoUpload = !!(options.youtubeAutoUpload && options.youtubeClientId && options.youtubeRefreshToken);
+
+      // Track stream fps so transition frame rate bumps match the stream.
+      overlayStreamFps = options.fps ?? 30;
 
       // Delegate encoding and RTMP delivery entirely to the Rust core.
       sendCoreCommand({
@@ -1891,20 +1976,59 @@ const registerIpcHandlers = () => {
       }>("stream_started", 15_000);
       nativeStreamStartAt = Date.now();
       console.log(`[Native stream] started ${ev.width}x${ev.height}`);
+      updateApiState({ streaming: true, recording: !!recordFilePath });
+      broadcastWsEvent("streamState", { streaming: true, recording: !!recordFilePath, viewerCount: 0 });
+
+      // Start Twitch viewer-count polling (fire-and-forget token validation, then 10s interval)
+      if (activeStreamTwitchToken) {
+        void (async () => {
+          try {
+            const rawToken = (activeStreamTwitchToken as string).replace(/^oauth:/i, "");
+            const vr = await fetch("https://id.twitch.tv/oauth2/validate", {
+              headers: { Authorization: `OAuth ${rawToken}` },
+            });
+            if (!vr.ok) return;
+            const { client_id, user_id } = (await vr.json()) as { client_id: string; user_id: string };
+            activeStreamTwitchClientId = client_id;
+            activeStreamTwitchUserId = user_id;
+            void pollViewerCount(); // immediate first poll
+            viewerCountIntervalId = setInterval(() => void pollViewerCount(), 10_000);
+          } catch { /* not a blocking issue */ }
+        })();
+      }
+
       return { success: true, width: ev.width, height: ev.height };
     },
   );
 
   ipcMain.handle("stopNativeStream", async () => {
-    // Snapshot tracking state before clearing — async VOD polling needs these.
+    // Snapshot tracking state before clearing — async VOD/upload needs these.
     const recordedFilePath = activeRecordFilePath;
     const streamRtmpUrl = activeStreamRtmpUrl;
     const streamTwitchToken = activeStreamTwitchToken;
+    const youtubeClientId = activeStreamYoutubeClientId;
+    const youtubeClientSecret = activeStreamYoutubeClientSecret;
+    const youtubeRefreshToken = activeStreamYoutubeRefreshToken;
+    const youtubeAutoUpload = activeStreamYoutubeAutoUpload;
 
     nativeStreamStartAt = null;
     activeRecordFilePath = null;
     activeStreamRtmpUrl = null;
     activeStreamTwitchToken = null;
+    activeStreamTwitchUserId = null;
+    activeStreamTwitchClientId = null;
+    activeStreamYoutubeClientId = null;
+    activeStreamYoutubeClientSecret = null;
+    activeStreamYoutubeRefreshToken = null;
+    activeStreamYoutubeAutoUpload = false;
+
+    if (viewerCountIntervalId) {
+      clearInterval(viewerCountIntervalId);
+      viewerCountIntervalId = null;
+    }
+
+    updateApiState({ streaming: false, recording: false, viewerCount: 0 });
+    broadcastWsEvent("streamState", { streaming: false, recording: false, viewerCount: 0 });
 
     if (coreProcess) {
       sendCoreCommand({ type: "stop_stream" });
@@ -1930,17 +2054,36 @@ const registerIpcHandlers = () => {
     if (recordedFilePath) {
       const platform = detectStreamPlatform(streamRtmpUrl ?? "");
       const stopTime = Date.now();
-      broadcastVodStatus({ phase: "recording_saved", platform, filePath: recordedFilePath });
 
-      if (platform === "twitch" && streamTwitchToken) {
+      if (youtubeAutoUpload && youtubeClientId && youtubeClientSecret && youtubeRefreshToken) {
+        // YouTube upload takes priority when configured.
+        broadcastVodStatus({ phase: "searching", platform: "youtube", filePath: recordedFilePath });
         void (async () => {
           try {
-            broadcastVodStatus({ phase: "searching", platform, filePath: recordedFilePath });
+            const accessToken = await refreshYoutubeAccessToken(youtubeClientId, youtubeClientSecret, youtubeRefreshToken);
+            const title = `Stream Recording ${new Date().toLocaleDateString()}`;
+            const videoUrl = await uploadVideoToYoutube(
+              recordedFilePath,
+              accessToken,
+              title,
+              (pct) => broadcastVodStatus({ phase: "uploading", platform: "youtube", filePath: recordedFilePath, progress: pct }),
+            );
+            broadcastVodStatus({ phase: "found", platform: "youtube", filePath: recordedFilePath, vodUrl: videoUrl });
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            broadcastVodStatus({ phase: "error", platform: "youtube", filePath: recordedFilePath, message });
+          }
+        })();
+      } else if (platform === "twitch" && streamTwitchToken) {
+        // Show recording saved immediately (auto-dismisses), then poll silently for the VOD.
+        broadcastVodStatus({ phase: "not_found", platform, filePath: recordedFilePath });
+        void (async () => {
+          try {
             const rawToken = streamTwitchToken.replace(/^oauth:/i, "");
             const validateRes = await fetch("https://id.twitch.tv/oauth2/validate", {
               headers: { Authorization: `OAuth ${rawToken}` },
             });
-            if (!validateRes.ok) throw new Error(`Token validation failed (${validateRes.status})`);
+            if (!validateRes.ok) return;
             const { client_id: clientId, user_id: userId } = (await validateRes.json()) as {
               client_id: string;
               user_id: string;
@@ -1948,18 +2091,23 @@ const registerIpcHandlers = () => {
             const vodUrl = await pollTwitchVod(userId, clientId, rawToken, stopTime);
             if (vodUrl) {
               broadcastVodStatus({ phase: "found", platform, filePath: recordedFilePath, vodUrl });
-            } else {
-              broadcastVodStatus({ phase: "not_found", platform, filePath: recordedFilePath });
             }
-          } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
-            broadcastVodStatus({ phase: "error", platform, filePath: recordedFilePath, message });
+          } catch {
+            // silent — recording was already confirmed to the user
           }
         })();
+      } else {
+        broadcastVodStatus({ phase: "not_found", platform, filePath: recordedFilePath });
       }
     }
 
     return { success: true };
+  });
+
+  ipcMain.handle("createTwitchClip", async () => {
+    const clipUrl = await createTwitchClipApi();
+    if (clipUrl) return { clipUrl };
+    return { error: "not_streaming_twitch" };
   });
 
   ipcMain.handle("openRecordingFolder", (_event, filePath: string) => {
@@ -2024,9 +2172,8 @@ const registerIpcHandlers = () => {
         if (!scene.hotkey) continue;
         const ok = globalShortcut.register(scene.hotkey, () => {
           const payload = { nodeId, sceneId: scene.sceneId, durationMs: scene.durationMs };
-          for (const win of BrowserWindow.getAllWindows()) {
-            win.webContents.send("onSceneSwitch", payload);
-          }
+          bumpOverlayFrameRateForTransition(scene.durationMs);
+          BrowserWindow.getAllWindows().forEach((win) => safeSend(win, "onSceneSwitch", payload));
         });
         if (ok) {
           registered.push(scene.sceneId);
@@ -2050,6 +2197,96 @@ const registerIpcHandlers = () => {
 
   app.on("will-quit", () => {
     globalShortcut.unregisterAll();
+  });
+
+  // ── Stream Deck API bridge ───────────────────────────────────────────────────
+  // Renderer sends state patches whenever streaming/recording/audio state changes.
+  ipcMain.on("apiStateUpdate", (_event, patch: Record<string, unknown>) => {
+    updateApiState(patch as any);
+    // Broadcast relevant WS events based on what changed
+    if ("streaming" in patch || "recording" in patch || "viewerCount" in patch) {
+      const s = patch as { streaming?: boolean; recording?: boolean; viewerCount?: number };
+      broadcastWsEvent("streamState", {
+        streaming: s.streaming ?? false,
+        recording: s.recording ?? false,
+        viewerCount: s.viewerCount ?? 0,
+      });
+    }
+    if ("audioSources" in patch) {
+      broadcastWsEvent("audioState", { sources: patch.audioSources });
+    }
+    if ("media" in patch) {
+      broadcastWsEvent("mediaState", patch.media);
+    }
+    if ("activeSceneId" in patch || "scenes" in patch) {
+      broadcastWsEvent("sceneState", { activeSceneId: patch.activeSceneId, scenes: patch.scenes });
+    }
+  });
+
+  ipcMain.handle(
+    "triggerSceneSwitch",
+    (_event, args: { nodeId: string; sceneId: string; durationMs: number }) => {
+      const payload = { nodeId: args.nodeId, sceneId: args.sceneId, durationMs: args.durationMs };
+      bumpOverlayFrameRateForTransition(args.durationMs);
+      broadcastSafe("onSceneSwitch", payload);
+    },
+  );
+
+  ipcMain.handle("initiateYoutubeAuth", (_event, opts: { clientId: string; clientSecret: string }) => {
+    const port = 8079;
+    const redirectUri = `http://localhost:${port}/oauth/callback`;
+
+    return new Promise<{ refreshToken: string }>((resolve, reject) => {
+      const server = http.createServer((req, res) => {
+        const reqUrl = new URL(req.url ?? "/", `http://localhost:${port}`);
+        if (reqUrl.pathname !== "/oauth/callback") { res.writeHead(404); res.end(); return; }
+
+        const code = reqUrl.searchParams.get("code");
+        const error = reqUrl.searchParams.get("error");
+
+        res.writeHead(200, { "Content-Type": "text/html" });
+        res.end(
+          `<html><body style="font-family:sans-serif;padding:2rem;text-align:center">` +
+          `<h2>${code ? "YouTube connected!" : "Connection failed."}</h2>` +
+          `<p>You can close this tab and return to SonicPlank.</p></body></html>`,
+        );
+        server.close();
+
+        if (error || !code) { reject(new Error(error ?? "No authorization code received")); return; }
+
+        fetch("https://oauth2.googleapis.com/token", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            code,
+            client_id: opts.clientId,
+            client_secret: opts.clientSecret,
+            redirect_uri: redirectUri,
+            grant_type: "authorization_code",
+          }).toString(),
+        })
+          .then((r) => r.json())
+          .then((data: { refresh_token?: string; error?: string }) => {
+            if (!data.refresh_token) throw new Error(data.error ?? "No refresh token — ensure 'access_type=offline' and 'prompt=consent'");
+            resolve({ refreshToken: data.refresh_token });
+          })
+          .catch(reject);
+      });
+
+      server.listen(port, "127.0.0.1", () => {
+        const authUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+        authUrl.searchParams.set("client_id", opts.clientId);
+        authUrl.searchParams.set("redirect_uri", redirectUri);
+        authUrl.searchParams.set("response_type", "code");
+        authUrl.searchParams.set("scope", "https://www.googleapis.com/auth/youtube.upload");
+        authUrl.searchParams.set("access_type", "offline");
+        authUrl.searchParams.set("prompt", "consent");
+        void shell.openExternal(authUrl.toString());
+      });
+
+      server.on("error", (err) => reject(err));
+      setTimeout(() => { server.close(); reject(new Error("YouTube OAuth timed out")); }, 5 * 60 * 1000);
+    });
   });
 
   ipcMain.handle("initiateSpotifyAuth", () => {
@@ -2259,10 +2496,14 @@ app.on("ready", () => {
   registerIpcHandlers();
   void startCore();
   void createWindow();
+  startApiServer((channel, payload) => {
+    broadcastSafe(channel, payload);
+  });
 });
 
 app.on("before-quit", () => {
   stopCore();
+  stopApiServer();
 });
 
 // Force-kill the core as a backstop: the 300 ms timeout in stopCore() may not

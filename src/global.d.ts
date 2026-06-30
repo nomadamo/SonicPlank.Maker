@@ -122,6 +122,7 @@ declare global {
         refreshToken: string;
         expiresIn: number;
       }>;
+      initiateYoutubeAuth: (opts: { clientId: string; clientSecret: string }) => Promise<{ refreshToken: string }>;
       // Native preview (Phase 1)
       getPreviewSources: () => Promise<NativeCaptureSource[]>;
       startPreviewCapture: (sourceId: string) => Promise<void>;
@@ -145,6 +146,10 @@ declare global {
           audioDeviceIds?: string[];
           recordPath?: string;
           twitchToken?: string;
+          youtubeClientId?: string;
+          youtubeClientSecret?: string;
+          youtubeRefreshToken?: string;
+          youtubeAutoUpload?: boolean;
           sources: {
             source_id: string;
             is_primary: boolean;
@@ -156,6 +161,7 @@ declare global {
         },
       ) => Promise<{ success: boolean; width: number; height: number }>;
       stopNativeStream: () => Promise<{ success: boolean }>;
+      createTwitchClip: () => Promise<{ clipUrl: string } | { error: string }>;
       onVodStatus: (callback: (status: VodStatus) => void) => void;
       removeOnVodStatus: () => void;
       openRecordingFolder: (filePath: string) => Promise<void>;
@@ -166,6 +172,11 @@ declare global {
       removeOnSceneSwitch: () => void;
       getEncoderConfig: () => Promise<EncoderConfig | null>;
       setEncoderConfig: (config: EncoderConfig) => Promise<void>;
+      // ── Stream Deck API bridge ─────────────────────────────────────────────
+      sendApiStateUpdate: (patch: Record<string, unknown>) => void;
+      onApiCommand: (callback: (cmd: Record<string, unknown>) => void) => void;
+      removeOnApiCommand: () => void;
+      triggerSceneSwitch: (args: { nodeId: string; sceneId: string; durationMs: number }) => Promise<void>;
     };
   }
 }

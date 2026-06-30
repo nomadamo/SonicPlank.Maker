@@ -33,7 +33,7 @@ export function ColorOverlayNode(NodeRef: NodeProps<FlowNodeType>) {
 
   useEffect(() => {
     if (node.data.x === undefined) {
-      updateNodeData({ id: node.id, patch: DEFAULTS });
+      updateNodeData({ id: node.id, patch: DEFAULTS, markUnsaved: false });
     }
   }, [node.id, node.data.x, updateNodeData]);
 

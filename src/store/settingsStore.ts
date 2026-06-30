@@ -46,6 +46,12 @@ export type AppSettings = {
   twitchUsername?: string;
   twitchToken?: string;
 
+  // YouTube upload credentials (OAuth desktop app)
+  youtubeClientId?: string;
+  youtubeClientSecret?: string;
+  youtubeRefreshToken?: string;
+  youtubeAutoUpload?: boolean;
+
   // Legacy fields to be ignored/removed later but kept for transition
   streamUrl?: string;
   streamToken?: string;
@@ -65,7 +71,7 @@ export const defaultSettings: AppSettings = {
   recordingPath: "",
   streamUrl: "",
   streamToken: "",
-  streamBitrateKbps: 6000,
+  streamBitrateKbps: 4500,
   streamFps: 30,
   recordingBitrateKbps: 12000,
   streamEncoder: "copy",

@@ -122,6 +122,11 @@ impl CaptureSession {
             .CreateCaptureSession(&item)
             .context("Failed to create GraphicsCaptureSession")?;
 
+        // Suppress the yellow WGC capture border (Windows 11 22H2+).
+        if let Err(e) = session.SetIsBorderRequired(false) {
+            tracing::warn!("[capture] SetIsBorderRequired failed (Windows < 22H2?): {e}");
+        }
+
         let init_staging = create_staging_texture(&device, init_w, init_h)?;
 
         let device_arc = Arc::new(device.clone());

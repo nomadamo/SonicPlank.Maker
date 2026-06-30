@@ -20,19 +20,28 @@ function resolveThemeElement(
     ...overrides,
   };
   if (el.type === "image" && el.asset) {
-    const assetPath = layout.themeDir.replace(/\\/g, "/") + "/" + el.asset.replace(/\\/g, "/");
+    const assetPath = layout.themeDir.replace(/\\/g, "/") + "/assets/" + el.asset.replace(/\\/g, "/");
     resolved.imagePath = `file:///${assetPath}`;
   }
   if (el.type === "text") {
     resolved.textContent = el.textContent ? substituteVars(el.textContent, vars) : "";
-    resolved.fontSize    = el.fontSize;
+    // fontSize is stored as 1080p-equivalent px; overlay.tsx expects % of canvas height
+    resolved.fontSize    = el.fontSize !== undefined ? (el.fontSize / 1080) * 100 : undefined;
     resolved.textColor   = el.textColor;
     resolved.fontFamily  = el.fontFamily;
     resolved.fontWeight  = el.fontWeight;
     resolved.fontStyle   = el.fontStyle;
+    resolved.textAlign   = el.textAlign;
   }
   if (el.type === "color") {
     resolved.backgroundColor = el.backgroundColor;
+    resolved.borderRadius    = el.borderRadius;
+  }
+  if (el.type === "image") {
+    resolved.borderRadius = el.borderRadius;
+  }
+  if (el.type === "blur") {
+    resolved.blurRadius = el.blurRadius ?? 10;
   }
   return resolved;
 }

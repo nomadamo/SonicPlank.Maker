@@ -2,14 +2,15 @@ import { BaseNodeCard } from "./base-node";
 import { Handle, NodeProps, Position } from "@xyflow/react";
 import { Palette as PaletteIcon, AlertTriangle } from "lucide-react";
 import { FlowNodeType, OverlayThemeMeta, OverlayThemeLayout } from "@/types/flow-node";
-import { useSetAtom } from "jotai";
-import { updateNodeDataAtom } from "@/store/flowStore";
+import { useAtomValue, useSetAtom } from "jotai";
+import { updateNodeDataAtom, isStreamingAtom } from "@/store/flowStore";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { resolveThemeElements } from "@/utils/resolve-theme";
 
 export function OverlayThemeNode(NodeRef: NodeProps<FlowNodeType>) {
   const node = NodeRef;
   const updateNodeData = useSetAtom(updateNodeDataAtom);
+  const isStreaming = useAtomValue(isStreamingAtom);
 
   const [themes, setThemes] = useState<OverlayThemeMeta[]>([]);
   const [loading, setLoading] = useState(false);
@@ -45,24 +46,24 @@ export function OverlayThemeNode(NodeRef: NodeProps<FlowNodeType>) {
       })
       .catch(console.error);
 
-    return () => {
-      window.electron.unregisterSceneHotkeys({ nodeId: node.id }).catch(console.error);
-    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [themeLayout, node.id]);
 
-  // Listen for scene switches targeting this node
+  // When streaming starts, reload the theme from disk so we always pick up
+  // the latest defaultSceneId (user may have re-saved/reinstalled since load).
+  const prevIsStreaming = useRef(false);
   useEffect(() => {
-    window.electron.onSceneSwitch((event) => {
-      if (event.nodeId !== node.id || !themeLayout) return;
-      const resolved = resolveThemeElements(themeLayout, variables, event.sceneId);
-      updateNodeData({ id: node.id, patch: { activeSceneId: event.sceneId, resolvedElements: resolved } });
-    });
-    return () => {
-      window.electron.removeOnSceneSwitch();
-    };
+    if (isStreaming && !prevIsStreaming.current && selectedThemeId) {
+      window.electron.loadOverlayTheme(selectedThemeId).then((layout) => {
+        if (!layout) return;
+        const defaultId = layout.defaultSceneId ?? layout.scenes?.[0]?.id ?? "base";
+        const resolved = resolveThemeElements(layout, variables, defaultId);
+        updateNodeData({ id: node.id, patch: { themeLayout: layout, activeSceneId: defaultId, resolvedElements: resolved }, markUnsaved: false });
+      }).catch(console.error);
+    }
+    prevIsStreaming.current = isStreaming;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [themeLayout, variables, node.id]);
+  }, [isStreaming]);
 
   // When selected theme changes, load its layout and resolve elements
   useEffect(() => {
@@ -75,8 +76,8 @@ export function OverlayThemeNode(NodeRef: NodeProps<FlowNodeType>) {
       for (const v of layout.variables) {
         initialVars[v.key] = variables[v.key] ?? v.default ?? "";
       }
-      const baseSceneId = layout.scenes?.[0]?.id ?? "base";
-      const resolved = resolveThemeElements(layout, initialVars, baseSceneId);
+      const defaultId = layout.defaultSceneId ?? layout.scenes?.[0]?.id ?? "base";
+      const resolved = resolveThemeElements(layout, initialVars, defaultId);
       setDraftVars(initialVars);
       updateNodeData({
         id: node.id,
@@ -84,8 +85,9 @@ export function OverlayThemeNode(NodeRef: NodeProps<FlowNodeType>) {
           themeLayout: layout,
           variables: initialVars,
           resolvedElements: resolved,
-          activeSceneId: baseSceneId,
+          activeSceneId: defaultId,
         },
+        markUnsaved: false,
       });
       setLoading(false);
     }).catch((err) => {

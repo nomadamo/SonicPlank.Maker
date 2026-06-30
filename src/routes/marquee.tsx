@@ -17,7 +17,11 @@ import {
 import { ComponentPreviewCanvas } from "@/components/marquee/component-preview-canvas";
 import { createFileRoute } from "@tanstack/react-router";
 import {
+  AlignCenter,
+  AlignLeft,
+  AlignRight,
   BarChart2,
+  Blend,
   FolderOpen,
   ImagePlus,
   Layers,
@@ -27,6 +31,7 @@ import {
   Redo2,
   Save,
   Square,
+  Star,
   Trash2,
   Type,
   Undo2,
@@ -36,6 +41,39 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 const fileBasename = (p: string) =>
   p.replace(/\\/g, "/").split("/").pop() ?? p;
+
+function HotkeyInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [capturing, setCapturing] = useState(false);
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.key === "Escape") { setCapturing(false); return; }
+    if (e.key === "Backspace" || e.key === "Delete") { onChange(""); setCapturing(false); return; }
+    if (["Control", "Shift", "Alt", "Meta"].includes(e.key)) return;
+
+    const parts: string[] = [];
+    if (e.ctrlKey) parts.push("Ctrl");
+    if (e.shiftKey) parts.push("Shift");
+    if (e.altKey) parts.push("Alt");
+    if (e.metaKey) parts.push("Meta");
+    parts.push(/^[a-zA-Z]$/.test(e.key) ? e.key.toUpperCase() : e.key === " " ? "Space" : e.key);
+    onChange(parts.join("+"));
+    setCapturing(false);
+  };
+
+  return (
+    <input
+      readOnly
+      value={capturing ? "" : value}
+      placeholder={capturing ? "Press a key combo…" : "Hotkey (e.g. Alt+1)"}
+      onFocus={() => setCapturing(true)}
+      onBlur={() => setCapturing(false)}
+      onKeyDown={handleKeyDown}
+      className="w-full bg-muted border border-border rounded px-1.5 py-0.5 text-[9px] text-foreground focus:border-violet-500 focus:outline-none font-mono cursor-pointer"
+    />
+  );
+}
 
 export const Route = createFileRoute("/marquee")({
   component: Marquee,
@@ -172,10 +210,11 @@ function newComponent(type: CompType): OverlayThemeComponent {
 
 // ─── Resize handle render helper ──────────────────────────────────────────────
 
-function ResizeHandles({ onMouseDown }: { onMouseDown: (e: React.MouseEvent, h: string) => void }) {
+function ResizeHandles({ onMouseDown, handles }: { onMouseDown: (e: React.MouseEvent, h: string) => void; handles?: readonly string[] }) {
+  const visible = handles ?? (["tl","tr","bl","br","t","b","l","r"] as const);
   return (
     <>
-      {(["tl","tr","bl","br","t","b","l","r"] as const).map((h) => {
+      {(["tl","tr","bl","br","t","b","l","r"] as const).filter((h) => visible.includes(h)).map((h) => {
         const style: React.CSSProperties = { cursor: HANDLE_CURSORS[h], position: "absolute" };
         if (h.startsWith("t")) style.top = -5;
         if (h.startsWith("b")) style.bottom = -5;
@@ -219,6 +258,7 @@ function Marquee() {
   const [meta, setMeta] = useState<ThemeMeta>(DEFAULT_META);
   const [scenes, setScenes] = useState<ThemeScene[]>([createBaseScene()]);
   const [activeSceneId, setActiveSceneId] = useState<string>("base");
+  const [defaultSceneId, setDefaultSceneId] = useState<string>("base");
   const activeSceneIdRef = useRef<string>("base");
   activeSceneIdRef.current = activeSceneId;
 
@@ -247,10 +287,11 @@ function Marquee() {
   const activeDragSource = useRef<"element" | "component" | "decoration" | "source" | null>(null);
   const dragStart        = useRef({ offsetX: 0, offsetY: 0, width: 0, height: 0 });
 
-  const activeResizeId     = useRef<string | null>(null);
-  const activeResizeSource = useRef<"element" | "component" | "decoration" | "source" | null>(null);
-  const activeHandle       = useRef<string | null>(null);
-  const resizeStart        = useRef({ x: 0, y: 0, width: 0, height: 0, clickX: 0, clickY: 0, aspectRatio: 1 });
+  const activeResizeId          = useRef<string | null>(null);
+  const activeResizeSource      = useRef<"element" | "component" | "decoration" | "source" | null>(null);
+  const activeResizeElementType = useRef<string | null>(null);
+  const activeHandle            = useRef<string | null>(null);
+  const resizeStart             = useRef({ x: 0, y: 0, width: 0, height: 0, clickX: 0, clickY: 0, aspectRatio: 1 });
 
   const [, forceRender] = useState(0);
 
@@ -398,7 +439,10 @@ function Marquee() {
         if (ny + nh > 100) { nh = 100 - ny; if (lock) nw = nh * R; }
 
         const r = (v: number) => Math.round(v * 10) / 10;
-        const patch = { x: r(nx), y: r(ny), width: r(nw), height: r(nh) };
+        const isTextEl = src === "element" && activeResizeElementType.current === "text";
+        const patch = isTextEl
+          ? { x: r(nx), y: r(ny), width: r(nw) }
+          : { x: r(nx), y: r(ny), width: r(nw), height: r(nh) };
 
         if (src === "element") {
           setActiveElements((prev) => prev.map((el) => el.id === activeResizeId.current ? { ...el, ...patch } : el));
@@ -419,6 +463,7 @@ function Marquee() {
       activeDragSource.current = null;
       activeResizeId.current = null;
       activeResizeSource.current = null;
+      activeResizeElementType.current = null;
       activeHandle.current = null;
       forceRender((n) => n + 1);
       if (wasDragging || wasResizing) {
@@ -473,7 +518,7 @@ function Marquee() {
   );
 
   const startResize = useCallback(
-    (e: React.MouseEvent, item: { id: string; x: number; y: number; width: number; height: number }, handle: string, source: "element" | "component" | "decoration" | "source") => {
+    (e: React.MouseEvent, item: { id: string; x: number; y: number; width: number; height: number }, handle: string, source: "element" | "component" | "decoration" | "source", elementType?: string) => {
       e.preventDefault();
       e.stopPropagation();
       const ref = source === "decoration" ? focusedCanvasRef : canvasRef;
@@ -484,6 +529,7 @@ function Marquee() {
       resizeStart.current = { x: item.x, y: item.y, width: item.width, height: item.height, clickX: cx, clickY: cy, aspectRatio: item.width / (item.height || 1) };
       activeResizeId.current = item.id;
       activeResizeSource.current = source;
+      activeResizeElementType.current = elementType ?? null;
       activeHandle.current = handle;
       if (source === "decoration") setFocusedSelectedDecId(item.id);
       else setSelectedId(item.id);
@@ -506,14 +552,32 @@ function Marquee() {
     setSelectedId(el.id);
   }, [setActiveElements]);
 
+  const computeTextHeight = useCallback((textContent: string, fontSize: number) => {
+    const canvasH = canvasRef.current?.getBoundingClientRect().height;
+    if (!canvasH) return 10;
+    // fontSize is in 1080p-equivalent px; convert to canvas px for height calculation
+    const fontPx = fontSize * canvasH / 1080;
+    const numLines = (textContent || "").split("\n").length;
+    return Math.max(Math.round((numLines * fontPx * 1.25) / canvasH * 1000) / 10, 1);
+  }, []);
+
   const addText = useCallback(() => {
-    const el = newElement("text", { textContent: "Text", fontSize: 24, textColor: "#ffffff", fontFamily: "sans-serif", fontWeight: "normal", fontStyle: "normal", width: 30, height: 10 });
+    const fontSize = 24;
+    const textContent = "Text";
+    const initH = computeTextHeight(textContent, fontSize);
+    const el = newElement("text", { textContent, fontSize, textColor: "#ffffff", fontFamily: "sans-serif", fontWeight: "normal", fontStyle: "normal", width: 30, height: initH });
+    setActiveElements((prev) => [...prev, el]);
+    setSelectedId(el.id);
+  }, [setActiveElements, computeTextHeight]);
+
+  const addColor = useCallback(() => {
+    const el = newElement("color", { backgroundColor: "#7c3aed", width: 30, height: 15 });
     setActiveElements((prev) => [...prev, el]);
     setSelectedId(el.id);
   }, [setActiveElements]);
 
-  const addColor = useCallback(() => {
-    const el = newElement("color", { backgroundColor: "#7c3aed", width: 30, height: 15 });
+  const addBlur = useCallback(() => {
+    const el = newElement("blur", { blurRadius: 10, width: 30, height: 20 });
     setActiveElements((prev) => [...prev, el]);
     setSelectedId(el.id);
   }, [setActiveElements]);
@@ -555,8 +619,15 @@ function Marquee() {
   }, [selectedId, setActiveSources]);
 
   const updateEl = useCallback((patch: Partial<OverlayThemeElement>) => {
-    setActiveElements((prev) => prev.map((e) => (e.id === selectedId ? { ...e, ...patch } : e)));
-  }, [selectedId, setActiveElements]);
+    setActiveElements((prev) => prev.map((e) => {
+      if (e.id !== selectedId) return e;
+      const updated = { ...e, ...patch };
+      if (updated.type === "text" && (patch.textContent !== undefined || patch.fontSize !== undefined)) {
+        updated.height = computeTextHeight(updated.textContent ?? "", updated.fontSize ?? 24);
+      }
+      return updated;
+    }));
+  }, [selectedId, setActiveElements, computeTextHeight]);
 
   const updateComp = useCallback((patch: Partial<OverlayThemeComponent>) => {
     setActiveComponents((prev) => prev.map((c) => (c.id === selectedId ? { ...c, ...patch } : c)));
@@ -589,7 +660,7 @@ function Marquee() {
   const addScene = useCallback(() => {
     const id = crypto.randomUUID();
     setScenes((prev) => {
-      const s: ThemeScene = { id, name: `Scene ${prev.length + 1}`, transition: { durationMs: 500 }, elements: [], components: [] };
+      const s: ThemeScene = { id, name: `Scene ${prev.length + 1}`, transition: { durationMs: 500 }, elements: [], components: [], sources: [] };
       return [...prev, s];
     });
     setActiveSceneId(id);
@@ -602,6 +673,7 @@ function Marquee() {
       return next;
     });
     setActiveSceneId((prev) => (prev === id ? "base" : prev));
+    setDefaultSceneId((prev) => (prev === id ? "base" : prev));
   }, []);
 
   const updateScene = useCallback((id: string, patch: Partial<Pick<ThemeScene, "name" | "hotkey" | "transition">>) => {
@@ -622,9 +694,16 @@ function Marquee() {
   const updateFocusedDec = useCallback((patch: Partial<OverlayThemeElement>) => {
     setFocusedDraftComp((prev) => !prev ? prev : {
       ...prev,
-      decorations: prev.decorations.map((d) => d.id === focusedSelectedDecId ? { ...d, ...patch } : d),
+      decorations: prev.decorations.map((d) => {
+        if (d.id !== focusedSelectedDecId) return d;
+        const updated = { ...d, ...patch };
+        if (updated.type === "text" && (patch.textContent !== undefined || patch.fontSize !== undefined)) {
+          updated.height = computeTextHeight(updated.textContent ?? "", updated.fontSize ?? 24);
+        }
+        return updated;
+      }),
     });
-  }, [focusedSelectedDecId]);
+  }, [focusedSelectedDecId, computeTextHeight]);
 
   const updateFocusedCompStyle = useCallback((patch: Partial<ComponentStyleProps>) => {
     setFocusedDraftComp((prev) => !prev ? prev : { ...prev, styleProps: { ...prev.styleProps, ...patch } });
@@ -641,10 +720,13 @@ function Marquee() {
   }, []);
 
   const addFocusedText = useCallback(() => {
-    const dec = newElement("text", { textContent: "Text", fontSize: 5, textColor: "#ffffff", fontFamily: "sans-serif", fontWeight: "normal", fontStyle: "normal", width: 30, height: 10 });
+    const fontSize = 5;
+    const textContent = "Text";
+    const initH = computeTextHeight(textContent, fontSize);
+    const dec = newElement("text", { textContent, fontSize, textColor: "#ffffff", fontFamily: "sans-serif", fontWeight: "normal", fontStyle: "normal", width: 30, height: initH });
     setFocusedDraftComp((prev) => !prev ? prev : { ...prev, decorations: [...prev.decorations, dec] });
     setFocusedSelectedDecId(dec.id);
-  }, []);
+  }, [computeTextHeight]);
 
   const addFocusedColor = useCallback(() => {
     const dec = newElement("color", { backgroundColor: "#7c3aed", width: 30, height: 15 });
@@ -663,7 +745,7 @@ function Marquee() {
   // ─── Save / Open ──────────────────────────────────────────────────────────
   const buildThemeJson = () => JSON.stringify({
     id: meta.id, name: meta.name, author: meta.author, version: meta.version,
-    description: meta.description, variables, scenes,
+    description: meta.description, variables, defaultSceneId, scenes,
   }, null, 2);
 
   const handleOpen = useCallback(async () => {
@@ -683,6 +765,8 @@ function Marquee() {
       sources: s.sources ?? [],
     }));
     setScenes(loadedScenes);
+    const loadedDefaultId = parsed.defaultSceneId ?? loadedScenes[0]?.id ?? "base";
+    setDefaultSceneId(loadedDefaultId);
     setActiveSceneId(loadedScenes[0]?.id ?? "base");
     const newAssetPaths: Record<string, string> = {};
     for (const scene of loadedScenes) {
@@ -747,24 +831,30 @@ function Marquee() {
   const elementTypeIcon = (type: OverlayThemeElement["type"]) => {
     if (type === "image") return <ImagePlus className="w-3 h-3 shrink-0 text-sky-400" />;
     if (type === "text")  return <Type      className="w-3 h-3 shrink-0 text-amber-400" />;
+    if (type === "blur")  return <Blend     className="w-3 h-3 shrink-0 text-teal-400" />;
     return                       <Square    className="w-3 h-3 shrink-0 text-purple-400" />;
   };
 
   const elementLayerLabel = (el: OverlayThemeElement) => {
     if (el.type === "image") return el.asset ?? "image";
     if (el.type === "text")  return el.textContent ? el.textContent.slice(0, 20) : "text";
+    if (el.type === "blur")  return `blur ${el.blurRadius ?? 10}px`;
     return el.backgroundColor ?? "color";
   };
 
   const renderCanvasElement = (el: OverlayThemeElement) => {
     const isSelected = el.id === selectedId;
     const imgSrc = el.type === "image" && el.asset ? assetPaths[el.asset] ?? "" : "";
+    // fontSize and blurRadius are stored as 1080p-equivalent px; scale to canvas CSS px for preview
+    const canvasH = canvasRef.current?.getBoundingClientRect().height || 1080;
+    const fontPx = ((el.fontSize ?? 24) * canvasH) / 1080;
+    const blurPx = ((el.blurRadius ?? 10) * canvasH) / 1080;
     return (
       <div
         key={el.id}
         onMouseDown={(e) => startDrag(e, el, "element")}
         className={`absolute select-none cursor-move overflow-hidden ${isSelected ? "ring-2 ring-violet-400" : "hover:ring-1 hover:ring-violet-400/50"}`}
-        style={{ left: `${el.x}%`, top: `${el.y}%`, width: `${el.width}%`, height: `${el.height}%`, opacity: el.opacity, zIndex: isSelected ? 10 : 1 }}
+        style={{ left: `${el.x}%`, top: `${el.y}%`, width: `${el.width}%`, height: `${el.height}%`, opacity: el.opacity, zIndex: isSelected ? 10 : 1, borderRadius: `${el.borderRadius ?? 0}%` }}
       >
         {el.type === "image" && imgSrc && (
           <img src={imgSrc} alt="" className="w-full h-full object-contain pointer-events-none" draggable={false} />
@@ -775,15 +865,26 @@ function Marquee() {
           </div>
         )}
         {el.type === "text" && (
-          <div className="w-full h-full flex items-center overflow-hidden pointer-events-none"
-            style={{ color: el.textColor ?? "#ffffff", fontSize: `${el.fontSize ?? 24}px`, fontFamily: el.fontFamily ?? "sans-serif", fontWeight: el.fontWeight ?? "normal", fontStyle: el.fontStyle ?? "normal", lineHeight: 1.2 }}>
+          <div className="w-full h-full overflow-hidden pointer-events-none"
+            style={{ color: el.textColor ?? "#ffffff", fontSize: `${fontPx}px`, fontFamily: el.fontFamily ?? "sans-serif", fontWeight: el.fontWeight ?? "normal", fontStyle: el.fontStyle ?? "normal", lineHeight: 1.25, textAlign: el.textAlign ?? "left", whiteSpace: "pre-wrap", overflowWrap: "break-word" }}>
             {el.textContent || <span className="italic text-zinc-500">empty text</span>}
           </div>
         )}
         {el.type === "color" && (
-          <div className="w-full h-full pointer-events-none" style={{ backgroundColor: el.backgroundColor ?? "#7c3aed" }} />
+          <div className="w-full h-full pointer-events-none" style={{ backgroundColor: el.backgroundColor ?? "#7c3aed", borderRadius: `${el.borderRadius ?? 0}%` }} />
         )}
-        {isSelected && <ResizeHandles onMouseDown={(e, h) => startResize(e, el, h, "element")} />}
+        {el.type === "blur" && (
+          <div className="w-full h-full pointer-events-none flex items-center justify-center"
+            style={{ backdropFilter: `blur(${blurPx}px)`, WebkitBackdropFilter: `blur(${blurPx}px)` }}>
+            <Blend className="w-4 h-4 text-white/50" />
+          </div>
+        )}
+        {isSelected && (
+          <ResizeHandles
+            handles={el.type === "text" ? ["l", "r"] : undefined}
+            onMouseDown={(e, h) => startResize(e, el, h, "element", el.type)}
+          />
+        )}
       </div>
     );
   };
@@ -905,6 +1006,12 @@ function Marquee() {
                       {scene.hotkey && (
                         <span className="text-[8px] font-mono bg-muted border border-border/60 rounded px-1">{scene.hotkey}</span>
                       )}
+                      <button
+                        title={scene.id === defaultSceneId ? "Default scene (used at stream start)" : "Set as default scene"}
+                        onClick={(e) => { e.stopPropagation(); setDefaultSceneId(scene.id); }}
+                        className={`cursor-pointer ${scene.id === defaultSceneId ? "text-amber-400" : "text-muted-foreground hover:text-amber-400"}`}>
+                        <Star className="w-2.5 h-2.5" fill={scene.id === defaultSceneId ? "currentColor" : "none"} />
+                      </button>
                       {scene.id !== "base" && (
                         <button onClick={(e) => { e.stopPropagation(); deleteScene(scene.id); }}
                           className="text-red-400 hover:text-red-300 cursor-pointer">
@@ -925,11 +1032,9 @@ function Marquee() {
                     placeholder="Scene name"
                     className="w-full bg-muted border border-border rounded px-1.5 py-0.5 text-[9px] text-foreground focus:border-violet-500 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
                   />
-                  <input
+                  <HotkeyInput
                     value={activeScene.hotkey ?? ""}
-                    onChange={(e) => updateScene(activeScene.id, { hotkey: e.target.value })}
-                    placeholder="Hotkey (e.g. Alt+1)"
-                    className="w-full bg-muted border border-border rounded px-1.5 py-0.5 text-[9px] text-foreground focus:border-violet-500 focus:outline-none font-mono"
+                    onChange={(hotkey) => updateScene(activeScene.id, { hotkey })}
                   />
                   <div className="flex items-center gap-1">
                     <label className="text-[9px] text-muted-foreground shrink-0">Fade</label>
@@ -983,6 +1088,10 @@ function Marquee() {
                   className="flex-1 flex items-center justify-center gap-1 py-1 text-[10px] font-semibold bg-purple-600/20 hover:bg-purple-600/40 border border-purple-500/30 text-purple-300 rounded cursor-pointer transition-colors">
                   <Square className="w-3 h-3" /> Color
                 </button>
+                <button onClick={addBlur} title="Add blur layer"
+                  className="flex-1 flex items-center justify-center gap-1 py-1 text-[10px] font-semibold bg-teal-600/20 hover:bg-teal-600/40 border border-teal-500/30 text-teal-300 rounded cursor-pointer transition-colors">
+                  <Blend className="w-3 h-3" /> Blur
+                </button>
               </div>
             </div>
 
@@ -1011,7 +1120,7 @@ function Marquee() {
                 <div className="px-2 pb-1 text-[10px] text-muted-foreground italic">None</div>
               )}
               {elements.length > 0 && (
-                <SortableList items={elements} onChange={(v) => setActiveElements(v)} renderItem={(el) => (
+                <SortableList items={[...elements].reverse()} onChange={(v) => setActiveElements([...v].reverse())} renderItem={(el) => (
                   <SortableItem id={el.id}>
                     <div onClick={() => setSelectedId(el.id)}
                       className={`flex items-center gap-1.5 px-2 py-1.5 w-full cursor-pointer transition-colors rounded mx-1 my-0.5 ${el.id === selectedId ? "bg-violet-600/20 text-violet-200" : "hover:bg-secondary text-foreground/80"}`}>
@@ -1031,7 +1140,7 @@ function Marquee() {
                 <div className="px-2 pb-1 text-[10px] text-muted-foreground italic">None</div>
               )}
               {components.length > 0 && (
-                <SortableList items={components} onChange={(v) => setActiveComponents(v)} renderItem={(comp) => (
+                <SortableList items={[...components].reverse()} onChange={(v) => setActiveComponents([...v].reverse())} renderItem={(comp) => (
                   <SortableItem id={comp.id}>
                     <div onClick={() => setSelectedId(comp.id)} onDoubleClick={() => openFocusedEditor(comp.id)}
                       className={`flex items-center gap-1.5 px-2 py-1.5 w-full cursor-pointer transition-colors rounded mx-1 my-0.5 ${comp.id === selectedId ? "bg-violet-600/20 text-violet-200" : "hover:bg-secondary text-foreground/80"}`}>
@@ -1128,7 +1237,9 @@ function Marquee() {
 
                 {/* Position & Size */}
                 <div className="grid grid-cols-2 gap-1.5">
-                  {(["x","y","width","height"] as const).map((field) => (
+                  {(["x","y","width","height"] as const)
+                    .filter((field) => !(field === "height" && selectedEl.type === "text"))
+                    .map((field) => (
                     <div key={field} className="flex flex-col gap-0.5">
                       <label className="text-[9px] text-muted-foreground uppercase">{field === "width" ? "W" : field === "height" ? "H" : field.toUpperCase()}</label>
                       <input type="number" value={selectedEl[field]} step={0.1}
@@ -1188,14 +1299,41 @@ function Marquee() {
                     <label className="text-[9px] text-muted-foreground uppercase">Text Color</label>
                     <CustomColorPicker value={selectedEl.textColor ?? "#ffffff"} onChange={(v) => updateEl({ textColor: v })} />
                   </div>
+                  <div className="flex flex-col gap-0.5">
+                    <label className="text-[9px] text-muted-foreground uppercase">Alignment</label>
+                    <div className="flex gap-0.5">
+                      {(["left", "center", "right"] as const).map((a) => {
+                        const Icon = a === "left" ? AlignLeft : a === "center" ? AlignCenter : AlignRight;
+                        const active = (selectedEl.textAlign ?? "left") === a;
+                        return (
+                          <button key={a} onClick={() => updateEl({ textAlign: a })}
+                            className={`flex-1 flex items-center justify-center py-1 rounded border text-[9px] transition-colors ${active ? "border-violet-500 bg-violet-500/20 text-violet-300" : "border-border text-muted-foreground hover:border-violet-400/50"}`}>
+                            <Icon className="w-3 h-3" />
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
                 </>}
 
                 {/* Color-specific */}
                 {selectedEl.type === "color" && (
-                  <div className="flex flex-col gap-0.5">
-                    <label className="text-[9px] text-muted-foreground uppercase">Fill Color</label>
-                    <CustomColorPicker value={selectedEl.backgroundColor ?? "#7c3aed"} onChange={(v) => updateEl({ backgroundColor: v })} />
-                  </div>
+                  <>
+                    <div className="flex flex-col gap-0.5">
+                      <label className="text-[9px] text-muted-foreground uppercase">Fill Color</label>
+                      <CustomColorPicker value={selectedEl.backgroundColor ?? "#7c3aed"} onChange={(v) => updateEl({ backgroundColor: v })} />
+                    </div>
+                    <div className="flex flex-col gap-0.5">
+                      <div className="flex items-center justify-between">
+                        <label className="text-[9px] text-muted-foreground uppercase">Corner Radius</label>
+                        <span className="text-[9px] text-foreground/60 font-mono">{selectedEl.borderRadius ?? 0}%</span>
+                      </div>
+                      <input type="range" min={0} max={50} step={1}
+                        value={selectedEl.borderRadius ?? 0}
+                        onChange={(e) => updateEl({ borderRadius: parseInt(e.target.value) })}
+                        className="w-full accent-violet-500" />
+                    </div>
+                  </>
                 )}
 
                 {/* Image-specific */}
@@ -1212,6 +1350,30 @@ function Marquee() {
                     }} className="text-[10px] text-sky-400 hover:text-sky-300 cursor-pointer text-left">
                       Replace image…
                     </button>
+                    <div className="flex flex-col gap-0.5 pt-1">
+                      <div className="flex items-center justify-between">
+                        <label className="text-[9px] text-muted-foreground uppercase">Corner Radius</label>
+                        <span className="text-[9px] text-foreground/60 font-mono">{selectedEl.borderRadius ?? 0}%</span>
+                      </div>
+                      <input type="range" min={0} max={50} step={1}
+                        value={selectedEl.borderRadius ?? 0}
+                        onChange={(e) => updateEl({ borderRadius: parseInt(e.target.value) })}
+                        className="w-full accent-sky-400" />
+                    </div>
+                  </div>
+                )}
+
+                {/* Blur-specific */}
+                {selectedEl.type === "blur" && (
+                  <div className="flex flex-col gap-0.5">
+                    <div className="flex items-center justify-between">
+                      <label className="text-[9px] text-muted-foreground uppercase">Blur Radius</label>
+                      <span className="text-[9px] text-foreground/60 font-mono">{selectedEl.blurRadius ?? 10}px</span>
+                    </div>
+                    <input type="range" min={1} max={60} step={1}
+                      value={selectedEl.blurRadius ?? 10}
+                      onChange={(e) => updateEl({ blurRadius: parseInt(e.target.value) })}
+                      className="w-full accent-violet-500" />
                   </div>
                 )}
               </div>
@@ -1328,7 +1490,7 @@ function Marquee() {
               >
                 {dec.type === "image" && imgSrc && <img src={imgSrc} alt="" className="w-full h-full object-contain pointer-events-none" draggable={false} />}
                 {dec.type === "image" && !imgSrc && <div className="w-full h-full bg-zinc-700/60 border border-dashed border-zinc-500 flex items-center justify-center"><ImagePlus className="w-4 h-4 text-zinc-400" /></div>}
-                {dec.type === "text" && <div className="w-full h-full flex items-center overflow-hidden pointer-events-none" style={{ color: dec.textColor ?? "#fff", fontSize: `${dec.fontSize ?? 5}px`, fontFamily: dec.fontFamily ?? "sans-serif", fontWeight: dec.fontWeight ?? "normal", fontStyle: dec.fontStyle ?? "normal" }}>{dec.textContent || <span className="italic text-zinc-500">empty</span>}</div>}
+                {dec.type === "text" && (() => { const cH = canvasRef.current?.getBoundingClientRect().height || 1080; return <div className="w-full h-full flex items-center overflow-hidden pointer-events-none" style={{ color: dec.textColor ?? "#fff", fontSize: `${(dec.fontSize ?? 5) * cH / 1080}px`, fontFamily: dec.fontFamily ?? "sans-serif", fontWeight: dec.fontWeight ?? "normal", fontStyle: dec.fontStyle ?? "normal" }}>{dec.textContent || <span className="italic text-zinc-500">empty</span>}</div>; })()}
                 {dec.type === "color" && <div className="w-full h-full pointer-events-none" style={{ backgroundColor: dec.backgroundColor ?? "#7c3aed" }} />}
                 {isSel && <ResizeHandles onMouseDown={(e, h) => startResize(e, dec, h, "decoration")} />}
               </div>

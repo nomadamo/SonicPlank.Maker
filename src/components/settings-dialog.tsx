@@ -12,7 +12,12 @@ import { useSettings, installedThemesAtom } from "@/store/settingsStore";
 import { useAtom } from "jotai";
 import { Button } from "@/components/ui/button";
 import { Moon, Sun, Monitor, Upload as UploadIcon, Trash2 } from "lucide-react";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/motion/tabs";
+import {
+  Tabs,
+  TabsList,
+  TabsTrigger,
+  TabsContent,
+} from "@/components/motion/tabs";
 import {
   Select,
   SelectContent,
@@ -23,8 +28,13 @@ import {
 import type { EncoderConfig } from "@/global";
 import type { OverlayThemeMeta } from "@/types/flow-node";
 import {
-  NVENC_OPTS, X264_OPTS, AMF_OPTS, QSV_OPTS,
-  ENCODER_LABELS, makeDefaultEncoderConfig, type EncoderKey,
+  NVENC_OPTS,
+  X264_OPTS,
+  AMF_OPTS,
+  QSV_OPTS,
+  ENCODER_LABELS,
+  makeDefaultEncoderConfig,
+  type EncoderKey,
 } from "@/constants/encoder";
 import { useStateMachine } from "@/store/stateMachine";
 import { Slider } from "@/components/ui/slider";
@@ -58,7 +68,13 @@ interface SettingsDialogProps {
 
 // ── Helper sub-components ─────────────────────────────────────────────────────
 
-function FieldRow({ label, children }: { label: string; children: React.ReactNode }) {
+function FieldRow({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
   return (
     <div className="grid grid-cols-[7.5rem_1fr] items-center gap-2">
       <span className="text-xs text-muted-foreground text-right">{label}</span>
@@ -77,14 +93,24 @@ function OptionSelect({
   onChange: (v: string) => void;
 }) {
   return (
-    <Select value={value || "__none__"} onValueChange={(v: string) => onChange(v === "__none__" ? "" : v)}>
+    <Select
+      value={value || "__none__"}
+      onValueChange={(v: string) => onChange(v === "__none__" ? "" : v)}
+    >
       <SelectTrigger className="h-7 text-xs font-mono">
         <SelectValue />
       </SelectTrigger>
       <SelectContent>
-        <SelectItem value="__none__" className="text-xs font-mono text-muted-foreground">— default —</SelectItem>
+        <SelectItem
+          value="__none__"
+          className="text-xs font-mono text-muted-foreground"
+        >
+          — default —
+        </SelectItem>
         {options.map((o) => (
-          <SelectItem key={o} value={o} className="text-xs font-mono">{o}</SelectItem>
+          <SelectItem key={o} value={o} className="text-xs font-mono">
+            {o}
+          </SelectItem>
         ))}
       </SelectContent>
     </Select>
@@ -110,7 +136,8 @@ function NumField({
       placeholder={placeholder}
       value={value ?? ""}
       onChange={(e) => {
-        const n = step < 1 ? parseFloat(e.target.value) : parseInt(e.target.value, 10);
+        const n =
+          step < 1 ? parseFloat(e.target.value) : parseInt(e.target.value, 10);
         onChange(isNaN(n) ? null : n);
       }}
     />
@@ -123,33 +150,41 @@ function NumField({
 
 const ENCODER_OPT_MAP = {
   h264_nvenc: NVENC_OPTS,
-  libx264:    X264_OPTS,
-  h264_amf:   AMF_OPTS,
-  h264_qsv:   QSV_OPTS,
+  libx264: X264_OPTS,
+  h264_amf: AMF_OPTS,
+  h264_qsv: QSV_OPTS,
 } as const;
 
 function CoreTab() {
   const [config, setConfigState] = React.useState<EncoderConfig | null>(null);
-  const [activeEncoder, setActiveEncoder] = React.useState<EncoderKey>("h264_nvenc");
+  const [activeEncoder, setActiveEncoder] =
+    React.useState<EncoderKey>("h264_nvenc");
   const [isDirty, setIsDirty] = React.useState(false);
   const [applyState, setApplyState] = React.useState<"idle" | "saved">("idle");
 
   React.useEffect(() => {
-    window.electron.getEncoderConfig().then((cfg) => {
-      setConfigState(cfg ?? makeDefaultEncoderConfig());
-    }).catch(console.error);
+    window.electron
+      .getEncoderConfig()
+      .then((cfg) => {
+        setConfigState(cfg ?? makeDefaultEncoderConfig());
+      })
+      .catch(console.error);
   }, []);
 
-  const setOption = React.useCallback((encoder: EncoderKey, key: string, val: string) => {
-    setConfigState((prev) => {
-      if (!prev) return prev;
-      const opts = { ...prev[encoder].options };
-      if (val) opts[key] = val; else delete opts[key];
-      return { ...prev, [encoder]: { ...prev[encoder], options: opts } };
-    });
-    setIsDirty(true);
-    setApplyState("idle");
-  }, []);
+  const setOption = React.useCallback(
+    (encoder: EncoderKey, key: string, val: string) => {
+      setConfigState((prev) => {
+        if (!prev) return prev;
+        const opts = { ...prev[encoder].options };
+        if (val) opts[key] = val;
+        else delete opts[key];
+        return { ...prev, [encoder]: { ...prev[encoder], options: opts } };
+      });
+      setIsDirty(true);
+      setApplyState("idle");
+    },
+    [],
+  );
 
   const setBitrate = React.useCallback((val: number | null) => {
     setConfigState((prev) => {
@@ -162,7 +197,8 @@ function CoreTab() {
 
   const handleApply = React.useCallback(() => {
     if (!config) return;
-    window.electron.setEncoderConfig(config)
+    window.electron
+      .setEncoderConfig(config)
       .then(() => {
         setIsDirty(false);
         setApplyState("saved");
@@ -173,7 +209,10 @@ function CoreTab() {
 
   if (!config) {
     return (
-      <TabsContent value="core" className="flex items-center justify-center min-h-[360px]">
+      <TabsContent
+        value="core"
+        className="flex items-center justify-center min-h-[360px]"
+      >
         <span className="text-xs text-muted-foreground">Loading…</span>
       </TabsContent>
     );
@@ -181,7 +220,10 @@ function CoreTab() {
 
   const preset = config[activeEncoder];
   const opt = (key: string) => preset.options[key] ?? "";
-  const opts = ENCODER_OPT_MAP[activeEncoder] as Record<string, { label: string; values: readonly string[] }>;
+  const opts = ENCODER_OPT_MAP[activeEncoder] as Record<
+    string,
+    { label: string; values: readonly string[] }
+  >;
 
   return (
     <TabsContent value="core" className="flex flex-col gap-3 min-h-[360px]">
@@ -193,7 +235,11 @@ function CoreTab() {
       </div>
 
       <FieldRow label="Stream Bitrate (kbps)">
-        <NumField value={config.bitrate_kbps} placeholder="8000" onChange={setBitrate} />
+        <NumField
+          value={config.bitrate_kbps}
+          placeholder="8000"
+          onChange={setBitrate}
+        />
       </FieldRow>
 
       <div className="flex gap-1.5">
@@ -222,7 +268,6 @@ function CoreTab() {
             />
           </FieldRow>
         ))}
-
       </div>
 
       <div className="flex items-center gap-3 justify-end mt-auto pt-1">
@@ -243,11 +288,16 @@ function CoreTab() {
 function ThemesTab() {
   const [themes, setThemes] = useAtom(installedThemesAtom);
   const [installing, setInstalling] = React.useState(false);
-  const [uninstallingId, setUninstallingId] = React.useState<string | null>(null);
+  const [uninstallingId, setUninstallingId] = React.useState<string | null>(
+    null,
+  );
   const [errorMsg, setErrorMsg] = React.useState<string | null>(null);
 
   React.useEffect(() => {
-    window.electron.getInstalledOverlayThemes().then(setThemes).catch(console.error);
+    window.electron
+      .getInstalledOverlayThemes()
+      .then(setThemes)
+      .catch(console.error);
   }, [setThemes]);
 
   const handleInstall = async () => {
@@ -308,9 +358,7 @@ function ThemesTab() {
         </button>
       </div>
 
-      {errorMsg && (
-        <div className="text-xs text-red-400">{errorMsg}</div>
-      )}
+      {errorMsg && <div className="text-xs text-red-400">{errorMsg}</div>}
 
       {themes.length === 0 ? (
         <div className="flex-1 flex items-center justify-center text-xs text-muted-foreground italic">
@@ -333,7 +381,9 @@ function ThemesTab() {
               <div className="flex-1 min-w-0 flex flex-col gap-0.5">
                 <span className="text-sm font-medium truncate">{t.name}</span>
                 {t.author && (
-                  <span className="text-xs text-muted-foreground">by {t.author}</span>
+                  <span className="text-xs text-muted-foreground">
+                    by {t.author}
+                  </span>
                 )}
                 {t.description && (
                   <span className="text-xs text-muted-foreground leading-relaxed line-clamp-2">
@@ -367,9 +417,14 @@ const INTERVAL_OPTIONS: { label: string; value: number }[] = [
 
 export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   const { settings, updateSettings } = useSettings();
-  type AudioDevice = { id: string; name: string; kind: "output" | "microphone" | "capture"; is_default: boolean };
-  const [outputDevices,  setOutputDevices]  = React.useState<AudioDevice[]>([]);
-  const [micDevices,     setMicDevices]     = React.useState<AudioDevice[]>([]);
+  type AudioDevice = {
+    id: string;
+    name: string;
+    kind: "output" | "microphone" | "capture";
+    is_default: boolean;
+  };
+  const [outputDevices, setOutputDevices] = React.useState<AudioDevice[]>([]);
+  const [micDevices, setMicDevices] = React.useState<AudioDevice[]>([]);
   const [captureDevices, setCaptureDevices] = React.useState<AudioDevice[]>([]);
   const { theme, setTheme } = useStateMachine();
 
@@ -425,7 +480,10 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent style={{ maxWidth: "500px", minHeight: "560px", maxHeight: "90vh" }} className="flex flex-col justify-start overflow-y-auto overflow-x-hidden">
+      <DialogContent
+        style={{ maxWidth: "600px", minHeight: "560px", maxHeight: "90vh" }}
+        className="flex flex-col justify-start overflow-y-auto overflow-x-hidden"
+      >
         <DialogHeader>
           <DialogTitle>Settings</DialogTitle>
           <DialogDescription>
@@ -436,15 +494,28 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
 
         <Tabs defaultValue="general" variant="segment" className="w-full">
           <TabsList className="w-full grid grid-cols-5 mb-4">
-            <TabsTrigger value="general" className="w-full">General</TabsTrigger>
-            <TabsTrigger value="audio" className="w-full">Audio</TabsTrigger>
-            <TabsTrigger value="output" className="w-full">Output</TabsTrigger>
-            <TabsTrigger value="themes" className="w-full">Themes</TabsTrigger>
-            <TabsTrigger value="core" className="w-full">Core</TabsTrigger>
+            <TabsTrigger value="general" className="w-full">
+              General
+            </TabsTrigger>
+            <TabsTrigger value="audio" className="w-full">
+              Audio
+            </TabsTrigger>
+            <TabsTrigger value="output" className="w-full">
+              Output
+            </TabsTrigger>
+            <TabsTrigger value="themes" className="w-full">
+              Themes
+            </TabsTrigger>
+            <TabsTrigger value="core" className="w-full">
+              Core
+            </TabsTrigger>
           </TabsList>
 
           {/* General Tab */}
-          <TabsContent value="general" className="flex flex-col gap-4 min-h-[360px]">
+          <TabsContent
+            value="general"
+            className="flex flex-col gap-4 min-h-[360px]"
+          >
             {/* Theme Selection */}
             <div className="flex flex-col gap-3">
               <label className="text-sm font-medium">Theme</label>
@@ -479,7 +550,9 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                 <button
                   role="switch"
                   aria-checked={settings.autoSave}
-                  onClick={() => updateSettings({ autoSave: !settings.autoSave })}
+                  onClick={() =>
+                    updateSettings({ autoSave: !settings.autoSave })
+                  }
                   className="relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   style={{
                     backgroundColor: settings.autoSave
@@ -501,7 +574,9 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
               {/* Interval selector — only shown when auto-save is on */}
               {settings.autoSave && (
                 <div className="flex flex-col gap-2">
-                  <label className="text-xs text-muted-foreground text-left">Interval</label>
+                  <label className="text-xs text-muted-foreground text-left">
+                    Interval
+                  </label>
                   <div className="flex gap-2">
                     {INTERVAL_OPTIONS.map((opt) => (
                       <Button
@@ -529,7 +604,9 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
 
             {/* Stream Customization */}
             <div className="flex flex-col gap-3">
-              <label className="text-sm font-medium text-left">Stream Appearance</label>
+              <label className="text-sm font-medium text-left">
+                Stream Appearance
+              </label>
               <div className="flex items-center gap-3">
                 <ColorPicker
                   value={settings.audioStreamColor || "#a78bfa"}
@@ -582,7 +659,9 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                     render={
                       <IconPicker
                         categorized={false}
-                        value={(settings.audioStreamIcon as IconName) || "radio"}
+                        value={
+                          (settings.audioStreamIcon as IconName) || "radio"
+                        }
                         onValueChange={(icon) =>
                           updateSettings({ audioStreamIcon: icon })
                         }
@@ -590,7 +669,8 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                           <Button variant="outline">
                             <Icon
                               name={
-                                (settings.audioStreamIcon as IconName) || "radio"
+                                (settings.audioStreamIcon as IconName) ||
+                                "radio"
                               }
                             />
                           </Button>
@@ -611,31 +691,46 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
             {/* Twitch Chat */}
             <div className="flex flex-col gap-3">
               <div className="flex flex-col gap-0.5">
-                <label className="text-sm font-medium text-left">Twitch Chat</label>
+                <label className="text-sm font-medium text-left">
+                  Twitch Chat
+                </label>
                 <span className="text-xs text-muted-foreground text-left">
                   Requires a user access token with the{" "}
-                  <code className="text-indigo-400 text-[11px]">user:read:chat</code> scope.
-                  Generate one at{" "}
+                  <code className="text-indigo-400 text-[11px]">
+                    user:read:chat
+                  </code>{" "}
+                  scope. Generate one at{" "}
                   <a
                     href="https://twitchtokengenerator.com/"
                     target="_blank"
                     rel="noreferrer"
                     className="text-indigo-400 hover:underline"
-                    onClick={(e) => { e.preventDefault(); window.open("https://twitchtokengenerator.com/"); }}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      window.open("https://twitchtokengenerator.com/");
+                    }}
                   >
                     twitchtokengenerator.com
-                  </a>
-                  {" "}— select <em>Custom Scope Token</em> and check <code className="text-indigo-400 text-[11px]">user:read:chat</code>.
+                  </a>{" "}
+                  — select <em>Custom Scope Token</em> and check{" "}
+                  <code className="text-indigo-400 text-[11px]">
+                    user:read:chat
+                  </code>
+                  .
                 </span>
               </div>
               <div className="flex flex-col gap-2">
                 <div className="flex flex-col gap-1">
-                  <label className="text-xs text-muted-foreground">OAuth Token</label>
+                  <label className="text-xs text-muted-foreground">
+                    OAuth Token
+                  </label>
                   <input
                     type="password"
                     placeholder="oauth:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
                     value={settings.twitchToken || ""}
-                    onChange={(e) => updateSettings({ twitchToken: e.target.value.trim() })}
+                    onChange={(e) =>
+                      updateSettings({ twitchToken: e.target.value.trim() })
+                    }
                     className="w-full bg-muted border border-border rounded px-2.5 py-1.5 text-sm text-foreground focus:border-indigo-500 focus:outline-none"
                   />
                 </div>
@@ -644,22 +739,30 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
           </TabsContent>
 
           {/* Audio Tab */}
-          <TabsContent value="audio" className="flex flex-col gap-4 min-h-[360px]">
+          <TabsContent
+            value="audio"
+            className="flex flex-col gap-4 min-h-[360px]"
+          >
             {/* Stream Audio Source */}
             <div className="flex flex-col gap-3">
               <div className="flex flex-col gap-0.5">
-                <label className="text-sm font-medium text-left">Stream Audio Source</label>
+                <label className="text-sm font-medium text-left">
+                  Stream Audio Source
+                </label>
                 <span className="text-xs text-muted-foreground text-left">
-                  Audio captured and mixed into the stream. Select an Audio Capture Device
-                  (e.g. VoiceMeeter Output) for software routing, a Microphone for direct
-                  mic capture, or a System Audio device for WASAPI loopback.
+                  Audio captured and mixed into the stream. Select an Audio
+                  Capture Device (e.g. VoiceMeeter Output) for software routing,
+                  a Microphone for direct mic capture, or a System Audio device
+                  for WASAPI loopback.
                 </span>
               </div>
               <Select
                 value={settings.audioStreamSourceId || "none"}
                 onValueChange={(val) => {
                   if (typeof val === "string") {
-                    updateSettings({ audioStreamSourceId: val === "none" ? "" : val });
+                    updateSettings({
+                      audioStreamSourceId: val === "none" ? "" : val,
+                    });
                   }
                 }}
               >
@@ -714,7 +817,9 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
 
             {/* Audio Output Device */}
             <div className="flex flex-col gap-3">
-              <label className="text-sm font-medium text-left">Audio Output</label>
+              <label className="text-sm font-medium text-left">
+                Audio Output
+              </label>
               <Select
                 value={settings.audioOutputDeviceId || "default"}
                 onValueChange={(val) => {
@@ -734,8 +839,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                   <SelectItem value="default">System Default</SelectItem>
                   {outputDevices.map((device) => (
                     <SelectItem key={device.id} value={device.id}>
-                      {device.name ||
-                        `Speaker (${device.id.slice(0, 5)}...)`}
+                      {device.name || `Speaker (${device.id.slice(0, 5)}...)`}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -746,7 +850,9 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
 
             {/* Microphone */}
             <div className="flex flex-col gap-3">
-              <label className="text-sm font-medium text-left">Microphone</label>
+              <label className="text-sm font-medium text-left">
+                Microphone
+              </label>
               <Select
                 value={settings.audioInputDeviceId || "default"}
                 onValueChange={(val) => {
@@ -784,8 +890,8 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                     Playhead Latency Compensation
                   </label>
                   <span className="text-xs text-muted-foreground text-left">
-                    Offsets the visual playhead during playback to match
-                    sound output (supports negative values)
+                    Offsets the visual playhead during playback to match sound
+                    output (supports negative values)
                   </span>
                 </div>
                 <span className="text-xs font-mono text-muted-foreground bg-muted px-2.5 py-1 rounded-md border border-border">

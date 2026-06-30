@@ -136,12 +136,23 @@ export type VodStatus = {
 } & (
   | { phase: "recording_saved" }
   | { phase: "searching" }
+  | { phase: "uploading"; progress: number }
   | { phase: "found"; vodUrl: string }
   | { phase: "not_found" }
   | { phase: "error"; message: string }
 );
 
 export const vodStatusAtom = atom<VodStatus | null>(null);
+
+// ── Stream Deck API command atom ─────────────────────────────────────────────
+// Set by ApiBridge when an external API command arrives (e.g. from Stream Deck).
+// Each command carries a unique id so repeated same-action commands still fire effects.
+export interface ApiCommand {
+  action: string;
+  id: number;
+  payload: Record<string, unknown>;
+}
+export const apiCommandAtom = atom<ApiCommand | null>(null);
 
 export const flowNodeAtomFamily = atomFamily((id) =>
   atom(
@@ -226,13 +237,16 @@ export const flowEdgesAtom = atom(
   },
 );
 
-// Helper write-only atom: update a single node's data by id
+// Helper write-only atom: update a single node's data by id.
+// markUnsaved (default true) controls whether this write flags the flow as having unsaved changes.
+// Pass markUnsaved: false for runtime/init updates (theme loading, scene switches, stream-start resets)
+// that should not prompt the user to save.
 export const updateNodeDataAtom = atom(
   null,
   (
     get,
     set,
-    { id, patch }: { id: string; patch: Partial<FlowNodeType["data"]> },
+    { id, patch, markUnsaved = true }: { id: string; patch: Partial<FlowNodeType["data"]>; markUnsaved?: boolean },
   ) => {
     const currentState = get(flowDataAtom);
     if (!currentState.nodes.some((n) => n.id === id)) return;
@@ -242,6 +256,7 @@ export const updateNodeDataAtom = atom(
         n.id === id ? { ...n, data: { ...n.data, ...patch } } : n,
       ),
     });
+    if (markUnsaved) set(flowHasUnsavedChangesAtom, true);
   },
 );
 

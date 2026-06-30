@@ -39,7 +39,7 @@ export interface ThemeScene {
 
 export interface OverlayThemeElement {
   id: string;
-  type: "image" | "text" | "color";
+  type: "image" | "text" | "color" | "blur";
   asset?: string;
   x: number;
   y: number;
@@ -53,6 +53,9 @@ export interface OverlayThemeElement {
   fontWeight?: string;
   fontStyle?: string;
   backgroundColor?: string;
+  borderRadius?: number; // 0–50, percent of element's min dimension
+  textAlign?: "left" | "center" | "right";
+  blurRadius?: number; // blur strength in canvas pixels (live overlay scale)
 }
 
 export interface OverlayThemeMeta {
@@ -67,6 +70,7 @@ export interface OverlayThemeMeta {
 export interface OverlayThemeLayout extends OverlayThemeMeta {
   variables: OverlayThemeVariable[];
   scenes: ThemeScene[];
+  defaultSceneId?: string;
 }
 
 export interface ComponentStyleProps {
@@ -98,7 +102,7 @@ export interface OverlayThemeComponent {
 
 export interface OverlayElement {
   id: string;
-  type: "text" | "color" | "image" | "visualizer" | "nowPlaying" | "twitchChat";
+  type: "text" | "color" | "image" | "blur" | "visualizer" | "nowPlaying" | "twitchChat";
   x: number; // percentage coordinate (0-100) for scaling
   y: number; // percentage coordinate (0-100) for scaling
   width: number; // percentage width (0-100)
@@ -121,6 +125,9 @@ export interface OverlayElement {
   audioNodeId?: string;
   duration?: number;
   maxMessages?: number;
+  borderRadius?: number; // 0–50, percent of element's min dimension
+  textAlign?: "left" | "center" | "right";
+  blurRadius?: number;
   _isComponentBase?: boolean;
 }
 

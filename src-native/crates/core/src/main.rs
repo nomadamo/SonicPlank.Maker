@@ -521,8 +521,10 @@ async fn run_data_pipe(
         // The overlay editor's full-resolution preview comes via the JPEG
         // compositor path, not this pipe.
         let scale: u32 = 3;
-        let scaled_w = (raw.width / scale).max(1);
-        let scaled_h = (raw.height / scale).max(1);
+        // Use ceiling division so scaled_w/h match the actual pixel count
+        // the step_by loop emits (floor would cause a row-stride mismatch → slant).
+        let scaled_w = ((raw.width + scale - 1) / scale).max(1);
+        let scaled_h = ((raw.height + scale - 1) / scale).max(1);
         let mut scaled_pixels = Vec::with_capacity((scaled_w * scaled_h * 4) as usize);
 
         for y in (0..raw.height).step_by(scale as usize) {

@@ -49,6 +49,7 @@ import { useSettings } from "@/store/settingsStore";
 import { SettingsDialog } from "@/components/settings-dialog";
 import { inDevelopment } from "@/constants";
 import { useVodTracking } from "@/hooks/use-vod-tracking";
+import { ApiBridge } from "@/components/api-bridge";
 import appIcon from "@/img/icon.png";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import {
@@ -72,7 +73,10 @@ import {
   loadFlowDataAtom,
   flowCurrentPathAtom,
   flowHasUnsavedChangesAtom,
+  updateNodeDataAtom,
 } from "@/store/flowStore";
+import { resolveThemeElements } from "@/utils/resolve-theme";
+import type { OverlayThemeLayout } from "@/types/flow-node";
 import { LibraryAudioPlayerWrapper } from "@/components/library-audio-player";
 import { SpotifyLibraryPlayer } from "@/components/spotify-library-player";
 import { VisualizerBackdrop } from "@/components/visualizer-backdrop";
@@ -157,6 +161,30 @@ function ExitMenuItem() {
   return <MenubarItem onClick={CheckUnsaved}>Exit</MenubarItem>;
 }
 
+function useSceneSwitchHandler() {
+  const updateNodeData = useSetAtom(updateNodeDataAtom);
+  const flowData = useAtomValue(flowDataAtom);
+  const flowDataRef = useRef(flowData);
+  flowDataRef.current = flowData;
+
+  useEffect(() => {
+    const handler = (event: { nodeId: string; sceneId: string }) => {
+      const node = flowDataRef.current.nodes.find((n) => n.id === event.nodeId);
+      if (!node) return;
+      const themeLayout = node.data.themeLayout as OverlayThemeLayout | null;
+      const variables = (node.data.variables as Record<string, string>) ?? {};
+      if (!themeLayout) return;
+      const resolved = resolveThemeElements(themeLayout, variables, event.sceneId);
+      updateNodeData({ id: event.nodeId, patch: { activeSceneId: event.sceneId, resolvedElements: resolved } });
+    };
+
+    window.electron.onSceneSwitch(handler);
+    return () => {
+      window.electron.removeOnSceneSwitch();
+    };
+  }, [updateNodeData]);
+}
+
 export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const { settings, updateSettings } = useSettings();
@@ -204,6 +232,7 @@ export default function App() {
   }, [spotifyNeedsReauth, reconnectSpotify]);
 
   useVodTracking();
+  useSceneSwitchHandler();
 
   const { setQuitRequested } = useStateMachine();
 
@@ -284,14 +313,6 @@ export default function App() {
     }
   }, [sonicsData, setSonicsUnsaved, sonicsPath]);
 
-  const initialFlowRef = useRef(flowData);
-  useEffect(() => {
-    if (flowData !== initialFlowRef.current) {
-      setFlowUnsaved(true);
-      initialFlowRef.current = flowData;
-    }
-  }, [flowData, setFlowUnsaved]);
-
   const handleLoadSonics = async () => {
     const result = await window.electron.showOpenDialog({
       filters: [{ name: "SonicPlank Project", extensions: ["sonic"] }],
@@ -351,7 +372,6 @@ export default function App() {
       if (dataStr) {
         try {
           const parsed = JSON.parse(dataStr);
-          initialFlowRef.current = parsed;
           loadFlowData(parsed);
           setFlowPath(path);
           setFlowUnsaved(false);
@@ -366,7 +386,6 @@ export default function App() {
     if (flowPath) {
       const success = await window.electron.saveProject(flowPath, JSON.stringify(flowData));
       if (success) {
-        initialFlowRef.current = flowData;
         setFlowUnsaved(false);
       }
     } else {
@@ -381,7 +400,6 @@ export default function App() {
     if (!result.canceled && result.filePath) {
       const success = await window.electron.saveProject(result.filePath, JSON.stringify(flowData));
       if (success) {
-        initialFlowRef.current = flowData;
         setFlowPath(result.filePath);
         setFlowUnsaved(false);
       }
@@ -420,6 +438,7 @@ export default function App() {
   // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
   return (
     <>
+      <ApiBridge />
       <div
         className="border-border/60 bg-background/40 backdrop-blur-md flex items-center justify-between"
         style={{

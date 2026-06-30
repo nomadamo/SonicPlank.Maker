@@ -21,12 +21,16 @@ export function VodUploadToast() {
 
   const fileName = status.filePath.split(/[/\\]/).pop() ?? status.filePath;
 
+  const platformTitle = (base: string) =>
+    status.platform === "youtube" ? base.replace("VOD", "upload") : base;
+
   const title: Record<typeof status.phase, string> = {
     recording_saved: "Recording saved",
-    searching: "Waiting for VOD…",
-    found: "VOD is live",
+    searching: status.platform === "youtube" ? "Preparing upload…" : "Waiting for VOD…",
+    uploading: "Uploading to YouTube…",
+    found: status.platform === "youtube" ? "Upload complete" : "VOD is live",
     not_found: "Recording saved",
-    error: "VOD tracking failed",
+    error: platformTitle("VOD tracking failed"),
   };
 
   const isTerminal = ["found", "not_found", "error"].includes(status.phase);
@@ -61,12 +65,22 @@ export function VodUploadToast() {
         </button>
       </div>
 
-      {/* Indeterminate progress bar while polling */}
+      {/* Indeterminate progress bar while polling Twitch VOD */}
       {status.phase === "searching" && (
         <div className="w-full h-1 bg-muted rounded-full overflow-hidden">
           <div
             className="h-full w-1/3 bg-primary/60 rounded-full"
             style={{ animation: "vod-indeterminate 1.6s linear infinite" }}
+          />
+        </div>
+      )}
+
+      {/* Determinate progress bar during YouTube upload */}
+      {status.phase === "uploading" && (
+        <div className="w-full h-1 bg-muted rounded-full overflow-hidden">
+          <div
+            className="h-full bg-red-500/80 rounded-full transition-all duration-300"
+            style={{ width: `${status.progress}%` }}
           />
         </div>
       )}
