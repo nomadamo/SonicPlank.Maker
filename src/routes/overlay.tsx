@@ -56,11 +56,10 @@ function formatTime(seconds: number): string {
 
 function OverlayWindowComponent() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const isTransitioningRef = useRef(false);
   const pendingOverlaysRef = useRef<OverlayElement[] | null>(null);
-  const transitionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const fadeOutHandlerRef = useRef<((e: TransitionEvent) => void) | null>(null);
+  const fadeStateRef = useRef<{ active: boolean; phase: 'out' | 'in'; phaseStartMs: number; durationMs: number }>({
+    active: false, phase: 'out', phaseStartMs: 0, durationMs: 0,
+  });
   const overlaysRef = useRef<OverlayElement[]>([]);
   const audioDataMapRef = useRef<Record<string, number[]>>({});
   const audioTimesRef = useRef<Record<string, { currentTime: number; duration: number }>>({});
@@ -102,8 +101,9 @@ function OverlayWindowComponent() {
 
     window.electron.onOverlaysUpdated((updated) => {
       overlaysReadyRef.current = true;
-      if (isTransitioningRef.current) {
-        // Fade-out in progress — hold the new data until the fade-out completes.
+      const fade = fadeStateRef.current;
+      if (fade.active && fade.phase === 'out') {
+        // Hold until fade-out completes; the render loop will apply it when switching to fade-in
         pendingOverlaysRef.current = updated ?? [];
       } else {
         overlaysRef.current = updated ?? [];
@@ -111,65 +111,22 @@ function OverlayWindowComponent() {
     });
 
     window.electron.onSceneSwitch((event) => {
-      const container = containerRef.current;
-
-      // Always cancel any prior in-flight transition first
-      if (transitionTimeoutRef.current) {
-        clearTimeout(transitionTimeoutRef.current);
-        transitionTimeoutRef.current = null;
+      // Abort any in-flight transition and snap pending to current
+      if (pendingOverlaysRef.current !== null) {
+        overlaysRef.current = pendingOverlaysRef.current;
+        pendingOverlaysRef.current = null;
       }
-      if (container && fadeOutHandlerRef.current) {
-        container.removeEventListener("transitionend", fadeOutHandlerRef.current);
-        fadeOutHandlerRef.current = null;
-      }
+      fadeStateRef.current.active = false;
 
-      // Instant switch — reset state and apply any queued overlays
-      if (!event.durationMs || !container) {
-        if (container) {
-          container.style.transition = "none";
-          container.style.opacity = "1";
-        }
-        isTransitioningRef.current = false;
-        if (pendingOverlaysRef.current !== null) {
-          overlaysRef.current = pendingOverlaysRef.current;
-          pendingOverlaysRef.current = null;
-        }
-        return;
-      }
+      if (!event.durationMs) return;
 
-      isTransitioningRef.current = true;
-      pendingOverlaysRef.current = null;
-
-      container.style.transition = `opacity ${event.durationMs}ms ease-in-out`;
-      container.style.opacity = "0";
-
-      const finishTransition = () => {
-        if (fadeOutHandlerRef.current) {
-          container.removeEventListener("transitionend", fadeOutHandlerRef.current);
-          fadeOutHandlerRef.current = null;
-        }
-        if (transitionTimeoutRef.current) {
-          clearTimeout(transitionTimeoutRef.current);
-          transitionTimeoutRef.current = null;
-        }
-        if (pendingOverlaysRef.current !== null) {
-          overlaysRef.current = pendingOverlaysRef.current;
-          pendingOverlaysRef.current = null;
-        }
-        isTransitioningRef.current = false;
-        container.style.opacity = "1";
+      // Start canvas fade-out; render loop drives both phases
+      fadeStateRef.current = {
+        active: true,
+        phase: 'out',
+        phaseStartMs: performance.now(),
+        durationMs: event.durationMs,
       };
-
-      const onFadeOut = (e: TransitionEvent) => {
-        if (e.target !== container || e.propertyName !== "opacity") return;
-        finishTransition();
-      };
-
-      fadeOutHandlerRef.current = onFadeOut;
-      container.addEventListener("transitionend", onFadeOut);
-
-      // Fallback: force completion if transitionend never fires in offscreen mode
-      transitionTimeoutRef.current = setTimeout(finishTransition, event.durationMs + 100);
     });
 
     window.electron.onAudioDataUpdated((id, data) => {
@@ -201,11 +158,7 @@ function OverlayWindowComponent() {
 
     return () => {
       clearInterval(chatSyncInterval);
-      if (transitionTimeoutRef.current) clearTimeout(transitionTimeoutRef.current);
-      if (containerRef.current && fadeOutHandlerRef.current) {
-        containerRef.current.removeEventListener("transitionend", fadeOutHandlerRef.current);
-        fadeOutHandlerRef.current = null;
-      }
+      fadeStateRef.current.active = false;
       window.electron.removeOnOverlaysUpdated(() => {});
       window.electron.removeOnAudioDataUpdated();
       window.electron.removeOnAudioTimeUpdated();
@@ -228,19 +181,48 @@ function OverlayWindowComponent() {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    // Hold the previous frame if overlays haven't loaded yet or are transiently
-    // empty — prevents the 10fps SHM paint from capturing a blank canvas.
-    if (!overlaysReadyRef.current || overlaysRef.current.length === 0) return;
+    // Don't paint until initial getOverlays() fetch completes
+    if (!overlaysReadyRef.current) return;
+
+    // Compute fade alpha and advance transition state before the empty check,
+    // so pending overlays are applied at the out->in boundary even when the
+    // current scene is empty.
+    const now = performance.now();
+    let fadeAlpha = 1;
+    const fade = fadeStateRef.current;
+    if (fade.active) {
+      const elapsed = now - fade.phaseStartMs;
+      if (fade.phase === 'out') {
+        fadeAlpha = Math.max(0, 1 - elapsed / fade.durationMs);
+        if (elapsed >= fade.durationMs) {
+          // Fade-out complete: apply pending overlays and start fade-in
+          if (pendingOverlaysRef.current !== null) {
+            overlaysRef.current = pendingOverlaysRef.current;
+            pendingOverlaysRef.current = null;
+          }
+          fade.phase = 'in';
+          fade.phaseStartMs = now;
+          fadeAlpha = 0;
+        }
+      } else {
+        fadeAlpha = Math.min(1, elapsed / fade.durationMs);
+        if (elapsed >= fade.durationMs) {
+          fade.active = false;
+          fadeAlpha = 1;
+        }
+      }
+    }
+
+    // Skip rendering blank frames between scenes (pending may have just been applied above)
+    if (overlaysRef.current.length === 0) return;
 
     // Clear canvas - transparent background!
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    const now = performance.now();
-
-    // 2. Draw overlays sequentially
+    // Draw overlays sequentially
     overlaysRef.current.forEach((overlay) => {
       ctx.save();
-      ctx.globalAlpha = overlay.opacity ?? 1;
+      ctx.globalAlpha = (overlay.opacity ?? 1) * fadeAlpha;
 
       // Map percentage bounds to absolute canvas coordinates
       const xVal = (overlay.x / 100) * canvas.width;
@@ -321,19 +303,8 @@ function OverlayWindowComponent() {
           }
         }
       } else if (overlay.type === "blur") {
-        // Capture current canvas state, apply blur, clip to element bounds
-        const offscreen = new OffscreenCanvas(canvas.width, canvas.height);
-        const offCtx = offscreen.getContext("2d")!;
-        offCtx.drawImage(canvas, 0, 0);
-        const blurPx = (overlay.blurRadius ?? 10) * (canvas.height / 1080);
-        ctx.save();
-        ctx.beginPath();
-        ctx.rect(xVal, yVal, wVal, hVal);
-        ctx.clip();
-        ctx.filter = `blur(${blurPx}px)`;
-        ctx.drawImage(offscreen, 0, 0);
-        ctx.filter = "none";
-        ctx.restore();
+        // Blur is applied by the Rust compositor on the capture frame before overlay compositing.
+        // Nothing is drawn on the overlay canvas for blur elements.
       } else if (overlay.type === "visualizer") {
         // We receive raw audio data via IPC
         const rawAudioData = audioDataMapRef.current[overlay.id];
@@ -749,8 +720,6 @@ function OverlayWindowComponent() {
   }, [renderLoop]);
 
   return (
-    <div ref={containerRef} className="fixed inset-0 pointer-events-none" style={{ opacity: 1 }}>
-      <canvas ref={canvasRef} className="w-full h-full" />
-    </div>
+    <canvas ref={canvasRef} className="fixed inset-0 w-full h-full pointer-events-none" />
   );
 }

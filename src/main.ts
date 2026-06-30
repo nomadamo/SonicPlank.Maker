@@ -314,6 +314,8 @@ let activeCaptures = new Map<string, number>();
 let activeStreamSources: { source_id: string }[] = [];
 let activeCaptureSourceId: string | null = null;
 let nativeStreamStartAt: number | null = null;
+let activeStreamOutWidth = 1920;
+let activeStreamOutHeight = 1080;
 let nativePreviewActive = false;
 
 // VOD tracking state — set at stream start, consumed at stream stop.
@@ -1097,6 +1099,20 @@ const registerIpcHandlers = () => {
     try {
       activeOverlays = overlays || [];
       broadcastSafe("onOverlaysUpdated", activeOverlays);
+
+      // Forward blur overlay bounds to the compositor as absolute pixel coordinates.
+      const blurElements = (activeOverlays as { type: string; x: number; y: number; width: number; height: number; blurRadius?: number }[])
+        .filter((el) => el.type === "blur");
+      const sw = activeStreamOutWidth;
+      const sh = activeStreamOutHeight;
+      const regions = blurElements.map((el) => ({
+        x: Math.round((el.x / 100) * sw),
+        y: Math.round((el.y / 100) * sh),
+        w: Math.round((el.width / 100) * sw),
+        h: Math.round((el.height / 100) * sh),
+        radius: Math.round((el.blurRadius ?? 10) * (sh / 1080)),
+      }));
+      sendCoreCommand({ type: "set_blur_regions", regions });
     } catch (error) {
       console.error("Failed to propagate overlays:", error);
       throw error;
@@ -1975,6 +1991,8 @@ const registerIpcHandlers = () => {
         height: number;
       }>("stream_started", 15_000);
       nativeStreamStartAt = Date.now();
+      activeStreamOutWidth = ev.width;
+      activeStreamOutHeight = ev.height;
       console.log(`[Native stream] started ${ev.width}x${ev.height}`);
       updateApiState({ streaming: true, recording: !!recordFilePath });
       broadcastWsEvent("streamState", { streaming: true, recording: !!recordFilePath, viewerCount: 0 });

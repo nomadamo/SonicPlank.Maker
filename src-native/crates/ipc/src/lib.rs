@@ -119,6 +119,11 @@ pub enum Command {
         path: String,
         pixels_per_second: u32,
     },
+    /// Update the list of regions in the capture frame that the compositor
+    /// should blur before compositing overlays. An empty list clears all blur.
+    SetBlurRegions {
+        regions: Vec<BlurRegionDef>,
+    },
 }
 
 // ── Events (Core  Electron) ──────────────────────────────────────────────────
@@ -187,6 +192,18 @@ pub enum Event {
     AudioLevel {
         peak_db: f32,
     },
+}
+
+/// A rectangular region of the captured video frame to blur before overlay compositing.
+/// All coordinates are in absolute output-frame pixels.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BlurRegionDef {
+    pub x: i32,
+    pub y: i32,
+    pub w: i32,
+    pub h: i32,
+    /// Gaussian-approximation blur radius in pixels at the output resolution.
+    pub radius: i32,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -3,7 +3,7 @@
 use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
 
-use sonicplank_ipc::StreamSourceDef;
+use sonicplank_ipc::{BlurRegionDef, StreamSourceDef};
 use crate::capture::{RawFrame, ShmOverlay, SharedShmOverlay};
 use ffmpeg_sys_next::*;
 
@@ -14,6 +14,7 @@ pub struct CompositeFrame {
 
 pub struct CompositorConfig {
     pub sources: Vec<StreamSourceDef>,
+    pub blur_regions: Vec<BlurRegionDef>,
 }
 
 pub type SharedCompositorConfig = Arc<Mutex<CompositorConfig>>;
@@ -67,6 +68,53 @@ fn bgra_blend(
             dst[dst_idx + 1] = (out_g.min(255)) as u8;
             dst[dst_idx + 2] = (out_r.min(255)) as u8;
             dst[dst_idx + 3] = out_a as u8;
+        }
+    }
+}
+
+// Apply a SIMD-accelerated stack blur (via libblur) to a rectangular region of a
+// BGRA frame in-place. Region coordinates are clamped to frame bounds.
+fn apply_blur_region(pixels: &mut [u8], fw: i32, fh: i32, region: &BlurRegionDef) {
+    use libblur::{AnisotropicRadius, BlurImageMut, BufferStore, FastBlurChannels, ThreadingPolicy};
+
+    let x0 = region.x.max(0);
+    let y0 = region.y.max(0);
+    let x1 = (region.x + region.w).min(fw);
+    let y1 = (region.y + region.h).min(fh);
+    let w = x1 - x0;
+    let h = y1 - y0;
+    if w <= 0 || h <= 0 || region.radius <= 0 { return; }
+
+    // Extract sub-region to a compact flat buffer (row-major BGRA)
+    let n = (w * h * 4) as usize;
+    let mut sub = vec![0u8; n];
+    for y in 0..h {
+        for x in 0..w {
+            let fi = ((y0 + y) * fw + (x0 + x)) as usize * 4;
+            let ri = (y * w + x) as usize * 4;
+            sub[ri..ri + 4].copy_from_slice(&pixels[fi..fi + 4]);
+        }
+    }
+
+    let mut image = BlurImageMut {
+        data: BufferStore::Borrowed(&mut sub),
+        width: w as u32,
+        height: h as u32,
+        stride: (w * 4) as u32,
+        channels: FastBlurChannels::Channels4,
+    };
+    let _ = libblur::stack_blur(
+        &mut image,
+        AnisotropicRadius::new(region.radius as u32),
+        ThreadingPolicy::Adaptive,
+    );
+
+    // Write blurred sub-region back into the frame
+    for y in 0..h {
+        for x in 0..w {
+            let fi = ((y0 + y) * fw + (x0 + x)) as usize * 4;
+            let ri = (y * w + x) as usize * 4;
+            pixels[fi..fi + 4].copy_from_slice(&sub[ri..ri + 4]);
         }
     }
 }
@@ -133,6 +181,7 @@ unsafe fn read_shm_overlay(shm: &ShmOverlay, buf: &mut Vec<u8>) -> Option<(u32, 
 pub fn composite_frame(
     raw: &CompositeFrame,
     shm_overlay: &ShmOverlay,
+    blur_regions: &[BlurRegionDef],
     pip_scalers: &mut HashMap<String, (*mut SwsContext, i32, i32, i32, i32)>,
     overlay_buf: &mut Vec<u8>,
     good_overlay_buf: &mut Vec<u8>,
@@ -195,6 +244,12 @@ pub fn composite_frame(
         }
 
         bgra_blend(&scaled_pip, pw, ph, &mut out_pixels, out_w, out_h, px, py);
+    }
+
+    // Apply blur regions to the composited video frame before overlays are blended in.
+    // This blurs the capture (+ PIPs) while keeping overlay elements sharp on top.
+    for region in blur_regions {
+        apply_blur_region(&mut out_pixels, out_w, out_h, region);
     }
 
     // Read the overlay from shared memory via seqlock.
@@ -267,7 +322,9 @@ pub fn start_compositor(
                                 pips: current_pips,
                             };
 
-                            let out_frame = composite_frame(&composite, &shm_overlay, &mut pip_scalers, &mut overlay_buf, &mut good_overlay_buf, &mut last_overlay_dims);
+                            let blur = cfg.blur_regions.clone();
+                            drop(cfg);
+                            let out_frame = composite_frame(&composite, &shm_overlay, &blur, &mut pip_scalers, &mut overlay_buf, &mut good_overlay_buf, &mut last_overlay_dims);
                             let _ = tx.send(out_frame);
                         } else {
                             latest_pips.insert(sid.clone(), frame);

@@ -172,10 +172,10 @@ function useSceneSwitchHandler() {
       const node = flowDataRef.current.nodes.find((n) => n.id === event.nodeId);
       if (!node) return;
       const themeLayout = node.data.themeLayout as OverlayThemeLayout | null;
-      const variables = (node.data.variables as Record<string, string>) ?? {};
+      const variables = (node.data.themeVariables as Record<string, string>) ?? {};
       if (!themeLayout) return;
       const resolved = resolveThemeElements(themeLayout, variables, event.sceneId);
-      updateNodeData({ id: event.nodeId, patch: { activeSceneId: event.sceneId, resolvedElements: resolved } });
+      updateNodeData({ id: event.nodeId, patch: { activeSceneId: event.sceneId, themeResolvedElements: resolved }, markUnsaved: false });
     };
 
     window.electron.onSceneSwitch(handler);

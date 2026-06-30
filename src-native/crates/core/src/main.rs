@@ -87,7 +87,7 @@ async fn main() -> Result<()> {
     let (stream_evt_tx, stream_evt_rx) =
         tokio::sync::mpsc::unbounded_channel::<StreamEvent>();
 
-    let compositor_cfg = Arc::new(std::sync::Mutex::new(compositor::CompositorConfig { sources: Vec::new() }));
+    let compositor_cfg = Arc::new(std::sync::Mutex::new(compositor::CompositorConfig { sources: Vec::new(), blur_regions: Vec::new() }));
     let composited_tx = compositor::start_compositor(
         frame_tx.subscribe(),
         Arc::clone(&shm_overlay),
@@ -386,6 +386,9 @@ async fn run_stdin_commands(
                             s.stop();
                             // StreamStopped event is emitted by the encoder thread.
                         }
+                    }
+                    Ok(Command::SetBlurRegions { regions }) => {
+                        compositor_cfg.lock().unwrap().blur_regions = regions;
                     }
                     Ok(Command::GetWaveformPeaks { path, pixels_per_second }) => {
                         info!("Computing waveform peaks for {} at {} pps", path, pixels_per_second);
